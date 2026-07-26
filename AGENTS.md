@@ -7,14 +7,19 @@ invocations here as soon as the first one exists.
 
 ## Architecture
 
-Nothing is implemented yet. This repo is a from-scratch rewrite of the
-archived [axio](https://github.com/notzenco/axio): a cross-platform AI coding
-agent app that runs its own agent loop, talks to LLM providers directly, and
-executes tool calls against the user's workspace.
+Nothing is implemented yet. The intended shape is four crates — `axio-core`
+(conversation state, turn loop, `Tool` and `Provider` traits), `axio-provider`
+(provider HTTP client and streaming), `axio-tools` (file and shell tools), and
+`axio` (the binary, serving both the one-shot CLI and the TUI).
 
-The old repo is archived (read-only) and kept locally at `~/dev/archive/axio`,
-alongside `~/dev/archive/axio-harness`. Consult it for prior art, but treat
-nothing in it as a constraint on this rewrite.
+The invariant that makes multiple surfaces cheap: the core emits a stream of
+agent events and never renders anything itself. No surface calls a provider or
+a tool directly. Turn cancellation is part of the core API, not a later
+addition.
+
+This is a rewrite of an earlier implementation, now archived and read-only.
+Consult it for prior art — its `docs/gotchas.md` is the highest-value part —
+but treat nothing in it as a constraint here.
 
 ## Gotchas
 
