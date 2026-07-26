@@ -5,8 +5,10 @@
 
 pub mod anthropic;
 pub mod client;
+pub mod openai;
 pub mod sse;
 
 pub use anthropic::{API_URL, DEFAULT_MODEL, build_body, classify};
 pub use client::AnthropicProvider;
+pub use openai::{OLLAMA_BASE, OpenAiProvider};
 pub use sse::{SseDecoder, SseFrame};

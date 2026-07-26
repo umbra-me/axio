@@ -46,6 +46,21 @@ deny = ["bash:curl"]
 A project's own `.axio/config.toml` may only add restrictions, never remove
 them.
 
+## Providers
+
+Two, selected by name — not a plugin system:
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...        # the default
+axio -p "..."
+
+export OLLAMA_API_KEY=...                   # anything speaking the
+AXIO_PROVIDER=ollama AXIO_MODEL=gpt-oss:120b axio -p "..."   # chat-completions dialect
+```
+
+The second exists mostly to keep the first honest: implementing a differently
+shaped API is how you find out whether an abstraction is one.
+
 Actions that change something ask first. `--yes` approves everything without
 asking — unattended and unsandboxed, so read [`SECURITY.md`](SECURITY.md) before
 reaching for it.

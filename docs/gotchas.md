@@ -169,6 +169,24 @@ transcript, skip to the end and never cut at all.
 `message_delta` each carry the running total for the same message, so summing
 them double-counts the input tokens. The only symptom is the invoice.
 
+## Providers
+
+**`WireMessage` is Messages-API-shaped.** One user message carrying N
+`tool_result`s is correct there and invalid in the chat-completions dialect,
+where each result is a separate `role: "tool"` message. The split belongs in the
+provider; anything above the trait must not learn about it.
+
+**Tool arguments are a JSON *string* in that dialect, not an object.** Sending
+an object is silently wrong rather than an error.
+
+**A dialect with no equivalent for a feature should drop it, not approximate
+it.** Effort and reasoning blocks have no counterpart, so they are omitted. An
+invented mapping would be worse than an absent one.
+
+**A provider that cannot price itself must report zero, not a guess.** A
+made-up price makes the budget check silently wrong; a zero makes it visibly
+absent.
+
 ## Dependencies
 
 **reqwest's default rustls provider needs a C toolchain on Windows.** The default

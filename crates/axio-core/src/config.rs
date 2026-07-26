@@ -65,6 +65,12 @@ pub struct ModelSection {
     pub name: String,
     pub effort: Effort,
     pub max_tokens: u32,
+    /// Which dialect to speak. Two impls, chosen by name — deliberately not a
+    /// registry: a second provider is a second implementation, not an
+    /// extension point, until something needs it to be.
+    pub provider: String,
+    /// Override the endpoint. Mostly for talking to a compatible host.
+    pub base_url: Option<String>,
 }
 
 impl Default for ModelSection {
@@ -73,6 +79,8 @@ impl Default for ModelSection {
             name: "claude-opus-5".to_owned(),
             effort: Effort::default(),
             max_tokens: 64_000,
+            provider: "anthropic".to_owned(),
+            base_url: None,
         }
     }
 }
@@ -497,6 +505,8 @@ fn env_layer(
         ("AXIO_EFFORT", "model.effort"),
         ("AXIO_MAX_STEPS", "budget.max_steps"),
         ("AXIO_MAX_USD_PER_TURN", "budget.max_usd_per_turn"),
+        ("AXIO_PROVIDER", "model.provider"),
+        ("AXIO_BASE_URL", "model.base_url"),
     ] {
         let Some((_, raw)) = env.iter().find(|(k, _)| k == var) else {
             continue;
@@ -620,6 +630,20 @@ mod tests {
 
     fn resolve_with(user: Option<PathBuf>, project: Option<PathBuf>) -> Resolved {
         resolve(&Paths { user, project }, &[], &Flags::default())
+    }
+
+    #[test]
+    fn a_provider_can_be_chosen_without_a_registry() {
+        let r = resolve(
+            &Paths::default(),
+            &[
+                ("AXIO_PROVIDER".into(), "ollama".into()),
+                ("AXIO_MODEL".into(), "gpt-oss:120b".into()),
+            ],
+            &Flags::default(),
+        );
+        assert_eq!(r.config().model.provider, "ollama");
+        assert_eq!(r.config().model.name, "gpt-oss:120b");
     }
 
     #[test]

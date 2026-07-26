@@ -235,6 +235,32 @@ parsed first; each table is then validated independently, and one that fails is
 dropped with a notice while the rest survive. A backup is written only when
 something was actually lost — a healthy config never litters.
 
+## Providers
+
+Two implementations, selected by name in configuration. Deliberately not a
+registry: a second provider is a second implementation, not an extension point,
+until something needs it to be.
+
+| `[model] provider` | Speaks | Credential |
+| --- | --- | --- |
+| `anthropic` (default) | the Messages API | `ANTHROPIC_API_KEY` |
+| `ollama` | the OpenAI chat-completions dialect | `OLLAMA_API_KEY` |
+
+The second one exists to answer a question the design could not answer by
+inspection: is `Provider` actually provider-shaped, or is it one API wearing a
+trait? Mostly the former. One real seam turned up, and it is instructive.
+
+`WireMessage` is Messages-API-shaped: one user message can carry N
+`tool_result`s. In the chat-completions dialect each result is its own message
+with `role: "tool"`, so the projection has to be split. That conversion lives in
+the provider, which is exactly where a dialect difference belongs — nothing
+above the trait changed. Two features have no equivalent at all and are dropped
+rather than mistranslated: effort, and reasoning blocks.
+
+What the second provider cannot do is price itself. `ModelInfo` reports zeros,
+so cost is reported as zero rather than invented — a made-up price would make
+the budget check silently wrong rather than visibly absent.
+
 ## What is not built yet
 
 The interactive surface prints a pointer to the one-shot form. See

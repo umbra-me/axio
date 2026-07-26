@@ -20,8 +20,8 @@ use axio_core::record::{
 };
 use axio_core::session::Session;
 use axio_core::tool::ToolEnv;
-use axio_provider::AnthropicProvider;
 use axio_provider::client::load_api_key;
+use axio_provider::{AnthropicProvider, OLLAMA_BASE, OpenAiProvider};
 use clap::Parser;
 use render::{JsonlRenderer, PlainRenderer, Renderer, Style};
 use surface::Surface;
@@ -134,22 +134,10 @@ async fn run(cli: Cli) -> u8 {
 }
 
 async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty: bool) -> u8 {
-    let api_key = match load_api_key() {
-        Ok(key) => key,
-        Err(e) => {
-            eprintln!(
-                "axio: {e}\n\n\
-                 Set a key for this shell:\n    export ANTHROPIC_API_KEY=sk-ant-...\n\n\
-                 Then re-run the same command. `axio --doctor` shows what axio can currently see."
-            );
-            return 1;
-        }
-    };
-
-    let provider = match AnthropicProvider::new(api_key) {
-        Ok(p) => Arc::new(p),
-        Err(e) => {
-            eprintln!("axio: could not start the http client: {e}");
+    let provider: Arc<dyn axio_core::provider::Provider> = match build_provider(resolved) {
+        Ok(provider) => provider,
+        Err(message) => {
+            eprintln!("axio: {message}");
             return 1;
         }
     };
@@ -512,6 +500,49 @@ fn read_stdin(stdin_is_tty: bool, have_prompt: bool) -> Option<String> {
     rx.recv_timeout(stdin_wait()).ok()
 }
 
+/// Construct the provider the configuration names.
+///
+/// Two implementations selected by name. Adding a third would be the moment to
+/// ask for a registry; two is not.
+fn build_provider(resolved: &Resolved) -> Result<Arc<dyn axio_core::provider::Provider>, String> {
+    let model = &resolved.config().model;
+    match model.provider.as_str() {
+        "anthropic" => {
+            let key = load_api_key().map_err(|e| {
+                format!(
+                    "{e}\n\n\
+                     Set a key for this shell:\n    export ANTHROPIC_API_KEY=sk-ant-...\n\n\
+                     Then re-run. `axio --doctor` shows what axio can currently see."
+                )
+            })?;
+            AnthropicProvider::new(key)
+                .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
+                .map_err(|e| format!("could not start the http client: {e}"))
+        }
+        "ollama" | "openai-compatible" => {
+            let key = std::env::var("OLLAMA_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+                .ok_or_else(|| {
+                    "no credential found for this provider.\n\n\
+                     Set one for this shell:\n    export OLLAMA_API_KEY=...\n\n\
+                     Then re-run. `axio --doctor` shows what axio can currently see."
+                        .to_owned()
+                })?;
+            let base = model
+                .base_url
+                .clone()
+                .unwrap_or_else(|| OLLAMA_BASE.to_owned());
+            OpenAiProvider::new(key, base, model.provider.clone())
+                .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
+                .map_err(|e| format!("could not start the http client: {e}"))
+        }
+        other => Err(format!(
+            "unknown provider `{other}`; expected `anthropic` or `ollama`"
+        )),
+    }
+}
+
 /// Where axio keeps state that is not the user's to curate.
 fn state_dir() -> PathBuf {
     if let Some(explicit) = std::env::var_os("AXIO_STATE") {
@@ -544,6 +575,21 @@ fn doctor(resolved: &Resolved) -> u8 {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "credentials");
+    if cfg.model.provider != "anthropic" {
+        match std::env::var("OLLAMA_API_KEY") {
+            Ok(k) if !k.trim().is_empty() => {
+                let _ = writeln!(
+                    out,
+                    "  OLLAMA_API_KEY      set ({} chars, never printed)",
+                    k.len()
+                );
+            }
+            _ => {
+                let _ = writeln!(out, "  OLLAMA_API_KEY      not set");
+                let _ = writeln!(out, "  -> export OLLAMA_API_KEY=...");
+            }
+        }
+    }
     match std::env::var("ANTHROPIC_API_KEY") {
         Ok(k) if !k.trim().is_empty() => {
             let _ = writeln!(
@@ -560,6 +606,7 @@ fn doctor(resolved: &Resolved) -> u8 {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "model");
+    let _ = writeln!(out, "  provider            {}", cfg.model.provider);
     let _ = writeln!(out, "  model               {}", cfg.model.name);
     let _ = writeln!(out, "  effort              {}", cfg.model.effort.as_wire());
     let _ = writeln!(out, "  max_tokens          {}", cfg.model.max_tokens);
