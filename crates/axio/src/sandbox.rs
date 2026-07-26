@@ -108,6 +108,11 @@ pub fn scratch_dir(state: &Path) -> PathBuf {
 }
 
 /// What happened, so the caller can say it rather than guess.
+///
+/// Only `Unsupported` is reachable off Linux, and the other two are still part
+/// of what this type means — CI compiles with `-D warnings`, so the exemption
+/// has to be written down rather than discovered.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// Every requested access is now the only access there is.

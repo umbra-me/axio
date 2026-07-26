@@ -258,6 +258,12 @@ there is one thread and every later thread inherits it.
 `restrict_self` comes back `PartiallyEnforced` — for every path, not just that
 one. The rights have to match what the path actually is.
 
+**A Linux-only variant is dead code everywhere else.** `-D warnings` makes that
+an error on macOS and Windows, and `scripts/check-windows.sh` cannot see it: the
+binary crate cannot be cross-checked locally because it pulls in `ring`, whose
+build script wants a C toolchain for the target. Anything behind
+`cfg(target_os)` in `crates/axio` is checked by CI alone.
+
 **Nothing spawns without `/proc` and `/dev`.** The standard library closes
 inherited descriptors through `/proc`, and `Stdio::null()` opens `/dev/null`.
 Grant the rest of the system and forget these two and every command fails with

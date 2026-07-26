@@ -8,8 +8,15 @@
 # catchable here.
 #
 # `axio-provider` is excluded: it pulls in `ring`, whose build script needs a C
-# toolchain for the target. It also contains no platform-specific code, which is
-# why excluding it costs nothing.
+# toolchain for the target. It contains no platform-specific code, so excluding
+# it costs nothing.
+#
+# The `axio` binary is excluded for the same reason and it does NOT cost
+# nothing: it depends on `axio-provider`, and it is where the `cfg`-gated code
+# lives. Its non-Linux compilation is checked by CI and by nothing here — a
+# Linux-only enum variant is dead code elsewhere, which `-D warnings` makes an
+# error, and this script will not see it. That gap is real; naming it is the
+# best available substitute for closing it.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
