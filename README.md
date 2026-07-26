@@ -1,6 +1,6 @@
 # axio
 
-A cross-platform AI coding agent — Rust, with a CLI and a TUI.
+A cross-platform AI coding agent, in Rust.
 
 axio runs its own agent loop: it talks to LLM providers directly, executes tool
 calls against your workspace, and streams the result back to you.
@@ -10,18 +10,42 @@ read-only.
 
 ## Status
 
-Early, but it works — and is verified end to end against a live model: the turn
-loop, the provider transport, the one-shot CLI, all six tools, sessions on disk,
-and layered configuration. It can read, search, edit and run commands in a
-workspace, and pick up where it left off.
+Early, but it works, and `scripts/live-check.sh` proves it against a real model
+rather than a stub: the turn loop, the transport, the one-shot CLI, all six
+tools, the deny list, sessions on disk, and layered configuration. It can read,
+search, edit and run commands in a workspace, and pick up where it left off.
 
 Writes and shell commands ask before they happen; reads do not.
 
+Two caveats worth stating plainly. There is no interactive surface yet — a bare
+`axio` at a terminal says so. And while the OpenAI-compatible provider is
+exercised against a live endpoint on every check, the Anthropic path has only
+ever been run against the documented wire format, never the real API.
+
+## Install
+
+No published binary yet — releases are built by tag, and none has been cut.
+Until then, and for the current `main`:
+
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-cargo run -p axio -- -p "explain this repo"
-cat src/lib.rs | cargo run -p axio -- -p "review this"
-cargo run -p axio -- --doctor       # what axio can currently see
+cargo install --git https://github.com/umbra-me/axio --locked axio
+```
+
+Needs a Rust toolchain at 1.88 or newer. The binary lands in `~/.cargo/bin`.
+From a clone, `cargo install --path crates/axio --locked` does the same.
+
+`cargo install axio` from crates.io does **not** work: that name belongs to an
+unrelated crate.
+
+## Use
+
+```sh
+axio auth login                     # stores a credential, 0600, read from stdin
+export ANTHROPIC_API_KEY=sk-ant-... # or just use the environment
+
+axio -p "explain this repo"
+cat src/lib.rs | axio -p "review this"
+axio --doctor                       # what axio can currently see
 
 axio --list                         # recent sessions
 axio --resume 01K3F               # continue one; a unique prefix is enough

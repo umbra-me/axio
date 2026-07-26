@@ -1,0 +1,137 @@
+name: Release
+
+# Tag-driven, so a release is a deliberate act and the artefacts are built from
+# the exact commit the tag names — never from a working copy.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The same gates CI runs. A tag that would fail CI must not produce binaries:
+  # a release is the one artefact nobody re-checks.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/firewall.sh
+      - run: bash scripts/limits.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: The tag matches the crate version
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="axio"))')
+          if [ "$tag" != "v$version" ]; then
+            echo "tag $tag does not match crate version $version" >&2
+            exit 1
+          fi
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: axio-x86_64-linux
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: axio-aarch64-linux
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: axio-aarch64-macos
+          - os: macos-13
+            target: x86_64-apple-darwin
+            name: axio-x86_64-macos
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: axio-x86_64-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build -p axio --release --target ${{ matrix.target }}
+
+      # The binary is the deliverable, so prove it runs on the machine that
+      # produced it before it goes anywhere.
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/axio"
+          [ -f "$bin.exe" ] && bin="$bin.exe"
+          "$bin" --version
+          "$bin" --doctor > /dev/null
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/axio.exe" dist/
+            cp README.md LICENSE SECURITY.md dist/
+            (cd dist && 7z a "../${{ matrix.name }}.zip" .)
+          else
+            cp "target/${{ matrix.target }}/release/axio" dist/
+            cp README.md LICENSE SECURITY.md dist/
+            tar -czf "${{ matrix.name }}.tar.gz" -C dist .
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            *.tar.gz
+            *.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: artifacts/*

@@ -8,19 +8,23 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/umbra-me/axio"
+homepage = "https://github.com/umbra-me/axio"
+readme = "README.md"
+keywords = ["agent", "llm", "cli", "coding-assistant"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 # Versioned, not bare paths. A path dependency with no version cannot be
 # published, and cargo-deny reads it as a wildcard — which is the same hazard
 # it is for a registry dependency, just harder to see.
-axio-core = { path = "crates/axio-core", version = "0.1.0-dev" }
-axio-provider = { path = "crates/axio-provider", version = "0.1.0-dev" }
-axio-tools = { path = "crates/axio-tools", version = "0.1.0-dev" }
+axio-core = { path = "crates/axio-core", version = "0.1.0" }
+axio-provider = { path = "crates/axio-provider", version = "0.1.0" }
+axio-tools = { path = "crates/axio-tools", version = "0.1.0" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.91"
