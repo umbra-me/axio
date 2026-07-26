@@ -12,6 +12,7 @@ cargo build -p axio --no-default-features           # the headless path must not
 bash scripts/firewall.sh                            # naming firewall (also a pre-commit hook)
 bash scripts/limits.sh                              # workspace members, ToolCx fields, LOC
 bash scripts/deps.sh                                # axio-core links no transport/terminal/walker
+bash scripts/check-windows.sh                       # cfg-gated code still compiles for windows
 
 INSTA_UPDATE=always cargo test -p axio-provider     # re-accept request-body snapshots
 git config core.hooksPath .githooks                 # one-time, per clone

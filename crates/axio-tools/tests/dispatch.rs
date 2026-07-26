@@ -3,14 +3,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+// Only the unix-gated tests below need these; on other platforms they would be
+// unused imports, which fail clippy at -D warnings.
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use axio_core::agent::{Agent, RuntimeConfig};
 use axio_core::approver::Approver;
 use axio_core::policy::Policy;
-use axio_core::protocol::{
-    ApprovalRequest, Decision, Event, EventKind, ItemBody, ToolStatus, TurnOutcome,
-};
+#[cfg(unix)]
+use axio_core::protocol::ToolStatus;
+use axio_core::protocol::{ApprovalRequest, Decision, Event, EventKind, ItemBody, TurnOutcome};
 use axio_core::provider::{BlockKind, Role, StopReason, StreamEvent, WireContent};
 use axio_core::scripted::{Script, ScriptedProvider};
 use axio_core::session::Session;

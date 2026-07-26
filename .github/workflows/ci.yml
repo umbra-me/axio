@@ -44,6 +44,9 @@ jobs:
       - name: Core dependency isolation
         if: runner.os == 'Linux'
         run: bash scripts/deps.sh
+      - name: Windows cross-check
+        if: runner.os == 'Linux'
+        run: bash scripts/check-windows.sh
 
   deny:
     runs-on: ubuntu-latest

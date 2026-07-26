@@ -118,6 +118,12 @@ which fails clippy at `-D warnings` on Windows and on no other platform — so i
 passes locally and breaks in CI. This one was written down here *before* it was
 made, and made anyway.
 
+**Gating a test with `#[cfg(unix)]` orphans its imports.** The imports only that
+test used become unused on every other platform, and clippy at `-D warnings`
+rejects them — so the fix for one Windows failure produces the next one. Gate the
+imports alongside the tests, and run `scripts/check-windows.sh`, which catches
+this whole class without a CI round-trip.
+
 **`CREATE_NO_WINDOW` is deliberately not set on Windows.** It belongs to a GUI
 application spawning a console child. In a console application it detaches the
 child, breaking anything that checks whether it is attached to a terminal.

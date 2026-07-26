@@ -18,6 +18,7 @@ before pushing; they fail in seconds.
 bash scripts/firewall.sh                            # naming firewall
 bash scripts/limits.sh                              # structural budgets
 bash scripts/deps.sh                                # axio-core dependency isolation
+bash scripts/check-windows.sh                       # cfg-gated code compiles for Windows
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
