@@ -40,7 +40,6 @@ on disk, and layered configuration.
 - **Signal handling.** `SIGINT` cancels and flushes a partial answer; a second
   within two seconds gives up. `SIGTERM` and `SIGHUP` cancel and unwind on a
   deadline, taking the whole child process tree with them.
-
 - **An interactive surface.** An inline viewport, so the finished transcript
   lands in the terminal's own scrollback rather than being owned by a
   full-screen application. Approval shows the diff or the raw command before it
