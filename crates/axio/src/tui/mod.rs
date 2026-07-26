@@ -14,6 +14,7 @@
 mod approver;
 mod composer;
 mod frame;
+mod highlight;
 mod markdown;
 
 use std::io::Write;
@@ -30,7 +31,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Widget};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -43,10 +44,11 @@ use composer::{Composer, Edit};
 /// anything that wants more room is printed into scrollback instead, which is
 /// where a diff belongs anyway.
 ///
-/// Three of these are the status, the composer and the hint. The rest hold the
-/// tail of the sentence being streamed — one row would show a paragraph as a
-/// single scrolling line, which is unreadable, so the tail gets what is left.
-const VIEWPORT_ROWS: u16 = 6;
+/// Four of these are the composer's frame, the line inside it and the status
+/// bar under it. The rest hold the tail of the sentence being streamed — one
+/// row would show a paragraph as a single scrolling line, which is unreadable,
+/// so the tail gets what is left.
+const VIEWPORT_ROWS: u16 = 7;
 
 /// Rows the composer may grow to before it scrolls instead. A multi-line prompt
 /// is common enough to deserve room and rare enough not to deserve the whole
@@ -575,41 +577,14 @@ impl Tui {
             ItemBody::ToolCall {
                 subject, status, ..
             } => {
-                let line = match status {
-                    ToolStatus::Ok { ms, .. } => Some(Line::from(vec![
-                        Span::styled("  · ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(subject.clone(), Style::default().fg(Color::DarkGray)),
-                        Span::styled(
-                            format!("  {ms}ms"),
-                            Style::default().add_modifier(Modifier::DIM),
-                        ),
-                    ])),
-                    ToolStatus::Failed { message } => Some(Line::from(vec![
-                        Span::styled("  ✗ ", Style::default().fg(Color::Red)),
-                        Span::raw(subject.clone()),
-                        Span::styled(format!("  {message}"), Style::default().fg(Color::Red)),
-                    ])),
-                    ToolStatus::Denied { message } => Some(Line::from(vec![
-                        Span::styled("  ⊘ ", Style::default().fg(Color::Yellow)),
-                        Span::raw(subject.clone()),
-                        Span::styled(
-                            format!("  {}", first_sentence(message)),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ])),
-                    ToolStatus::Cancelled => Some(Line::styled(
-                        format!("  ⊘ {subject}  cancelled"),
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                    // Not finished, so nothing to report — but a tool that
-                    // takes a minute should say which one is taking it.
-                    ToolStatus::Running => {
-                        self.status = subject.clone();
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some(line) = line {
+                // Not finished, so nothing to report — but a tool that takes a
+                // minute should say which one is taking it.
+                if matches!(status, ToolStatus::Running) {
+                    self.status = subject.clone();
+                    return Ok(());
+                }
+                let width = self.width(terminal) as usize;
+                if let Some(line) = tool_line(subject, status, width) {
                     self.push(terminal, vec![line])?;
                 }
             }
@@ -749,26 +724,24 @@ impl Tui {
         terminal: &mut Terminal<B>,
         resumed: bool,
     ) -> Result<(), B::Error> {
+        // One line: the frame below carries the model and the status bar
+        // carries the keys, so repeating either here is furniture.
         let what = if resumed { "resumed" } else { "new session" };
         self.push(
             terminal,
             vec![
                 Line::from(vec![
                     Span::styled(
-                        "axio ",
+                        "  axio",
                         Style::default()
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        format!("{}  ·  {what}", self.model),
+                        format!("  {what}  ·  ctrl-d to leave"),
                         Style::default().add_modifier(Modifier::DIM),
                     ),
                 ]),
-                Line::styled(
-                    "enter to send · ctrl-c to interrupt · ctrl-d to leave",
-                    Style::default().add_modifier(Modifier::DIM),
-                ),
                 Line::raw(""),
             ],
         )
@@ -776,7 +749,9 @@ impl Tui {
 
     fn draw<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
         terminal.draw(|frame| {
-            let width = frame.area().width.saturating_sub(2) as usize;
+            // Two columns of border and two of padding stand between the text
+            // and the edge of the terminal.
+            let width = frame.area().width.saturating_sub(6) as usize;
             let (rows_of_text, cursor) = self.composer.rows(width.max(1));
             // The composer takes the rows it needs and no more; what it leaves
             // goes to the answer, which is the thing being read.
@@ -784,30 +759,72 @@ impl Tui {
 
             let rows = Layout::vertical([
                 Constraint::Min(1),
-                Constraint::Length(1),
-                Constraint::Length(prompt_height),
+                Constraint::Length(prompt_height + 2),
                 Constraint::Length(1),
             ])
             .split(frame.area());
 
+            frame.render_widget(self.live_rows(rows[0]), rows[0]);
+
+            let frame_style = match self.mode {
+                Mode::Approving(..) => Style::default().fg(Color::Yellow),
+                Mode::Running => Style::default().fg(Color::Cyan),
+                Mode::Idle => Style::default().fg(Color::DarkGray),
+            };
+            let block = Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(frame_style)
+                .padding(Padding::horizontal(1))
+                .title_top(Line::styled(format!("─ {} ", self.title()), frame_style))
+                .title_top(Line::styled(self.turn_stats(), frame_style).right_aligned());
+            let inner = block.inner(rows[1]);
+            frame.render_widget(block, rows[1]);
+
             // Show the end of a prompt too long for the rows it has: the part
             // being typed is the part that matters.
             let first = rows_of_text.len().saturating_sub(prompt_height as usize);
-            frame.render_widget(self.live_rows(rows[0]), rows[0]);
-            frame.render_widget(self.status_row(), rows[1]);
-            frame.render_widget(self.prompt_row(&rows_of_text[first..]), rows[2]);
-            frame.render_widget(self.hint_row(), rows[3]);
+            frame.render_widget(self.prompt_row(&rows_of_text[first..]), inner);
+            frame.render_widget(self.status_row(rows[2]), rows[2]);
 
             if matches!(self.mode, Mode::Idle) {
                 let row = cursor.0.saturating_sub(first) as u16;
-                let x = rows[2].x + 2 + cursor.1 as u16;
+                let x = inner.x + 2 + cursor.1 as u16;
                 frame.set_cursor_position((
-                    x.min(rows[2].right().saturating_sub(1)),
-                    rows[2].y + row.min(prompt_height.saturating_sub(1)),
+                    x.min(inner.right().saturating_sub(1)),
+                    inner.y + row.min(prompt_height.saturating_sub(1)),
                 ));
             }
         })?;
         Ok(())
+    }
+
+    /// What the frame is for, in its top rule: the model, or the thing being
+    /// asked about, since during an approval that is the only question.
+    fn title(&self) -> String {
+        match &self.mode {
+            Mode::Approving(request, _) => format!("approve  {}", request.subject),
+            _ => self.model.clone(),
+        }
+    }
+
+    /// The turn's cost so far, along the top rule where it is legible without
+    /// being in the way.
+    fn turn_stats(&self) -> String {
+        if matches!(self.mode, Mode::Approving(..)) {
+            return String::new();
+        }
+        let mut parts = Vec::new();
+        if let Some(at) = self.started {
+            parts.push(format!("{}s", at.elapsed().as_secs()));
+        }
+        if let Some((input, output)) = self.tokens {
+            parts.push(format!("{input} in / {output} out"));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" {} ", parts.join(" · "))
+        }
     }
 
     /// The unfinished tail of the streaming message, wrapped over the rows the
@@ -839,50 +856,68 @@ impl Tui {
         Paragraph::new(lines)
     }
 
-    /// What is happening, how long it has been happening, and what it has cost
-    /// so far — because "working" alone is the same pixel whether the model is
+    /// The bar under the frame: what is happening on the left, what to press
+    /// on the right. "working" alone is the same pixel whether the model is
     /// thinking, running a command, or gone.
-    fn status_row(&self) -> Paragraph<'_> {
-        let text = match &self.mode {
-            Mode::Approving(request, _) => format!("  {}", request.subject),
+    fn status_row(&self, area: Rect) -> Paragraph<'static> {
+        let left = match &self.mode {
+            Mode::Approving(..) => String::new(),
             _ if self.status.is_empty() => String::new(),
             _ => {
-                let mut parts = vec![self.status.clone()];
-                if let Some(at) = self.started {
-                    parts.push(format!("{}s", at.elapsed().as_secs()));
-                }
-                if let Some((input, output)) = self.tokens {
-                    parts.push(format!("{input} in / {output} out"));
-                }
                 let turning = match self.started {
                     Some(at) => SPINNER[(at.elapsed().as_millis() / 120) as usize % SPINNER.len()],
-                    None => " ",
+                    None => "·",
                 };
-                format!("  {turning} {}", parts.join(" · "))
+                format!("{turning} {}", self.status)
             }
         };
-        Paragraph::new(Line::styled(
-            text,
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
-        ))
+        let right = match self.mode {
+            Mode::Approving(..) => "the change above is what runs",
+            Mode::Running => "ctrl-c or esc to interrupt",
+            Mode::Idle if self.composer.text().contains('\n') => "shift-enter for another line",
+            Mode::Idle => "",
+        };
+
+        let room = area.width.saturating_sub(4) as usize;
+        let gap = room
+            .saturating_sub(markdown::text_width(&left))
+            .saturating_sub(markdown::text_width(right));
+        Paragraph::new(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(left, Style::default().fg(Color::Cyan)),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(
+                right.to_owned(),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]))
     }
 
     fn prompt_row(&self, rows: &[String]) -> Paragraph<'static> {
-        match &self.mode {
-            Mode::Approving(..) => Paragraph::new(Line::from(vec![
-                Span::styled("  allow? ", Style::default().fg(Color::Cyan)),
-                Span::raw("y"),
-                Span::styled(" once  ", Style::default().add_modifier(Modifier::DIM)),
-                Span::raw("a"),
+        let key = |k: &str, what: &str| {
+            [
                 Span::styled(
-                    " this session  ",
+                    k.to_owned(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {what}   "),
                     Style::default().add_modifier(Modifier::DIM),
                 ),
-                Span::raw("n"),
-                Span::styled(" no", Style::default().add_modifier(Modifier::DIM)),
-            ])),
+            ]
+        };
+        match &self.mode {
+            Mode::Approving(..) => {
+                let mut spans = vec![Span::styled("allow?  ", Style::default().fg(Color::Yellow))];
+                spans.extend(key("y", "once"));
+                spans.extend(key("a", "this session"));
+                spans.extend(key("n", "no"));
+                Paragraph::new(Line::from(spans))
+            }
             Mode::Running => Paragraph::new(Line::styled(
-                "  …",
+                "…",
                 Style::default().add_modifier(Modifier::DIM),
             )),
             Mode::Idle => Paragraph::new(
@@ -901,24 +936,80 @@ impl Tui {
             ),
         }
     }
-
-    fn hint_row(&self) -> Paragraph<'_> {
-        let text = match self.mode {
-            Mode::Approving(..) => "  the change above is what runs",
-            Mode::Running => "  ctrl-c or esc to interrupt",
-            Mode::Idle if self.composer.text().contains('\n') => {
-                "  enter sends · shift-enter or ctrl-j for another line"
-            }
-            Mode::Idle => "",
-        };
-        Paragraph::new(Line::styled(
-            text,
-            Style::default().add_modifier(Modifier::DIM),
-        ))
-    }
 }
 
 // ------------------------------------------------------------------- helpers
+
+/// One finished tool call, as a row: a mark carrying the outcome, the tool's
+/// name in its own column so a run of calls reads as a list rather than as
+/// prose, what it acted on, and how long it took against the right margin.
+///
+/// The subject is `name:detail` — the same canonical string the permission
+/// engine decided on, so what is shown is what was authorised.
+fn tool_line(subject: &str, status: &ToolStatus, width: usize) -> Option<Line<'static>> {
+    let (name, detail) = match subject.split_once(':') {
+        Some((name, detail)) => (name.to_owned(), detail.to_owned()),
+        None => (subject.to_owned(), String::new()),
+    };
+
+    let (mark, colour, note) = match status {
+        ToolStatus::Ok { ms, .. } => ("⏺", Color::Green, format!("{ms}ms")),
+        ToolStatus::Failed { message } => ("⏺", Color::Red, message.clone()),
+        ToolStatus::Denied { message } => ("⊘", Color::Yellow, first_sentence(message).to_owned()),
+        ToolStatus::Cancelled => ("⊘", Color::DarkGray, "cancelled".to_owned()),
+        _ => return None,
+    };
+
+    // The name column is wide enough for the longest tool there is, so the
+    // detail always starts in the same place.
+    let left = format!("{name:<6}  {detail}");
+    let room = width.saturating_sub(4);
+    let (left, note) = if markdown::text_width(&left) + markdown::text_width(&note) + 2 > room {
+        // No room for both: the outcome wins, since the detail is recoverable
+        // from the transcript above and the outcome is not.
+        let keep = room.saturating_sub(markdown::text_width(&note) + 2);
+        (truncate(&left, keep), note)
+    } else {
+        (left, note)
+    };
+    let gap = room
+        .saturating_sub(markdown::text_width(&left))
+        .saturating_sub(markdown::text_width(&note));
+
+    Some(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(mark.to_owned(), Style::default().fg(colour)),
+        Span::raw(" "),
+        Span::styled(left, Style::default().add_modifier(Modifier::DIM)),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(
+            note,
+            match status {
+                ToolStatus::Ok { .. } => Style::default().add_modifier(Modifier::DIM),
+                _ => Style::default().fg(colour),
+            },
+        ),
+    ]))
+}
+
+/// Cut a string to a number of columns, marking the cut.
+fn truncate(text: &str, width: usize) -> String {
+    if markdown::text_width(text) <= width {
+        return text.to_owned();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let cell = markdown::cell_width(c);
+        if used + cell > width.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used += cell;
+    }
+    out.push('…');
+    out
+}
 
 fn first_sentence(text: &str) -> &str {
     match text.find(". ") {
@@ -1255,7 +1346,45 @@ mod tests {
         };
         app.on_event(&mut terminal, &call(ok())).expect("handled");
         app.on_event(&mut terminal, &call(ok())).expect("handled");
-        assert_eq!(everything(&terminal).matches("read:notes.md").count(), 1);
+        let visible = everything(&terminal);
+        assert_eq!(visible.matches("notes.md").count(), 1, "{visible}");
+    }
+
+    #[test]
+    fn a_tool_line_puts_the_outcome_against_the_right_margin() {
+        let line = tool_line(
+            "read:notes.md",
+            &ToolStatus::Ok {
+                output: String::new(),
+                truncated: false,
+                spill: None,
+                ms: 3,
+            },
+            40,
+        )
+        .expect("a line");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.starts_with("  ⏺ read    notes.md"), "{text:?}");
+        assert!(text.ends_with("3ms"), "{text:?}");
+        assert!(line.width() <= 40, "{}", line.width());
+    }
+
+    #[test]
+    fn a_tool_line_keeps_its_outcome_when_the_detail_will_not_fit() {
+        // The detail can be read again in the transcript above; whether the
+        // command failed cannot.
+        let line = tool_line(
+            "bash:a-very-long-command-that-fills-the-whole-terminal-and-more",
+            &ToolStatus::Failed {
+                message: "exit 1".into(),
+            },
+            36,
+        )
+        .expect("a line");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains('…'), "{text:?}");
+        assert!(text.ends_with("exit 1"), "{text:?}");
+        assert!(line.width() <= 36, "{}", line.width());
     }
 
     #[test]

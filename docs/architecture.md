@@ -177,6 +177,14 @@ changes far faster than a terminal can usefully show them and every wasted frame
 is bandwidth the text itself is not getting. Committed lines do not wait for a
 frame — they are written straight through, so pacing costs the answer nothing.
 
+Colour comes from the terminal's own sixteen, never from a bundled theme. A
+theme carries absolute colours chosen against a particular background, and the
+background belongs to the user — there is no way to ask which one they have, and
+a dark theme on a light terminal is unreadable. So the syntax highlighter takes
+syntect's parser and none of its themes, mapping scopes onto the palette the
+user already configured. Everything else follows the same rule, which is why the
+transcript looks like the shell it was run from rather than like an application.
+
 Everything below the run loop is generic over the backend rather than tied to
 the terminal, which is what lets a test hold a fake one and assert the property
 the whole design rests on: that finished lines are in the terminal's history and

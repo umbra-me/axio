@@ -19,7 +19,7 @@ path = "src/main.rs"
 default = ["tui"]
 # ratatui and crossterm link into every install unless this is turned off. CI
 # builds --no-default-features so the headless path cannot rot.
-tui = ["dep:ratatui", "dep:crossterm"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:syntect", "dep:two-face"]
 
 [dependencies]
 axio-core.workspace = true
@@ -32,6 +32,8 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 ratatui = { workspace = true, optional = true }
 crossterm = { workspace = true, optional = true }
+syntect = { workspace = true, optional = true }
+two-face = { workspace = true, optional = true }
 # The interactive surface selects on key input alongside the agent's events, so
 # it needs the same Stream trait the provider uses, and the same async-trait
 # shim the Approver trait is declared with.

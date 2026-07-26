@@ -65,6 +65,16 @@ ordered permission engine, sessions on disk, and layered configuration.
   and its token usage, so a quiet model looks different from a hung one.
 - **Tables.** Rendered as aligned columns with the alignment the markdown asked
   for, narrowed to fit the terminal rather than overflowing it.
+- **A framed composer.** The prompt sits in a rounded frame carrying the model
+  on its top rule and the turn's elapsed time and usage on the right of it, with
+  a status bar beneath: what is happening on the left, what to press on the
+  right. The frame changes colour for an approval, so the one moment that needs
+  an answer does not look like the rest.
+- **Tool calls as rows.** A coloured mark for the outcome, the tool's name in
+  its own column, what it acted on, and the timing against the right margin.
+- **Syntax highlighting in fenced code**, in the terminal's own sixteen colours
+  rather than a bundled theme — a theme is chosen against a background, and the
+  background belongs to the user. An unknown language renders as plain code.
 - **Widths measured in columns.** A CJK character or an emoji occupies two
   columns and counts as one character; counting characters wrote every such line
   a column too wide and lost its end to the clip.

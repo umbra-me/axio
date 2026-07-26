@@ -61,10 +61,14 @@ fn dim() -> Style {
 
 /// Renders markdown into styled lines, carrying the only state that outlives a
 /// single line.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Renderer {
     /// Inside a fenced code block, where nothing is markdown any more.
     fenced: bool,
+    /// The parser for the fence being read, if its language is one we know.
+    /// It carries state between lines, because a string or a block comment
+    /// opened on one line is still open on the next.
+    code: Option<super::highlight::Highlighter>,
     /// Rows of a table being collected. A table is the one construct that
     /// cannot be rendered a line at a time: its columns are as wide as their
     /// widest cell, and the widest cell may not have arrived yet.
@@ -109,16 +113,39 @@ impl Renderer {
             }
         }
 
-        if is_fence(src) {
+        if let Some(info) = fence(src) {
             // The marker itself is not content: the styling says "code", and a
-            // row of backticks in the transcript says nothing.
+            // row of backticks in the transcript says nothing. What the marker
+            // does carry is the language, which is the only chance to know it.
             self.fenced = !self.fenced;
+            self.code = if self.fenced {
+                super::highlight::Highlighter::new(info)
+            } else {
+                None
+            };
             return Vec::new();
         }
         if self.fenced {
-            return hard_wrap(src, body)
+            let Some(highlighter) = self.code.as_mut() else {
+                return hard_wrap(src, body)
+                    .into_iter()
+                    .map(|row| Line::from(vec![Span::raw(GUTTER), Span::styled(row, code())]))
+                    .collect();
+            };
+            // Wrapped on width alone, and never on a space: a space in code is
+            // indentation, and moving it moves the meaning.
+            let runs = highlighter.line(src);
+            let chars: Vec<(char, Style)> = runs
+                .iter()
+                .flat_map(|(text, style)| text.chars().map(move |c| (c, *style)))
+                .collect();
+            return hard_wrap_styled(&chars, body)
                 .into_iter()
-                .map(|row| Line::from(vec![Span::raw(GUTTER), Span::styled(row, code())]))
+                .map(|row| {
+                    let mut spans = vec![Span::raw(GUTTER)];
+                    spans.extend(merge(&row));
+                    Line::from(spans)
+                })
                 .collect();
         }
 
@@ -199,9 +226,12 @@ pub fn spans(text: &str, style: Style) -> Vec<Span<'static>> {
 
 // ------------------------------------------------------------------- blocks
 
-fn is_fence(line: &str) -> bool {
+/// A fence marker, and the info string after it — the language, when the model
+/// bothered to say. An empty string is still a fence; `None` is not one.
+fn fence(line: &str) -> Option<&str> {
     let t = line.trim_start();
-    t.starts_with("```") || t.starts_with("~~~")
+    let rest = t.strip_prefix("```").or_else(|| t.strip_prefix("~~~"))?;
+    Some(rest.trim())
 }
 
 fn is_rule(line: &str) -> bool {
@@ -665,6 +695,24 @@ fn merge(row: &[(char, Style)]) -> Vec<Span<'static>> {
         spans.push(Span::styled(text, style));
     }
     spans
+}
+
+/// Break styled runs on width alone, never on a space. Used for code, where a
+/// space is indentation and moving it moves the meaning.
+fn hard_wrap_styled(chars: &[(char, Style)], width: usize) -> Vec<Vec<(char, Style)>> {
+    let width = width.max(1);
+    let mut rows: Vec<Vec<(char, Style)>> = vec![Vec::new()];
+    let mut used = 0usize;
+    for &(c, style) in chars {
+        let cell = cell_width(c);
+        if used + cell > width && !rows.last().expect("a row").is_empty() {
+            rows.push(Vec::new());
+            used = 0;
+        }
+        rows.last_mut().expect("a row").push((c, style));
+        used += cell;
+    }
+    rows
 }
 
 /// Break on width alone, for text where a space carries no more meaning than

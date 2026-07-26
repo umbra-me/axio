@@ -262,6 +262,18 @@ line by line and rendering it whole must produce identical output or a resumed
 transcript would not match what was watched live; that equivalence is a test,
 and an open code fence is the only state allowed to cross a line boundary.
 
+**syntect's default regex engine is a C library.** `regex-onig` pulls in
+oniguruma and therefore a C toolchain, which is exactly what installing on a
+clean Windows machine is promised not to need. `default-features = false` plus
+`regex-fancy` is pure Rust and keeps that promise; `cargo tree` finding `onig`
+means a default feature crept back in.
+
+**A scope op opens the region it is paired with.** `ScopeRegionIterator` yields
+`(text, op)`, and the op has to be applied *before* the text is styled. Reversed,
+every run takes the colour of the one before it: `fn` renders plain and the
+space after it renders as a keyword. It looks like an off-by-one in the colour
+table rather than in the loop, which is what makes it worth writing down.
+
 **A character is not a column.** An ideograph or an emoji occupies two columns
 and counts as one character, and a combining mark occupies none. Wrapping by
 character count writes those lines wider than they were measured, and the

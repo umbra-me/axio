@@ -95,7 +95,20 @@ line, the composer, the question being asked — is redrawn.
 The answer arrives a line at a time with its markdown rendered: headings, lists,
 quotes, code, tables and emphasis become styles and columns rather than
 asterisks and pipes, and the sentence still being written waits dim in the
-viewport until it is finished.
+viewport until it is finished. Fenced code is highlighted in your terminal's own
+colours rather than a bundled theme, so it matches everything around it.
+
+```
+  ⏺ read    src/parse.rs                              3ms
+  ⏺ edit    src/parse.rs  +12 −4                     18ms
+
+  Done — the lexer now owns the span table.
+
+╭─ claude-opus-5 ───────────── 4s · 1.2k in / 340 out ─╮
+│ › explain the change                                 │
+╰──────────────────────────────────────────────────────╯
+  · thinking                        ctrl-c to interrupt
+```
 
 The composer is a line editor. A pasted paragraph stays one prompt rather than
 submitting its first line.
