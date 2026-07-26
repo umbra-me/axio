@@ -3,6 +3,19 @@
 [advisories]
 version = 2
 yanked = "deny"
+# RUSTSEC-2025-0141: bincode 1.x is unmaintained. It is not a vulnerability —
+# no advisory claims a defect — and nothing here calls it: syntect uses it to
+# load the compiled syntax definitions it ships with, and those bytes are built
+# into the binary rather than read from anywhere a user or a model can reach.
+# There is no syntect configuration that keeps the bundled syntaxes without it,
+# and the alternatives are a C-compiled highlighter, which the Windows install
+# promise rules out, or no highlighting.
+#
+# Revisit when: syntect releases against bincode 2, or the advisory becomes a
+# vulnerability rather than a maintenance notice. Anything that makes these
+# bytes attacker-controlled — loading syntax dumps from disk, say — retires the
+# exception rather than widening it.
+ignore = ["RUSTSEC-2025-0141"]
 
 [licenses]
 version = 2
