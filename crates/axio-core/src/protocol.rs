@@ -145,8 +145,14 @@ pub enum ItemBody {
     /// summary when `display: "summarized"` is requested and empty otherwise.
     /// The block is still wire state and must be echoed back verbatim, which is
     /// why it is persisted regardless of whether a surface renders it.
+    ///
+    /// `signature` is the opaque token the provider mints alongside the block.
+    /// Echoing the text without it is rejected, so it is part of the durable
+    /// record even though no surface ever displays it.
     Reasoning {
         text: String,
+        #[serde(default)]
+        signature: String,
     },
     ToolCall {
         call_id: String,

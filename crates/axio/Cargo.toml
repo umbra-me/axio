@@ -22,4 +22,10 @@ axio-core.workspace = true
 axio-provider.workspace = true
 axio-tools.workspace = true
 anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+axio-core = { workspace = true, features = ["testing"] }

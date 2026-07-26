@@ -301,6 +301,46 @@ pub enum StreamEvent {
 /// `x-api-key` header verbatim. `Auth` and `Transport` therefore redact for the
 /// same reason `Http` does; the invariant is that no provider body reaches an
 /// error, a log or a session file in the clear, not that one variant does.
+/// Collects `input_json_delta` fragments and parses them exactly once.
+///
+/// Parsing per fragment is the obvious mistake: the fragments are arbitrary
+/// string slices of a JSON document, so all but the last are invalid on their
+/// own. The parse happens at block end and nowhere else, and `parse_count` is
+/// exposed so a test can prove it.
+#[derive(Debug, Default)]
+pub struct ToolInputAccumulator {
+    fragments: std::collections::BTreeMap<u32, String>,
+    parse_count: usize,
+}
+
+impl ToolInputAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, index: u32, fragment: &str) {
+        self.fragments.entry(index).or_default().push_str(fragment);
+    }
+
+    /// Take the assembled arguments for a block. An empty accumulation is an
+    /// empty object, which is what a no-argument tool call streams.
+    pub fn finish(&mut self, index: u32) -> Result<serde_json::Value, ProviderError> {
+        let raw = self.fragments.remove(&index).unwrap_or_default();
+        self.parse_count += 1;
+        if raw.trim().is_empty() {
+            return Ok(serde_json::json!({}));
+        }
+        serde_json::from_str(&raw).map_err(|source| ProviderError::Decode {
+            raw: Redacted::new(raw),
+            source,
+        })
+    }
+
+    pub fn parse_count(&self) -> usize {
+        self.parse_count
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("authentication failed: {0}")]

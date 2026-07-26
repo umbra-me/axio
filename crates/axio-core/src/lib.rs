@@ -16,15 +16,18 @@
 
 #![forbid(unsafe_code)]
 
+pub mod agent;
 pub mod approver;
 pub mod protocol;
 pub mod provider;
 pub mod redact;
+pub mod session;
 pub mod tool;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod scripted;
 
+pub use agent::{Agent, RuntimeConfig};
 pub use approver::{Approver, NonInteractive};
 pub use protocol::{
     ApprovalRequest, Decision, Delta, Event, EventKind, Item, ItemBody, NoticeLevel,
@@ -32,4 +35,5 @@ pub use protocol::{
 };
 pub use provider::{Effort, ModelRequest, Provider, ProviderError, StopReason, StreamEvent};
 pub use redact::{Redacted, register_secret};
+pub use session::Session;
 pub use tool::{Effects, Plan, Tool, ToolCx, ToolError, ToolOutput, Workspace};

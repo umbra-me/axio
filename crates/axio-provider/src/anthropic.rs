@@ -17,6 +17,8 @@ use serde_json::{Map, Value, json};
 
 use crate::sse::{SseDecoder, SseFrame};
 
+pub use axio_core::provider::ToolInputAccumulator;
+
 pub const DEFAULT_MODEL: &str = "claude-opus-5";
 pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const API_VERSION: &str = "2023-06-01";
@@ -427,46 +429,6 @@ fn parse_retry_after(header: Option<&str>) -> Option<Duration> {
         .ok()
         .filter(|f| f.is_finite() && *f >= 0.0)
         .map(Duration::from_secs_f64)
-}
-
-/// Collects `input_json_delta` fragments and parses them exactly once.
-///
-/// Parsing per fragment is the obvious mistake: the fragments are arbitrary
-/// string slices of a JSON document, so all but the last are invalid on their
-/// own. The parse happens at block end and nowhere else, and `parse_count` is
-/// exposed so a test can prove it.
-#[derive(Debug, Default)]
-pub struct ToolInputAccumulator {
-    fragments: std::collections::BTreeMap<u32, String>,
-    parse_count: usize,
-}
-
-impl ToolInputAccumulator {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn push(&mut self, index: u32, fragment: &str) {
-        self.fragments.entry(index).or_default().push_str(fragment);
-    }
-
-    /// Take the assembled arguments for a block. An empty accumulation is an
-    /// empty object, which is what a no-argument tool call streams.
-    pub fn finish(&mut self, index: u32) -> Result<Value, ProviderError> {
-        let raw = self.fragments.remove(&index).unwrap_or_default();
-        self.parse_count += 1;
-        if raw.trim().is_empty() {
-            return Ok(json!({}));
-        }
-        serde_json::from_str(&raw).map_err(|source| ProviderError::Decode {
-            raw: Redacted::new(raw),
-            source,
-        })
-    }
-
-    pub fn parse_count(&self) -> usize {
-        self.parse_count
-    }
 }
 
 /// The cache plan for a turn.
