@@ -1,0 +1,23 @@
+# Build output
+target/
+dist/
+node_modules/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor cruft
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs & local env
+*.log
+.env
+.env.local
+
+# Claude Code: machine-local state
+.claude/settings.local.json
+.claude/worktrees/
