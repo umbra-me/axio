@@ -92,6 +92,10 @@ printed into the terminal's own scrollback, so it survives the process, scrolls
 with the scrollbar and copies with the mouse. Only the live part — a status
 line, the composer, the question being asked — is redrawn.
 
+The answer arrives a line at a time with its markdown rendered: headings, lists,
+quotes, code and emphasis become styles rather than asterisks, and the sentence
+still being written waits dim in the viewport until it is finished.
+
 When an action needs approval the diff or the command lands in scrollback and
 the viewport asks:
 

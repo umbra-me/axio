@@ -150,6 +150,21 @@ terminal's own history and only the live part is redrawn. A diff being approved
 goes to scrollback for the same reason: it is the evidence the answer rests on,
 and it should still be there afterwards.
 
+An answer reaches that history **a line at a time, rendered**. The model writes
+markdown whether or not anything reads it, so the surface renders the subset it
+actually emits — headings, lists, quotes, rules, fenced and inline code, links
+and emphasis — and leaves anything else as the characters that were written. A
+line is the unit because it is the unit markdown is written in: it can be
+rendered as soon as its newline arrives, without seeing what follows, and the
+only state that crosses a line boundary is an open code fence. What is left over
+— the sentence still being typed — stays in the viewport, unrendered and dim,
+until its own newline commits it.
+
+The cost of committing early is that a dropped stream cannot be unprinted. The
+retry re-sends what was lost, so the surface says so rather than letting the
+text quietly appear twice, which is the same bargain the one-shot renderer
+makes when it streams to stdout.
+
 The decision travels back through `Approver`, not through the event stream, and
 the turn awaits it inline on `&mut self`. So the loop and the interface cannot
 be the same task: the interactive approver hands the request across a channel

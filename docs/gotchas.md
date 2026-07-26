@@ -247,6 +247,21 @@ CI turns into an error with `RUSTFLAGS: -D warnings` and a plain local build
 does not. `scripts/features.sh` builds both sets with CI's flag, because the gap
 was exactly one flag wide and it cost a red build.
 
+**An asterisk is arithmetic more often than it is emphasis.** `2 * 3 * 4` has a
+pair of asterisks in it, and a renderer that simply looks for the next one turns
+the line into "2 3 4" with the middle in italics — a wrong number, presented
+confidently, from a renderer nobody was watching. A marker only opens emphasis
+when it is glued to the text after it and only closes when it is glued to the
+text before it. The same reasoning covers `snake_case_name`: a single underscore
+inside a word is part of an identifier, not the start of italics.
+
+**Rendered text is committed as soon as its line ends.** Nothing can be
+unprinted from scrollback afterwards, so a retry after a dropped stream says the
+text above may repeat rather than pretending it will not. Rendering a message
+line by line and rendering it whole must produce identical output or a resumed
+transcript would not match what was watched live; that equivalence is a test,
+and an open code fence is the only state allowed to cross a line boundary.
+
 **A key event fires on release too, on Windows.** Filtering to
 `KeyEventKind::Press` is the difference between one character and two. It is one
 guard in the key reader, and nothing in the suite asserts it.

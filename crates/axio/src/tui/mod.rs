@@ -12,6 +12,7 @@
 //! contract.
 
 mod approver;
+mod markdown;
 
 use std::io::Write;
 
@@ -33,9 +34,14 @@ use tokio_util::sync::CancellationToken;
 use approver::{Ask, TuiApprover};
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
-/// set when it is created; anything that wants more room is printed into
-/// scrollback instead, which is where a diff belongs anyway.
-const VIEWPORT_ROWS: u16 = 4;
+/// set when it is created and ratatui offers no way to change it after;
+/// anything that wants more room is printed into scrollback instead, which is
+/// where a diff belongs anyway.
+///
+/// Three of these are the status, the composer and the hint. The rest hold the
+/// tail of the sentence being streamed — one row would show a paragraph as a
+/// single scrolling line, which is unreadable, so the tail gets what is left.
+const VIEWPORT_ROWS: u16 = 6;
 
 /// What the interface is doing, and therefore what a keystroke means.
 enum Mode {
@@ -53,9 +59,16 @@ pub struct Tui {
     history: Vec<String>,
     history_index: Option<usize>,
     mode: Mode,
-    /// Text of the assistant message currently streaming, so the tail can be
-    /// shown live before the finished block goes to scrollback.
+    /// The part of the streaming message that has no newline after it yet, so
+    /// the tail can be shown live before it can be rendered and committed.
     live: String,
+    /// Markdown state carried across the lines of the message being streamed —
+    /// an open code fence is the only thing that outlives a line.
+    md: markdown::Renderer,
+    /// Whether any of the current message has already reached scrollback, which
+    /// decides both what a completed message still has to render and whether a
+    /// discarded stream needs to warn that the text above may repeat.
+    flushed: bool,
     status: String,
     interrupt_armed: bool,
     model: String,
@@ -112,6 +125,8 @@ pub async fn run(
         history_index: None,
         mode: Mode::Idle,
         live: String::new(),
+        md: markdown::Renderer::default(),
+        flushed: false,
         status: String::new(),
         interrupt_armed: false,
         model,
@@ -411,16 +426,34 @@ impl Tui {
         event: &Event,
     ) -> std::io::Result<()> {
         match &event.kind {
+            EventKind::ItemStarted { item } => {
+                if matches!(item.body, ItemBody::AgentMessage { .. }) {
+                    self.begin_message();
+                }
+            }
             EventKind::ItemDelta {
                 delta: Delta::Text { text },
                 ..
             } => {
                 self.live.push_str(text);
+                self.flush_lines(terminal)?;
             }
             EventKind::ItemDiscarded { .. } => {
-                // The retry re-sends what was dropped, so the partial text must
-                // not stay on screen or it arrives twice.
-                self.live.clear();
+                // A retry re-sends what was dropped. The unflushed tail is
+                // simply dropped, but a line already in scrollback cannot be
+                // unprinted — so say so, rather than letting it silently
+                // reappear. This is what the one-shot renderer does too.
+                let repeats = self.flushed;
+                self.begin_message();
+                if repeats {
+                    self.push(
+                        terminal,
+                        vec![Line::styled(
+                            "  the stream dropped; retrying — the text above may repeat",
+                            Style::default().fg(Color::Yellow),
+                        )],
+                    )?;
+                }
                 self.status = "retrying".into();
             }
             EventKind::Notice { level, message } => {
@@ -451,6 +484,39 @@ impl Tui {
         Ok(())
     }
 
+    /// Forget whatever was being streamed and start a message from a clean
+    /// markdown state.
+    fn begin_message(&mut self) {
+        self.live.clear();
+        self.md = markdown::Renderer::default();
+        self.flushed = false;
+    }
+
+    /// Commit every complete line of the streaming message to scrollback,
+    /// rendered, leaving the unterminated tail in the viewport.
+    ///
+    /// A line is the unit because it is the unit markdown is written in: a
+    /// heading, a bullet or a paragraph is finished at its newline and can be
+    /// rendered without seeing what follows. Holding the whole message back
+    /// until it completes would mean watching a blank screen and then having
+    /// a page appear at once.
+    fn flush_lines<W: Write>(
+        &mut self,
+        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+    ) -> std::io::Result<()> {
+        let width = self.width(terminal) as usize;
+        let mut lines = Vec::new();
+        while let Some(at) = self.live.find('\n') {
+            let source: String = self.live.drain(..=at).collect();
+            lines.extend(self.md.line(source.trim_end_matches('\n'), width));
+        }
+        if lines.is_empty() {
+            return Ok(());
+        }
+        self.flushed = true;
+        self.push(terminal, lines)
+    }
+
     fn on_item<W: Write>(
         &mut self,
         terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
@@ -470,15 +536,23 @@ impl Tui {
         }
         match &item.body {
             ItemBody::AgentMessage { text } if !text.trim().is_empty() => {
-                // The finished block goes to scrollback; the live tail is no
-                // longer needed and would otherwise show twice.
-                self.live.clear();
+                // The deltas of this message are exactly its text, so whatever
+                // they already committed must not be rendered again — only the
+                // tail they left behind. A provider that streamed nothing
+                // leaves both empty, and the whole message is rendered here.
                 let width = self.width(terminal);
-                let mut lines = wrap(text, width.saturating_sub(2) as usize)
-                    .into_iter()
-                    .map(|l| Line::raw(format!("  {l}")))
-                    .collect::<Vec<_>>();
+                let remainder = if self.flushed || !self.live.is_empty() {
+                    std::mem::take(&mut self.live)
+                } else {
+                    text.clone()
+                };
+                let mut lines = if remainder.is_empty() {
+                    Vec::new()
+                } else {
+                    self.md.block(&remainder, width as usize)
+                };
                 lines.push(Line::raw(""));
+                self.begin_message();
                 self.push(terminal, lines)?;
             }
             ItemBody::ToolCall {
@@ -555,7 +629,7 @@ impl Tui {
         terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
         outcome: &TurnOutcome,
     ) -> std::io::Result<()> {
-        self.live.clear();
+        self.begin_message();
         let line = match outcome {
             TurnOutcome::Completed => None,
             TurnOutcome::Interrupted => Some(("interrupted".to_owned(), Color::Yellow)),
@@ -687,14 +761,14 @@ impl Tui {
     ) -> std::io::Result<()> {
         terminal.draw(|frame| {
             let rows = Layout::vertical([
-                Constraint::Length(1),
+                Constraint::Min(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
             ])
             .split(frame.area());
 
-            frame.render_widget(self.live_row(rows[0]), rows[0]);
+            frame.render_widget(self.live_rows(rows[0]), rows[0]);
             frame.render_widget(self.status_row(), rows[1]);
             frame.render_widget(self.prompt_row(), rows[2]);
             frame.render_widget(self.hint_row(), rows[3]);
@@ -707,22 +781,33 @@ impl Tui {
         Ok(())
     }
 
-    /// The tail of whatever is streaming, so a long answer looks alive before
-    /// the finished block reaches scrollback.
-    fn live_row(&self, area: Rect) -> Paragraph<'_> {
+    /// The unfinished tail of the streaming message, wrapped over the rows the
+    /// viewport has spare and scrolled so the newest text is always the last
+    /// row visible.
+    ///
+    /// It is dim and it is markdown-styled, but its markers may still be
+    /// half-written — this is the one place a `**` can legitimately be on
+    /// screen, and a moment later the finished line lands in scrollback
+    /// rendered. Everything above it is already final.
+    fn live_rows(&self, area: Rect) -> Paragraph<'_> {
         let width = area.width.saturating_sub(2) as usize;
-        let tail: String = if self.live.is_empty() {
-            String::new()
-        } else {
-            let flat = self.live.replace('\n', " ");
-            let chars: Vec<char> = flat.chars().collect();
-            let start = chars.len().saturating_sub(width);
-            chars[start..].iter().collect()
-        };
-        Paragraph::new(Line::styled(
-            format!("  {tail}"),
-            Style::default().add_modifier(Modifier::DIM),
-        ))
+        let height = area.height.max(1) as usize;
+        if self.live.is_empty() || width == 0 {
+            return Paragraph::new(Vec::<Line<'static>>::new());
+        }
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut lines: Vec<Line<'static>> = wrap(&self.live, width)
+            .into_iter()
+            .map(|row| {
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(markdown::spans(&row, dim));
+                Line::from(spans)
+            })
+            .collect();
+        if lines.len() > height {
+            lines.drain(..lines.len() - height);
+        }
+        Paragraph::new(lines)
     }
 
     fn status_row(&self) -> Paragraph<'_> {

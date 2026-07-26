@@ -50,7 +50,9 @@ ordered permission engine, sessions on disk, and layered configuration.
 - **An interactive surface.** An inline viewport, so the finished transcript
   lands in the terminal's own scrollback rather than being owned by a
   full-screen application. Approval shows the diff or the raw command before it
-  asks.
+  asks. The answer streams in a line at a time with its markdown rendered —
+  headings, lists, quotes, rules, code and emphasis — while the unfinished tail
+  waits in the viewport, wrapped rather than flattened onto one line.
 - **An optional sandbox**, Linux only: Landlock, applied before the runtime
   starts and inherited by every command axio spawns. `--sandbox`, or
   `[sandbox] enabled`.
