@@ -57,6 +57,25 @@ pub struct Config {
     pub tools: ToolsSection,
     pub permissions: PermissionsSection,
     pub output: OutputSection,
+    pub sandbox: SandboxSection,
+}
+
+/// Kernel-enforced filesystem confinement. Off by default and Linux-only.
+///
+/// Off by default because it is a real restriction with real failure modes: a
+/// toolchain that reads something outside the allow-list stops working, and a
+/// sandbox that silently breaks the build is worse than none. On means a shell
+/// command cannot reach `~/.ssh` or axio's own credential file whatever else
+/// goes wrong.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SandboxSection {
+    pub enabled: bool,
+    /// Extra paths a command may read, for whatever the toolchain needs that
+    /// the defaults do not cover.
+    pub read: Vec<String>,
+    /// Extra paths a command may write.
+    pub write: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,6 +195,12 @@ impl Resolved {
     /// would sit outside that contract.
     pub fn notices(&self) -> &[Notice] {
         &self.notices
+    }
+
+    /// Add something a surface learned after resolution, so it reaches the
+    /// event stream through the same counter as everything else.
+    pub fn push_notice(&mut self, notice: Notice) {
+        self.notices.push(notice);
     }
 
     /// Which layer won a key, for `axio config --explain`.
@@ -479,6 +504,7 @@ fn section_is_valid(name: &str, value: &toml::Value) -> bool {
         "tools" => v.try_into::<ToolsSection>().is_ok(),
         "permissions" => v.try_into::<PermissionsSection>().is_ok(),
         "output" => v.try_into::<OutputSection>().is_ok(),
+        "sandbox" => v.try_into::<SandboxSection>().is_ok(),
         // An unknown section is a typo or a newer axio; either way it is not
         // ours to reset, and dropping it silently is the friendlier failure.
         _ => false,

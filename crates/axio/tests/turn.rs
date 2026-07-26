@@ -220,3 +220,61 @@ fn a_tool_using_turn_completes_against_the_documented_anthropic_format() {
     assert!(stdout.contains("Written."), "stdout was: {stdout}");
     assert_eq!(code, Some(0));
 }
+
+/// The sandbox, end to end against a stub — no live model, because the point is
+/// what the kernel does, not what the model asks for.
+///
+/// Spawned rather than called: a Landlock domain applies to the calling thread
+/// and cannot be lifted, so applying one inside the test runner would restrict
+/// every test after it.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_sandbox_confines_a_shell_command_to_the_workspace() {
+    use support::{spawn_axio, stub_provider};
+
+    let home = tempfile::tempdir().expect("a temp dir");
+    let outside = tempfile::tempdir().expect("a second temp dir");
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, "CANARY-outside-the-workspace\n").unwrap();
+
+    let (base, _server) = stub_provider(
+        "bash",
+        serde_json::json!({"command": format!("cat {}", secret.display()), "timeout_secs": 30}),
+        "reported",
+    );
+    let mut child = spawn_axio(&base, home.path(), &["--yes", "--sandbox"]);
+    let status = wait_for(Duration::from_secs(60), || child.try_wait().ok().flatten())
+        .unwrap_or_else(|| {
+            let _ = child.kill();
+            panic!("the turn never finished")
+        });
+
+    let mut err = Vec::new();
+    use std::io::Read;
+    if let Some(mut s) = child.stderr.take() {
+        let _ = s.read_to_end(&mut err);
+    }
+    let stderr = String::from_utf8_lossy(&err);
+
+    // A kernel without Landlock says so rather than failing: the check is that
+    // it never claims confinement it does not have.
+    if stderr.contains("unavailable") || stderr.contains("partly enforced") {
+        assert!(
+            !stderr.contains("sandbox on:"),
+            "it must not claim to be on and off at once:\n{stderr}"
+        );
+        return;
+    }
+
+    assert!(stderr.contains("sandbox on:"), "stderr was:\n{stderr}");
+    let sessions = home.path().join("state").join("sessions");
+    let mut recorded = String::new();
+    for entry in walk(&sessions) {
+        recorded.push_str(&std::fs::read_to_string(entry).unwrap_or_default());
+    }
+    assert!(
+        !recorded.contains("CANARY-outside-the-workspace"),
+        "the command read outside the workspace:\n{recorded}"
+    );
+    let _ = status;
+}

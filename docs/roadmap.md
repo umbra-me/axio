@@ -69,7 +69,6 @@ tripwire is the point: a deferral without one is just a backlog item.
 | Typed IPC codegen | A non-Rust consumer that already exists and is load-bearing |
 | Tool-protocol client | Two independent requests for a specific server |
 | Language-server diagnostics | A long session where the model repeatedly ships code failing the next typecheck. The shell tool already runs the project's own checks |
-| Sandboxing | The first unattended run against untrusted input. Linux lands first, and the README claim becomes "sandboxed on Linux only" |
 | A database for sessions | Measured `--list` latency above 200ms on a real machine. A sidecar index comes first |
 | Per-hunk edit approval | Three occasions of wanting to accept part of a diff |
 | Checkpoints and undo | Working outside a git repository becomes routine, or one bad turn destroys uncommitted work |

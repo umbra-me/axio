@@ -4,6 +4,7 @@
 //! not by a flag the caller has to remember.
 
 mod render;
+mod sandbox;
 mod surface;
 #[cfg(feature = "tui")]
 mod tui;
@@ -98,21 +99,66 @@ struct Cli {
     /// Override the model for this run.
     #[arg(long, value_name = "NAME")]
     model: Option<String>,
+
+    /// Confine every command to the workspace, using the kernel's own sandbox.
+    /// Linux only. Also settable as `[sandbox] enabled`.
+    #[arg(long)]
+    sandbox: bool,
 }
 
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+
+    // Before the runtime, and that is not a preference. A Landlock domain
+    // belongs to the calling *thread* and is inherited by threads it creates,
+    // so restricting a tokio worker restricts that worker alone — and the
+    // command runs on a different one. Applied here, every worker inherits it.
+    let sandbox_notice = confine(&cli);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to start the async runtime");
 
-    std::process::ExitCode::from(runtime.block_on(run(cli)))
+    std::process::ExitCode::from(runtime.block_on(run(cli, sandbox_notice)))
 }
 
-async fn run(cli: Cli) -> u8 {
-    let resolved = resolve_config(&cli);
+/// Apply the sandbox if this invocation asked for one and will run a turn.
+///
+/// `auth login` writes to axio's own directory and the report-and-exit modes
+/// touch nothing a command could, so neither is worth confining — and
+/// confining the first would break it.
+fn confine(cli: &Cli) -> Option<Notice> {
+    let resolved = resolve_config(cli);
+    let runs_a_turn = cli.command.is_none() && !cli.doctor && cli.explain.is_none() && !cli.list;
+    if !runs_a_turn || !sandbox_requested(cli, &resolved) {
+        return None;
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let plan = sandbox::Plan::new(&cwd, &state_dir(), &axio_home(), home_dir().as_deref())
+        .allow_read(resolved.config().sandbox.read.iter().map(PathBuf::from))
+        .allow_write(resolved.config().sandbox.write.iter().map(PathBuf::from));
+
+    Some(match sandbox::apply(&plan) {
+        sandbox::Outcome::Enforced => Notice::info(format!(
+            "sandbox on: commands may write only under {} and read only the system",
+            cwd.display()
+        )),
+        sandbox::Outcome::Partial(why) => Notice::warn(format!(
+            "sandbox is only partly enforced ({why}); treat it as no confinement"
+        )),
+        sandbox::Outcome::Unsupported(why) => Notice::warn(format!(
+            "sandbox requested but unavailable ({why}); nothing is confined"
+        )),
+    })
+}
+
+async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
+    let mut resolved = resolve_config(&cli);
+    if let Some(notice) = sandbox_notice {
+        resolved.push_notice(notice);
+    }
 
     if let Some(Command::Auth { action }) = &cli.command {
         return auth_command(action);
@@ -159,6 +205,10 @@ async fn run(cli: Cli) -> u8 {
             2
         }
     }
+}
+
+fn sandbox_requested(cli: &Cli, resolved: &Resolved) -> bool {
+    cli.sandbox || resolved.config().sandbox.enabled
 }
 
 /// Everything a surface needs, built once so the two of them cannot drift.
@@ -224,6 +274,18 @@ fn prepare(
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
+    let mut env_vars = axio_tools::proc::child_env();
+    if sandbox_requested(cli, resolved) {
+        // A tool that honours TMPDIR gets somewhere to write without the whole
+        // shared temp directory being granted.
+        let scratch = sandbox::scratch_dir(&state_dir());
+        let _ = std::fs::create_dir_all(&scratch);
+        for var in ["TMPDIR", "TMP", "TEMP"] {
+            env_vars.retain(|(k, _)| k != var);
+            env_vars.push((var.to_owned(), scratch.display().to_string()));
+        }
+    }
+
     let mut agent = Agent::new(
         provider,
         approver,
@@ -236,14 +298,16 @@ fn prepare(
     )
     .with_policy(policy)
     .with_recorder(recorder)
-    .with_env(ToolEnv {
-        vars: axio_tools::proc::child_env(),
-    });
+    .with_env(ToolEnv { vars: env_vars });
 
     for tool in axio_tools::all() {
         agent.register_tool(tool);
     }
 
+    // After the credential has been read and before any tool can run. That
+    // ordering is what lets the sandbox exclude axio's own home entirely: a
+    // shell command then has no path to `auth.json` even if every other guard
+    // fails.
     Ok(Prepared {
         agent,
         events: rx,

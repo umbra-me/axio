@@ -245,6 +245,24 @@ with no echo and no line discipline: they have to type `reset` blind, without
 seeing what they type. The hook runs before the default one so the message is
 still readable when it arrives.
 
+## The sandbox
+
+**A Landlock domain belongs to a thread, not a process.** Applying one on a
+tokio worker restricts that worker and nothing else — and the command runs on a
+different one. The symptom is the worst available: a sandbox that reports itself
+applied and confines nothing. It is applied before the runtime is built, where
+there is one thread and every later thread inherits it.
+
+**Directory rights on a regular file downgrade the whole ruleset.** `ReadDir` on
+`~/.gitconfig` cannot be honoured, so the kernel enforces a reduced ruleset and
+`restrict_self` comes back `PartiallyEnforced` — for every path, not just that
+one. The rights have to match what the path actually is.
+
+**Nothing spawns without `/proc` and `/dev`.** The standard library closes
+inherited descriptors through `/proc`, and `Stdio::null()` opens `/dev/null`.
+Grant the rest of the system and forget these two and every command fails with
+"could not start a shell: permission denied" before it has run.
+
 ## Sessions, config and compaction
 
 **A context-elision marker must never be persisted.** It describes the

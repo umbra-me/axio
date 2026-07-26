@@ -65,6 +65,10 @@ clap = { version = "4.6.2", default-features = false, features = ["std", "help",
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "scrolling-regions"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 etcetera = "0.11.0"
+# Linux-only, and only in the binary. A safe wrapper over the kernel's own
+# unprivileged sandbox — no container runtime, no setuid helper, nothing to
+# install.
+landlock = "0.4.6"
 globset = "0.4.19"
 ignore = "0.4.31"
 shlex = "2.0.1"

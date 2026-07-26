@@ -155,9 +155,15 @@ not.
 ## Safety
 
 axio executes code written by a language model against your working directory.
-There is no sandbox: confinement is the workspace root, the approval prompt and
-process-group containment. Read [`SECURITY.md`](SECURITY.md) before running it
-anywhere that matters.
+By default there is no sandbox: confinement is the workspace root, the approval
+prompt and process-group containment.
+
+On Linux, `--sandbox` adds one — Landlock, the kernel's own, inherited by every
+command axio spawns. The workspace is writable, the system is readable, and
+`~/.ssh` is not there at all. It says nothing about the network, and it is a
+second wall behind the permission engine rather than a replacement for it.
+
+Read [`SECURITY.md`](SECURITY.md) before running it anywhere that matters.
 
 ## License
 

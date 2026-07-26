@@ -41,11 +41,19 @@ on disk, and layered configuration.
   within two seconds gives up. `SIGTERM` and `SIGHUP` cancel and unwind on a
   deadline, taking the whole child process tree with them.
 
+- **An interactive surface.** An inline viewport, so the finished transcript
+  lands in the terminal's own scrollback rather than being owned by a
+  full-screen application. Approval shows the diff or the raw command before it
+  asks.
+- **An optional sandbox**, Linux only: Landlock, applied before the runtime
+  starts and inherited by every command axio spawns. `--sandbox`, or
+  `[sandbox] enabled`.
+
 ### Known limitations
 
-- **No interactive surface yet.** `axio` with no prompt at a terminal says so.
-- **No sandbox.** Confinement is the workspace root, the approval prompt and
-  process-group containment — not an OS-enforced boundary. See `SECURITY.md`.
+- **The sandbox is filesystem-only and Linux-only.** It says nothing about the
+  network, and on other platforms asking for it is a warning rather than
+  confinement. Off by default.
 - **The Anthropic path is consistent with the documented wire format but has
   never met the real endpoint.** `scripts/live-check.sh` is what would change
   that.
