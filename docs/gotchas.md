@@ -221,6 +221,24 @@ child, breaking anything that checks whether it is attached to a terminal.
 **Output truncation lives in the loop, not in the tools.** A tool that forgets
 puts ten megabytes into the next request and nothing errors.
 
+## The interactive surface
+
+**Two readers of stdin fight over the terminal's replies.** An inline viewport
+asks the terminal where the cursor is, and reads the answer from stdin — which
+the key handler is already reading. The reply gets delivered to the wrong
+reader, the query times out, and the interface dies with "the cursor position
+could not be read". Enabling `scrolling-regions` removes the query. The failure
+needs a real terminal to appear at all, which is why it was found by driving the
+binary through a pty rather than by any test in the suite.
+
+**A key event fires on release too, on Windows.** Filtering to
+`KeyEventKind::Press` is the difference between one character and two.
+
+**Restore the terminal from a panic hook.** A panic in raw mode leaves the user
+with no echo and no line discipline: they have to type `reset` blind, without
+seeing what they type. The hook runs before the default one so the message is
+still readable when it arrives.
+
 ## Sessions, config and compaction
 
 **A context-elision marker must never be persisted.** It describes the

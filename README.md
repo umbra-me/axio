@@ -1,6 +1,7 @@
 # axio
 
-A cross-platform AI coding agent, in Rust.
+A cross-platform AI coding agent — Rust, with a one-shot CLI and an
+interactive terminal interface.
 
 axio runs its own agent loop: it talks to LLM providers directly, executes tool
 calls against your workspace, and streams the result back to you.
@@ -17,8 +18,7 @@ search, edit and run commands in a workspace, and pick up where it left off.
 
 Writes and shell commands ask before they happen; reads do not.
 
-Two caveats worth stating plainly. There is no interactive surface yet — a bare
-`axio` at a terminal says so. And while the OpenAI-compatible provider is
+One caveat worth stating plainly: while the OpenAI-compatible provider is
 exercised against a live endpoint on every check, the Anthropic path has only
 ever been run against the documented wire format, never the real API.
 
@@ -47,6 +47,7 @@ axio -p "explain this repo"
 cat src/lib.rs | axio -p "review this"
 axio --doctor                       # what axio can currently see
 
+axio                                # interactive, if stdin is a terminal
 axio --list                         # recent sessions
 axio --resume 01K3F               # continue one; a unique prefix is enough
 axio --explain model.effort         # where a setting came from
@@ -70,6 +71,36 @@ deny = ["bash:curl"]
 
 A project's own `.axio/config.toml` may only add restrictions, never remove
 them.
+
+## The interactive interface
+
+Run `axio` with nothing piped in and no `-p`, and you get a composer instead of
+a single turn.
+
+It is **inline**, not a full-screen application: the finished transcript is
+printed into the terminal's own scrollback, so it survives the process, scrolls
+with the scrollbar and copies with the mouse. Only the live part — a status
+line, the composer, the question being asked — is redrawn.
+
+When an action needs approval the diff or the command lands in scrollback and
+the viewport asks:
+
+```
+  approve  edit:notes.md
+  this will write files
+  @@ -1,3 +1,4 @@
+   # Notes
+   - first
+  +- second
+
+  allow? y once  a this session  n no
+```
+
+`enter` sends · `ctrl-c` interrupts a running turn, or exits at an empty prompt
+· `ctrl-d` leaves · `up`/`down` walk what you have already asked.
+
+A shell command is shown as the string the shell actually receives, never a
+word-split of it: the split reads as a simpler command than the one that runs.
 
 ## Providers
 

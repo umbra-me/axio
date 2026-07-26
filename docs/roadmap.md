@@ -34,16 +34,25 @@ Append-only JSONL records with a versioned header, resume by replay, `--list`,
 `--ephemeral`, layered configuration with per-section salvage and `--explain`,
 deterministic compaction, per-turn cost records and budget enforcement.
 
+### M5 — packaging, and the interactive surface
+
+Tag-driven release workflow for five targets, `cargo install`, a changelog, and
+`scripts/live-check.sh` — a real turn against a real model rather than a stub.
+The interactive surface arrived here rather than in v0.2: an inline viewport, a
+composer, and an `Approver` that shows the diff before it asks.
+
 ## Next
 
-### M5 — v0.1
+### v0.1 — the release itself
 
-Packaging, release CI, documentation, and a dogfooding pass.
+Everything M5 needs is built and green. What remains is the decision to tag it,
+and one thing no amount of code can supply: `scripts/live-check.sh` has never
+been run against the Anthropic provider, because there has never been a key.
 
 ## After v0.1
 
-- **v0.2 — interactive surface.** Inline viewport so the finished transcript
-  lands in real scrollback, a coalescing frame requester, and a composer.
+- **v0.2 — interactive ergonomics.** A coalescing frame requester, multi-line
+  composer entry, and per-hunk approval if it earns its place.
 - **v0.3 — durability and ergonomics.** Syntax highlighting, session search,
   better diffs.
 - **v0.4 — extension surface.** Gated on demand, not on schedule.

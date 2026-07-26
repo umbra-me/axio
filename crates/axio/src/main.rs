@@ -5,6 +5,8 @@
 
 mod render;
 mod surface;
+#[cfg(feature = "tui")]
+mod tui;
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
@@ -147,14 +149,7 @@ async fn run(cli: Cli) -> u8 {
 
     match Surface::select(cli.prompt.as_deref(), piped.as_deref(), stdin_is_tty) {
         Surface::OneShot(prompt) => one_shot(&cli, &resolved, prompt, stdout_is_tty).await,
-        Surface::Tui => {
-            eprintln!(
-                "axio: the interactive interface is not built yet.\n\
-                 Run a single turn instead:  axio -p \"your prompt\"\n\
-                 or pipe input:              echo \"your prompt\" | axio"
-            );
-            2
-        }
+        Surface::Tui => interactive(&cli, &resolved).await,
         Surface::Nothing => {
             eprintln!(
                 "axio: no prompt.\n\
@@ -166,22 +161,27 @@ async fn run(cli: Cli) -> u8 {
     }
 }
 
-async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty: bool) -> u8 {
-    let provider: Arc<dyn axio_core::provider::Provider> = match build_provider(resolved) {
-        Ok(provider) => provider,
-        Err(message) => {
-            // Config notices normally reach the user through `announce`, which
-            // is downstream of here. On this path they are the explanation —
-            // "no credential for `anthropic`" makes no sense to someone who
-            // selected a different one until they are told their config was
-            // rejected.
-            for notice in resolved.notices() {
-                eprintln!("axio: {}", notice.message);
-            }
-            eprintln!("axio: {message}");
-            return 1;
-        }
-    };
+/// Everything a surface needs, built once so the two of them cannot drift.
+///
+/// The interactive path and the one-shot path resolve the same configuration,
+/// protect the same directories and register the same tools. Two copies of this
+/// is how one surface quietly ends up with a permission rule the other does not
+/// apply.
+struct Prepared {
+    agent: Agent,
+    events: tokio::sync::mpsc::UnboundedReceiver<axio_core::protocol::Event>,
+    notices: Vec<Notice>,
+    resumed: bool,
+    model: String,
+}
+
+fn prepare(
+    cli: &Cli,
+    resolved: &Resolved,
+    label: Option<&str>,
+    approver: Arc<dyn axio_core::approver::Approver>,
+) -> Result<Prepared, String> {
+    let provider: Arc<dyn axio_core::provider::Provider> = build_provider(resolved)?;
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut cfg = resolved.runtime();
@@ -203,16 +203,10 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     // transcript's reasoning is only replayable under the model that minted it.
     let store = SessionStore::new(state_dir().join("sessions"));
     let (mut session, resumed, mut recorder) = match &cli.resume {
-        Some(needle) => match open_resumed(&store, needle, cli.model.as_deref(), &mut notices) {
-            Ok(parts) => parts,
-            Err(message) => {
-                eprintln!("axio: {message}");
-                return 1;
-            }
-        },
+        Some(needle) => open_resumed(&store, needle, cli.model.as_deref(), &mut notices)?,
         None => {
             let session = Session::new(cwd.clone(), &cfg.model);
-            let recorder = new_recorder(cli, &store, &session, &prompt, &mut notices);
+            let recorder = new_recorder(cli, &store, &session, label.unwrap_or(""), &mut notices);
             (session, false, recorder)
         }
     };
@@ -225,15 +219,11 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     }
     session.take_files_changed();
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
     let mut agent = Agent::new(
         provider,
-        Arc::new(if cli.yes {
-            NonInteractive::allow()
-        } else {
-            NonInteractive::deny()
-        }),
+        approver,
         session,
         cfg.clone(),
         vec![SystemBlock {
@@ -250,6 +240,97 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     for tool in axio_tools::all() {
         agent.register_tool(tool);
     }
+
+    Ok(Prepared {
+        agent,
+        events: rx,
+        notices,
+        resumed,
+        model: cfg.model.clone(),
+    })
+}
+
+/// The interactive surface.
+///
+/// `--yes` is honoured here too, and it is the only way an action goes
+/// unasked-about: with a human present the approver is the human.
+#[cfg(feature = "tui")]
+async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
+    let (tui_approver, asks) = tui::approver();
+    let approver: Arc<dyn axio_core::approver::Approver> = if cli.yes {
+        Arc::new(NonInteractive::allow())
+    } else {
+        Arc::new(tui_approver)
+    };
+
+    let prepared = match prepare(cli, resolved, None, approver) {
+        Ok(prepared) => prepared,
+        Err(message) => {
+            for notice in resolved.notices() {
+                eprintln!("axio: {}", notice.message);
+            }
+            eprintln!("axio: {message}");
+            return 1;
+        }
+    };
+
+    match tui::run(
+        prepared.agent,
+        prepared.events,
+        asks,
+        prepared.resumed,
+        prepared.notices,
+        prepared.model,
+    )
+    .await
+    {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("axio: the interface stopped: {e}");
+            1
+        }
+    }
+}
+
+/// Built without the `tui` feature: the headless binary says so rather than
+/// pretending the flag was wrong.
+#[cfg(not(feature = "tui"))]
+async fn interactive(_cli: &Cli, _resolved: &Resolved) -> u8 {
+    eprintln!(
+        "axio: this build has no interactive interface (built without the `tui` feature).\n\
+         Run a single turn instead:  axio -p \"your prompt\"\n\
+         or pipe input:              echo \"your prompt\" | axio"
+    );
+    2
+}
+
+async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty: bool) -> u8 {
+    let approver: Arc<dyn axio_core::approver::Approver> = Arc::new(if cli.yes {
+        NonInteractive::allow()
+    } else {
+        NonInteractive::deny()
+    });
+    let Prepared {
+        mut agent,
+        events: mut rx,
+        notices,
+        resumed,
+        ..
+    } = match prepare(cli, resolved, Some(&prompt), approver) {
+        Ok(prepared) => prepared,
+        Err(message) => {
+            // Config notices normally reach the user through `announce`, which
+            // is downstream of here. On this path they are the explanation —
+            // "no credential for `anthropic`" makes no sense to someone who
+            // selected a different one until they are told their config was
+            // rejected.
+            for notice in resolved.notices() {
+                eprintln!("axio: {}", notice.message);
+            }
+            eprintln!("axio: {message}");
+            return 1;
+        }
+    };
 
     // Colour is a property of the sink, not of the session: `axio -p x >
     // out.txt` run from a terminal must still write zero escape bytes.

@@ -5,13 +5,13 @@ Four crates and one binary, in a tree rooted at a dependency-free core.
 ```
                     ┌──────────────── axio (bin) ────────────────┐
                     │ clap · surface selection · renderers        │
-                    │ signal handling · exit codes                │
+                    │ inline TUI · signal handling · exit codes    │
                     └──────┬──────────────────────────┬───────────┘
                            │ constructs               │ constructs
                            ▼                          ▼
         ┌──────────────────────────────┐   ┌────────────────────────┐
-        │ Renderer                     │   │ Arc<dyn Approver>      │
-        │  PlainRenderer · JsonlRenderer│   │  NonInteractive        │
+        │ Renderer / Tui               │   │ Arc<dyn Approver>      │
+        │  PlainRenderer · JsonlRenderer│   │  NonInteractive · Tui  │
         └──────────▲───────────────────┘   └──────────▲─────────────┘
                    │ UnboundedReceiver<Event>         │ &ApprovalRequest → Decision
    ════════════════ THE BOUNDARY ══════════════════════════════════════
@@ -135,6 +135,25 @@ outlives it, reparented to init.
 A turn that completes with at least one action refused exits `5`. The answer is
 prose, and prose is not something a script can check — a run where every
 mutation was denied otherwise looks exactly like a run that did the work.
+
+## Surfaces
+
+Two, and neither is privileged. Both consume the same `Event` stream and supply
+an `Approver`; nothing else crosses the boundary, which is why `--json` is a
+renderer rather than a second loop.
+
+The interactive one uses an **inline** viewport rather than the alternate
+screen. A full-screen application owns scrollback, selection and the scrollbar
+and hands none of them back — so the finished transcript is printed into the
+terminal's own history and only the live part is redrawn. A diff being approved
+goes to scrollback for the same reason: it is the evidence the answer rests on,
+and it should still be there afterwards.
+
+The decision travels back through `Approver`, not through the event stream, and
+the turn awaits it inline on `&mut self`. So the loop and the interface cannot
+be the same task: the interactive approver hands the request across a channel
+and waits on a reply. A closed channel is a denial, because "nobody is there"
+must not mean "run it".
 
 ## Permission and execution
 

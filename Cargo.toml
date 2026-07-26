@@ -54,6 +54,16 @@ reqwest = { version = "0.13.4", default-features = false, features = [
 rustls = { version = "0.23.42", default-features = false, features = ["ring", "std", "tls12"] }
 
 clap = { version = "4.6.2", default-features = false, features = ["std", "help", "usage", "error-context"] }
+# The interactive surface. Behind the `tui` feature so the headless build links
+# neither of them; `event-stream` is what lets key input be selected on
+# alongside the agent's events instead of polled from a second thread.
+# `scrolling-regions` is not a nicety: without it every `insert_before` asks the
+# terminal where the cursor is, and the reply is read from stdin — which the key
+# handler is already reading. The two race, the reply is eaten, and the
+# interface dies with "the cursor position could not be read". With it, the
+# insert uses a scrolling region and asks nothing.
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "scrolling-regions"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 etcetera = "0.11.0"
 globset = "0.4.19"
 ignore = "0.4.31"
