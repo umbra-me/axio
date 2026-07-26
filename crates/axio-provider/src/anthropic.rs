@@ -255,6 +255,12 @@ impl AnthropicStream {
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 let kind = match block_type {
+                    // A server-side fallback response opens one of these at
+                    // each model boundary, as a start/stop pair with no deltas
+                    // between them. Treated as text it becomes an empty
+                    // assistant message in the transcript — a block that never
+                    // said anything, echoed back on every subsequent request.
+                    "fallback" => return Ok(()),
                     "thinking" | "redacted_thinking" => BlockKind::Thinking,
                     "tool_use" => BlockKind::ToolUse {
                         id: block

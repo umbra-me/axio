@@ -169,6 +169,11 @@ file.** Uncapped, an SSO login page or a corporate proxy error is hundreds of
 kilobytes of noise, and the one useful fact — that the response was not JSON, so
 the endpoint is probably not an API — was the thing it did not say.
 
+**A `fallback` content block has no deltas.** A server-side fallback response
+opens one at each model boundary, as a start/stop pair with nothing between.
+Mapped to text — the sensible default for an unknown block type — it becomes an
+empty assistant message that is then echoed back on every later request.
+
 **A spend cap nothing can measure is not a cap.** The unpriced providers report
 zero for every token, so `max_usd_per_turn` compared against `0.0` forever. It
 is silently inert, which is the worst outcome for a guardrail: the user believes

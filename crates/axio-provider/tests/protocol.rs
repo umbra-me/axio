@@ -425,3 +425,201 @@ fn a_registered_credential_is_scrubbed_from_every_variant() {
         assert!(!format!("{err:?}").contains(TOKEN));
     }
 }
+
+// ------------------------------------------------- the documented wire format
+//
+// `turn.sse` above is hand-written: it exercises the shapes axio cares about,
+// but it is evidence about our own assumptions, not about the API. These three
+// are the complete response transcripts published in the streaming
+// documentation — basic text, tool use, and thinking — copied verbatim. They
+// cannot prove the endpoint behaves as documented, but they do prove the
+// decoder handles the exact bytes the documentation says to expect, which is
+// the strongest claim available without a key.
+
+const DOC_TEXT: &[u8] = include_bytes!("fixtures/doc-text.sse");
+const DOC_TOOL_USE: &[u8] = include_bytes!("fixtures/doc-tool-use.sse");
+const DOC_THINKING: &[u8] = include_bytes!("fixtures/doc-thinking.sse");
+
+#[test]
+fn the_documented_text_stream_decodes() {
+    let events = decode(DOC_TEXT);
+
+    assert!(matches!(
+        events.first(),
+        Some(StreamEvent::MessageStart { .. })
+    ));
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::TextDelta { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "Hello!");
+    assert!(matches!(
+        events.last(),
+        Some(StreamEvent::Done {
+            stop: StopReason::EndTurn
+        })
+    ));
+
+    // A `ping` carries nothing and must not appear as an event.
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::TextDelta { text, .. } if text.is_empty()))
+    );
+}
+
+#[test]
+fn the_documented_tool_use_stream_decodes() {
+    let events = decode(DOC_TOOL_USE);
+
+    let started: Vec<&BlockKind> = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::BlockStart { kind, .. } => Some(kind),
+            _ => None,
+        })
+        .collect();
+    assert!(matches!(started[0], BlockKind::Text));
+    match started[1] {
+        BlockKind::ToolUse { id, name } => {
+            assert_eq!(id, "toolu_01T1x1fJ34qAmk2tNTrN7Up6");
+            assert_eq!(name, "get_weather");
+        }
+        other => panic!("expected a tool use block, got {other:?}"),
+    }
+
+    // The fragments are partial JSON: each one alone is invalid, and only the
+    // concatenation parses.
+    let joined: String = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::ToolInputDelta { json, .. } => Some(json.as_str()),
+            _ => None,
+        })
+        .collect();
+    let parsed: serde_json::Value = serde_json::from_str(&joined).expect("the fragments join");
+    assert_eq!(parsed["location"], "San Francisco, CA");
+
+    assert!(matches!(
+        events.last(),
+        Some(StreamEvent::Done {
+            stop: StopReason::ToolUse
+        })
+    ));
+}
+
+#[test]
+fn the_documented_thinking_stream_decodes() {
+    let events = decode(DOC_THINKING);
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        StreamEvent::BlockStart {
+            kind: BlockKind::Thinking,
+            ..
+        }
+    )));
+    let thinking: String = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::ReasoningDelta { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(thinking.contains("Euclidean algorithm"));
+
+    // The signature arrives as its own delta just before the block closes, and
+    // is required on the way back: echoing the text without it is rejected.
+    let signature = events.iter().find_map(|e| match e {
+        StreamEvent::ReasoningSignature { signature, .. } => Some(signature.as_str()),
+        _ => None,
+    });
+    assert_eq!(
+        signature,
+        Some("EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds...")
+    );
+
+    let answer: String = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::TextDelta { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        answer,
+        "The greatest common divisor of 1071 and 462 is **21**."
+    );
+}
+
+/// Every documented stream, re-fed one byte at a time.
+///
+/// The decoder is fed whatever the socket hands it, which is not aligned to
+/// anything. A frame split across two reads is the normal case, not an edge one.
+#[test]
+fn the_documented_streams_survive_any_byte_split() {
+    for (name, fixture) in [
+        ("text", DOC_TEXT),
+        ("tool_use", DOC_TOOL_USE),
+        ("thinking", DOC_THINKING),
+    ] {
+        let whole = decode(fixture);
+        let mut s = AnthropicStream::new();
+        let mut piecemeal = Vec::new();
+        for byte in fixture {
+            piecemeal.extend(s.push(&[*byte]).expect("a byte at a time decodes"));
+        }
+        piecemeal.extend(s.finish().expect("not truncated"));
+        assert_eq!(
+            format!("{whole:?}"),
+            format!("{piecemeal:?}"),
+            "{name} decoded differently one byte at a time"
+        );
+    }
+}
+
+/// The documented mid-stream error, which is how a 529 arrives once headers
+/// have already been sent. It must be retryable, not fatal.
+#[test]
+fn a_mid_stream_overload_is_retryable() {
+    let bytes = b"event: error\ndata: {\"type\": \"error\", \"error\": {\"type\": \"overloaded_error\", \"message\": \"Overloaded\"}}\n\n";
+    let mut s = AnthropicStream::new();
+    let err = s.push(bytes).expect_err("an error event fails the stream");
+    assert!(matches!(err, ProviderError::Overloaded));
+    assert!(err.retryable());
+}
+
+/// New event types may be added at any time, and the documented instruction is
+/// to handle them gracefully rather than fail.
+#[test]
+fn an_unknown_event_type_is_ignored_rather_than_fatal() {
+    let bytes = b"event: something_new\ndata: {\"type\": \"something_new\", \"whatever\": 1}\n\n";
+    let mut s = AnthropicStream::new();
+    let out = s.push(bytes).expect("an unknown event is not an error");
+    assert!(out.is_empty());
+}
+
+/// A server-side fallback response opens one of these at each model boundary:
+/// a start/stop pair with no deltas between them. Treated as a text block it
+/// becomes an empty assistant message, which is then echoed back on every
+/// subsequent request for the rest of the session.
+#[test]
+fn a_fallback_block_produces_no_item() {
+    let bytes = concat!(
+        "event: content_block_start\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"fallback\"}}\n\n",
+        "event: content_block_stop\n",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+    )
+    .as_bytes();
+    let mut s = AnthropicStream::new();
+    let out = s.push(bytes).expect("a fallback block is not an error");
+    assert!(
+        !out.iter()
+            .any(|e| matches!(e, StreamEvent::BlockStart { .. })),
+        "a fallback block must not open a content block: {out:?}"
+    );
+}

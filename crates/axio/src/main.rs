@@ -787,6 +787,13 @@ fn build_provider(resolved: &Resolved) -> Result<Arc<dyn axio_core::provider::Pr
 
     match model.provider.as_str() {
         "anthropic" => AnthropicProvider::new(secret.expose())
+            .map(|p| match &model.base_url {
+                // `model.base_url` was accepted, reported by `--explain`, and
+                // ignored here — so a gateway or proxy endpoint silently went
+                // to the public API instead.
+                Some(url) => p.with_base_url(url.clone()),
+                None => p,
+            })
             .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
             .map_err(|e| format!("could not start the http client: {e}")),
         "ollama" | "openai-compatible" => {

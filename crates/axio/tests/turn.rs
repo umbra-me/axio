@@ -176,3 +176,47 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// The Anthropic path has never met a real endpoint — there is no key to test
+/// with — so this drives the whole binary against bytes copied from the
+/// published event flow. It cannot prove the API behaves as documented; it does
+/// prove that if it does, axio completes a tool-using turn end to end.
+#[test]
+fn a_tool_using_turn_completes_against_the_documented_anthropic_format() {
+    use support::{spawn_axio_with, stub_anthropic};
+
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (base, _server) = stub_anthropic(
+        "write",
+        serde_json::json!({"path": "greeting.txt", "content": "hello\n"}),
+        "Written.",
+    );
+    let mut child = spawn_axio_with(&base, home.path(), &["--yes"], "anthropic");
+
+    let code = wait_for(Duration::from_secs(60), || child.try_wait().ok().flatten())
+        .unwrap_or_else(|| {
+            let _ = child.kill();
+            panic!("the turn never finished")
+        })
+        .code();
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    use std::io::Read;
+    if let Some(mut s) = child.stdout.take() {
+        let _ = s.read_to_end(&mut out);
+    }
+    if let Some(mut s) = child.stderr.take() {
+        let _ = s.read_to_end(&mut err);
+    }
+    let stdout = String::from_utf8_lossy(&out);
+    let stderr = String::from_utf8_lossy(&err);
+
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("greeting.txt")).unwrap_or_default(),
+        "hello\n",
+        "the tool call did not reach the disk.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("Written."), "stdout was: {stdout}");
+    assert_eq!(code, Some(0));
+}

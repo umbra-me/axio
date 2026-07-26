@@ -15,6 +15,7 @@ bash scripts/deps.sh                                # axio-core links no transpo
 bash scripts/check-windows.sh                       # cfg-gated code still compiles for windows
 
 INSTA_UPDATE=always cargo test -p axio-provider     # re-accept request-body snapshots
+bash scripts/live-check.sh                          # a real turn against a real model
 git config core.hooksPath .githooks                 # one-time, per clone
 ```
 
