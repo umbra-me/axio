@@ -327,6 +327,24 @@ impl Usage {
         self.cache_read_input_tokens += other.cache_read_input_tokens;
     }
 
+    /// Merge a report that carries a running total for one message.
+    ///
+    /// A provider sends usage more than once per message — once at the start
+    /// with the input counts and once at the end with the output count — and
+    /// each report is the total so far, not a delta. Summing them bills the
+    /// input twice. Taking the field-wise maximum is correct for a cumulative
+    /// report and harmless for a single one.
+    pub fn merge_cumulative(&mut self, other: &Usage) {
+        self.input_tokens = self.input_tokens.max(other.input_tokens);
+        self.output_tokens = self.output_tokens.max(other.output_tokens);
+        self.cache_creation_input_tokens = self
+            .cache_creation_input_tokens
+            .max(other.cache_creation_input_tokens);
+        self.cache_read_input_tokens = self
+            .cache_read_input_tokens
+            .max(other.cache_read_input_tokens);
+    }
+
     /// Billable input, counting a cache read at its own rate elsewhere.
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens
@@ -479,6 +497,31 @@ mod tests {
             assert!(json.get("type").is_some());
             assert!(json.get("seq").is_some(), "flatten dropped the envelope");
         }
+    }
+
+    /// Regression. A provider reports usage more than once per message and
+    /// each report is the running total, so summing them bills the input
+    /// twice — silently, and only visibly on the invoice.
+    #[test]
+    fn cumulative_usage_reports_are_merged_not_summed() {
+        let mut usage = Usage::default();
+        // message_start: input counts known, output still 1.
+        usage.merge_cumulative(&Usage {
+            input_tokens: 1_200,
+            output_tokens: 1,
+            cache_read_input_tokens: 900,
+            ..Default::default()
+        });
+        // message_delta: same input, final output.
+        usage.merge_cumulative(&Usage {
+            input_tokens: 1_200,
+            output_tokens: 450,
+            cache_read_input_tokens: 900,
+            ..Default::default()
+        });
+        assert_eq!(usage.input_tokens, 1_200, "input was double-counted");
+        assert_eq!(usage.output_tokens, 450);
+        assert_eq!(usage.cache_read_input_tokens, 900);
     }
 
     #[test]

@@ -45,7 +45,10 @@ pub async fn complete(
             match Pin::new(&mut stream).poll_next(cx) {
                 std::task::Poll::Ready(Some(Ok(ev))) => match ev {
                     StreamEvent::TextDelta { text: t, .. } => text.push_str(&t),
-                    StreamEvent::Usage(u) => usage.add(&u),
+                    // Cumulative, not incremental: message_start and
+                    // message_delta each report the running total, so adding
+                    // both counts the input tokens twice.
+                    StreamEvent::Usage(u) => usage.merge_cumulative(&u),
                     StreamEvent::Done { .. } => done = true,
                     _ => {}
                 },
@@ -161,7 +164,14 @@ pub enum Effort {
     High,
     /// The default: documented as best for coding and agentic work, and worth
     /// re-measuring on a real workload before changing.
+    ///
+    /// The rename is load-bearing: `rename_all = "snake_case"` spells this
+    /// `x_high`, which is neither what `as_wire` sends nor what a user would
+    /// write in a config file — and it leaked into the `--json` stream while
+    /// the request body said `xhigh`. The aliases keep an already-written
+    /// config or session file loadable.
     #[default]
+    #[serde(rename = "xhigh", alias = "x_high", alias = "x-high")]
     XHigh,
     Max,
 }
@@ -392,6 +402,34 @@ impl ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression. `rename_all = "snake_case"` spelled this `x_high`, so the
+    /// `--json` stream said `x_high` while the request body said `xhigh`, and a
+    /// config file written with the wire spelling would not load.
+    #[test]
+    fn effort_serialises_the_way_it_goes_on_the_wire() {
+        for effort in [
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+        ] {
+            let json = serde_json::to_string(&effort).unwrap();
+            assert_eq!(
+                json,
+                format!("\"{}\"", effort.as_wire()),
+                "serde and as_wire disagree for {effort:?}"
+            );
+            assert_eq!(serde_json::from_str::<Effort>(&json).unwrap(), effort);
+        }
+        // The old spelling still loads, so a session or config already written
+        // with it is not orphaned.
+        assert_eq!(
+            serde_json::from_str::<Effort>("\"x_high\"").unwrap(),
+            Effort::XHigh
+        );
+    }
 
     #[test]
     fn effort_defaults_to_xhigh() {

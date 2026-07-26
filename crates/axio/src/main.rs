@@ -160,12 +160,6 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
         agent.register_tool(tool);
     }
 
-    if cli.yes {
-        eprintln!(
-            "axio: --yes is on. Every action is approved without asking, there is no sandbox,              and commands run with your permissions."
-        );
-    }
-
     // Colour is a property of the sink, not of the session: `axio -p x >
     // out.txt` run from a terminal must still write zero escape bytes.
     let style = if stdout_is_tty && std::env::var_os("NO_COLOR").is_none() {

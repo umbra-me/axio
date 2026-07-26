@@ -188,4 +188,7 @@ fn the_yes_flag_announces_itself() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--yes is on"), "{err}");
     assert!(err.contains("no sandbox"), "{err}");
+    // Exactly once. Asserting only presence lets a duplicate survive, and a
+    // duplicated warning reads as a bug in the thing doing the warning.
+    assert_eq!(err.matches("--yes is on").count(), 1, "{err}");
 }

@@ -123,7 +123,13 @@ pub enum Unattended {
     Allow,
 }
 
-#[derive(Debug, Clone, Default)]
+/// `Default` delegates to [`Policy::new`] deliberately.
+///
+/// A derived `Default` leaves the built-in deny lists empty, which makes a
+/// default-constructed policy hand over every credential on the machine. That
+/// is one `..Default::default()` away at all times, and nothing about the type
+/// signals it — so the safe construction is the only construction.
+#[derive(Debug, Clone)]
 pub struct Policy {
     deny: Vec<Rule>,
     allow: Vec<Rule>,
@@ -135,12 +141,21 @@ pub struct Policy {
     builtin_write: Vec<String>,
 }
 
+impl Default for Policy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Policy {
     pub fn new() -> Self {
         Self {
+            deny: Vec::new(),
+            allow: Vec::new(),
+            session_grants: Vec::new(),
+            unattended: None,
             builtin_read: DENY_READ.iter().map(|s| (*s).to_owned()).collect(),
             builtin_write: DENY_WRITE.iter().map(|s| (*s).to_owned()).collect(),
-            ..Default::default()
         }
     }
 
@@ -284,6 +299,20 @@ mod tests {
         let p = Policy::new();
         assert_eq!(p.builtin_read.len(), DENY_READ.len());
         assert_eq!(p.builtin_write.len(), DENY_WRITE.len());
+    }
+
+    /// Regression. A derived `Default` gives empty deny lists, so a
+    /// default-constructed policy silently allows every credential file.
+    #[test]
+    fn a_default_policy_still_denies_dot_env() {
+        assert!(matches!(
+            Policy::default().evaluate(&plan("read:.env", Effects::READ_ONLY)),
+            Verdict::Deny(_)
+        ));
+        assert!(matches!(
+            Policy::default().evaluate(&plan("read:deploy/id_rsa", Effects::READ_ONLY)),
+            Verdict::Deny(_)
+        ));
     }
 
     #[test]

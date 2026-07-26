@@ -230,11 +230,14 @@ impl Session {
                     Role::User,
                     WireContent::Text { text: text.clone() },
                 ),
-                ItemBody::AgentMessage { text } => push_content(
+                // An empty text block is rejected outright, and a text block
+                // that streamed zero deltas produces exactly that.
+                ItemBody::AgentMessage { text } if !text.is_empty() => push_content(
                     &mut out,
                     Role::Assistant,
                     WireContent::Text { text: text.clone() },
                 ),
+                ItemBody::AgentMessage { .. } => {}
                 ItemBody::Reasoning { text, signature } => {
                     if same_model && !signature.is_empty() {
                         push_content(
@@ -382,6 +385,26 @@ mod tests {
             &last.content[0],
             WireContent::ToolResult { is_error: true, .. }
         ));
+    }
+
+    /// Regression. A text block that streams zero deltas becomes an empty
+    /// `AgentMessage`, and an empty text block in an assistant message is
+    /// rejected outright.
+    #[test]
+    fn an_empty_assistant_message_never_reaches_the_wire() {
+        let mut s = session();
+        s.push_user("hi");
+        s.push(ItemBody::AgentMessage {
+            text: String::new(),
+        });
+        let wire = s.wire_messages("claude-opus-5");
+        assert!(
+            !wire
+                .iter()
+                .flat_map(|m| &m.content)
+                .any(|c| matches!(c, WireContent::Text { text } if text.is_empty())),
+            "an empty text block reached the wire: {wire:?}"
+        );
     }
 
     #[test]

@@ -533,7 +533,10 @@ impl Agent {
                     self.emit(Some(turn), EventKind::ItemCompleted { item });
                     sampled.blocks.push(body);
                 }
-                StreamEvent::Usage(u) => sampled.usage.add(&u),
+                // Cumulative per message, so take the maximum rather than
+                // summing: message_start and message_delta both report the
+                // running total for the same message.
+                StreamEvent::Usage(u) => sampled.usage.merge_cumulative(&u),
                 StreamEvent::Done { stop } => sampled.stop = Some(stop),
             }
         }
