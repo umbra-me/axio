@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# The firewall runs here as well as in CI: catching a name before it is
+# committed is cheaper than catching it after it is pushed to a public repo.
+set -euo pipefail
+bash "$(git rev-parse --show-toplevel)/scripts/firewall.sh"

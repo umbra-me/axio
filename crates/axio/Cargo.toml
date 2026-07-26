@@ -1,0 +1,25 @@
+[package]
+name = "axio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A coding agent for the terminal."
+
+[[bin]]
+name = "axio"
+path = "src/main.rs"
+
+[features]
+default = ["tui"]
+# ratatui and crossterm link into every install unless this is turned off. CI
+# builds --no-default-features so the headless path cannot rot.
+tui = []
+
+[dependencies]
+axio-core.workspace = true
+axio-provider.workspace = true
+axio-tools.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }

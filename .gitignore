@@ -1,7 +1,8 @@
-# Build output
-target/
-dist/
-node_modules/
+/target
+**/*.rs.bk
+
+# insta writes these next to the accepted snapshots; they are never committed.
+**/*.snap.new
 
 # OS cruft
 .DS_Store

@@ -1,0 +1,28 @@
+[package]
+name = "axio-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Protocol, traits and turn loop for axio. Links no HTTP stack, no terminal library, no filesystem walker, no subprocess machinery."
+
+[features]
+default = []
+# Exposes `scripted::ScriptedProvider`. Off in release builds; enabled by the
+# dev-dependencies of the crates that test against a fake provider.
+testing = []
+
+[dependencies]
+async-trait.workspace = true
+futures-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

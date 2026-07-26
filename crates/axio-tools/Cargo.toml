@@ -1,0 +1,14 @@
+[package]
+name = "axio-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The six tools axio ships. The only crate that walks a filesystem or spawns a subprocess."
+
+[dependencies]
+axio-core.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "fs", "process", "time"] }
