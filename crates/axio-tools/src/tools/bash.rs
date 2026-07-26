@@ -60,6 +60,35 @@ pub fn subject_for(command: &str) -> String {
     }
 }
 
+/// Every word of a command that could name a file.
+///
+/// The built-in deny list matches paths, and `bash:cat` carries none — so a
+/// command's own words are handed to the policy engine to test. Quoting and
+/// separators are stripped so `cat ".env"` and `ls; cat .env` are both seen.
+///
+/// This closes the plainly-visible case, which is the one that happens. It is
+/// not a sandbox: a shell can always compute a path the engine cannot see
+/// (`cat $(echo .env)`, `cat .e''nv`), and nothing short of intercepting the
+/// syscalls would catch that.
+pub fn declared_paths(command: &str) -> Vec<String> {
+    let cleaned: String = command
+        .chars()
+        .map(|c| {
+            if SHELL_METACHARACTERS.contains(&c) || c == '\'' || c == '"' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+
+    cleaned
+        .split_whitespace()
+        .filter(|w| !w.is_empty() && !w.starts_with('-') && !w.contains('='))
+        .map(|w| w.to_owned())
+        .collect()
+}
+
 pub struct Bash {
     schema: Value,
 }
@@ -121,6 +150,7 @@ impl Tool for Bash {
         };
 
         Ok(Plan::new(subject_for(command), EXEC_EFFECTS)
+            .with_paths(declared_paths(command))
             .with_preview(Preview::Command {
                 program,
                 argv,
@@ -257,6 +287,28 @@ mod tests {
 
     /// The one that matters. An allow rule for `git` must not be reachable by a
     /// command that merely starts with `git`.
+    #[test]
+    fn the_paths_a_command_names_are_declared_for_the_deny_list() {
+        assert!(declared_paths("cat .env").contains(&".env".to_owned()));
+        // Quoting does not hide it.
+        assert!(declared_paths("cat \".env\"").contains(&".env".to_owned()));
+        assert!(declared_paths("cat '.env'").contains(&".env".to_owned()));
+        // Nor does hiding it inside a compound command.
+        assert!(declared_paths("ls; cat .env").contains(&".env".to_owned()));
+        assert!(declared_paths("cat < .env").contains(&".env".to_owned()));
+        // A home-relative path survives the tilde being stripped.
+        assert!(
+            declared_paths("cat ~/.ssh/id_rsa").contains(&"/.ssh/id_rsa".to_owned()),
+            "{:?}",
+            declared_paths("cat ~/.ssh/id_rsa")
+        );
+        // Flags and assignments are not paths.
+        let words = declared_paths("grep -rn FOO=bar src");
+        assert!(!words.contains(&"-rn".to_owned()));
+        assert!(!words.contains(&"FOO=bar".to_owned()));
+        assert!(words.contains(&"src".to_owned()));
+    }
+
     #[test]
     fn a_compound_command_is_unmatchable() {
         for command in [

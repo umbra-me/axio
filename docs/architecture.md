@@ -126,6 +126,16 @@ Exit codes follow the shell convention: `130` for an interrupt, `143` for
 termination, `129` for a hangup. A signal's code outranks the turn's outcome —
 the caller asked the process to stop, and the shell reports how.
 
+`SIGTERM` and `SIGHUP` do not get a second chance the way a first `Ctrl-C` does,
+but they still cancel and hand control back to the runtime for a bounded moment
+rather than calling `process::exit` outright. Exiting there runs no destructor
+and polls no task, so the tree kill never happens and whatever the agent started
+outlives it, reparented to init.
+
+A turn that completes with at least one action refused exits `5`. The answer is
+prose, and prose is not something a script can check — a run where every
+mutation was denied otherwise looks exactly like a run that did the work.
+
 ## Permission and execution
 
 Every decision is made against a plan's **subject** — a canonical string like
@@ -138,7 +148,10 @@ Evaluation is ordered, and the order is the design:
 
 1. **Built-in deny.** Credentials, keys, `.ssh`, git hooks. Not overridable by a
    user rule and not by `--yes`, because it protects things no preference should
-   be able to expose by accident.
+   be able to expose by accident. A subject alone is not enough here: `bash:cat`
+   names a program, and the list matches paths, so a plan also declares the
+   paths its arguments name and those go through the same test. What a shell
+   computes rather than states is still invisible — see SECURITY.md.
 2. **User deny rules.**
 3. **Read-only effects** — auto-approved. This only works *after* the denies
    have had their say; put it first and no rule can protect a secret file.
@@ -160,7 +173,15 @@ must not race.
 Output is capped and spilled at one choke point in the loop rather than in each
 tool. A tool that forgot would put ten megabytes in the next request and nothing
 would error; doing it once means a new tool inherits the behaviour without
-knowing it exists.
+knowing it exists. The spill file is named for the call that produced it, and
+`read` can reach the spill directory even though it sits outside the workspace —
+the truncation marker names that path and tells the model to read it, so both
+have to be true or the marker is an instruction nothing can follow.
+
+`files_changed` on `TurnEnded` is derived from the calls that succeeded and
+previewed a diff, which is `write` and `edit`. A shell command that rewrites a
+tree is not in it and cannot be: naming what is knowable leaves a visible gap,
+and guessing at the rest would produce an invisible wrong answer.
 
 ## Sessions on disk
 

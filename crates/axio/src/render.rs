@@ -5,9 +5,12 @@
 //! whole reason the protocol is serde-derived even though nothing crosses a
 //! process boundary yet.
 
+use std::collections::HashSet;
 use std::io::Write;
 
-use axio_core::protocol::{Delta, Event, EventKind, NoticeLevel, TurnOutcome};
+use axio_core::protocol::{
+    Delta, Event, EventKind, Item, ItemBody, NoticeLevel, ToolStatus, TurnOutcome,
+};
 
 /// Colour is decided once, from whether the sink is a terminal, and never from
 /// whether stdin is. `axio -p x > out.txt` run from a terminal must still write
@@ -40,10 +43,55 @@ pub trait Renderer {
     fn finish(&mut self) -> std::io::Result<()>;
 }
 
+/// Count the tool calls policy refused, independently of any renderer.
+///
+/// The exit code has to agree with what the user was told, and `--json` tells
+/// them the same thing the plain surface does, so this cannot live inside one
+/// renderer. A refusal is reported once per call id, because a call reaches its
+/// terminal status through both `ItemUpdated` and `ItemCompleted`.
+#[derive(Debug, Default)]
+pub struct Refusals {
+    seen: HashSet<String>,
+    count: u32,
+}
+
+impl Refusals {
+    pub fn observe(&mut self, event: &Event) {
+        let item = match &event.kind {
+            EventKind::ItemUpdated { item } | EventKind::ItemCompleted { item } => item,
+            _ => return,
+        };
+        if let ItemBody::ToolCall {
+            call_id,
+            status: ToolStatus::Denied { .. },
+            ..
+        } = &item.body
+            && self.seen.insert(call_id.clone())
+        {
+            self.count += 1;
+        }
+    }
+
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+}
+
+fn first_sentence(text: &str) -> &str {
+    match text.find(". ") {
+        Some(end) => &text[..=end],
+        None => text,
+    }
+}
+
 /// Human-readable output for the one-shot CLI.
 ///
 /// Reasoning is not printed: on this model the text is a summary at best and
 /// empty by default, and a one-shot caller piping to a file wants the answer.
+///
+/// Tool activity **is** printed, on stderr. A turn whose every action was
+/// refused otherwise produces confident prose, an empty stderr and exit 0 —
+/// the answer says the work was done and nothing contradicts it.
 pub struct PlainRenderer<W: Write> {
     out: W,
     err: Box<dyn Write + Send>,
@@ -52,6 +100,10 @@ pub struct PlainRenderer<W: Write> {
     /// to text the reader has already seen.
     discarded: bool,
     wrote_any: bool,
+    /// Call ids already reported, so a status reached through both
+    /// `ItemUpdated` and `ItemCompleted` prints one line, not two.
+    reported: HashSet<String>,
+    denied: u32,
 }
 
 impl<W: Write> PlainRenderer<W> {
@@ -62,7 +114,53 @@ impl<W: Write> PlainRenderer<W> {
             style,
             discarded: false,
             wrote_any: false,
+            reported: HashSet::new(),
+            denied: 0,
         }
+    }
+
+    /// One line per tool call, once it has an answer.
+    ///
+    /// Only terminal statuses print: the intermediate ones exist so an
+    /// interactive surface can show a spinner, and a scrolling log of
+    /// `pending`/`running` would bury the outcome.
+    fn tool_line(&mut self, item: &Item) -> std::io::Result<()> {
+        let ItemBody::ToolCall {
+            call_id,
+            subject,
+            status,
+            ..
+        } = &item.body
+        else {
+            return Ok(());
+        };
+
+        let (code, text) = match status {
+            ToolStatus::Ok { .. } => (Style::DIM, format!("· {subject}")),
+            ToolStatus::Failed { message } => {
+                (Style::RED, format!("[failed] {subject}: {message}"))
+            }
+            // First sentence only. A denial message is written for the model,
+            // which needs telling not to retry; the reader needs the reason,
+            // and the remedy arrives once in the summary rather than on every
+            // line of a turn that was refused a dozen times.
+            ToolStatus::Denied { message } => (
+                Style::YELLOW,
+                format!("[denied] {subject}: {}", first_sentence(message)),
+            ),
+            ToolStatus::Cancelled => (Style::DIM, format!("[cancelled] {subject}")),
+            ToolStatus::Pending | ToolStatus::AwaitingApproval | ToolStatus::Running => {
+                return Ok(());
+            }
+        };
+
+        if !self.reported.insert(call_id.clone()) {
+            return Ok(());
+        }
+        if matches!(status, ToolStatus::Denied { .. }) {
+            self.denied += 1;
+        }
+        writeln!(self.err, "{}", self.style.wrap(code, &text))
     }
 }
 
@@ -94,9 +192,55 @@ impl<W: Write> Renderer for PlainRenderer<W> {
                 };
                 writeln!(self.err, "{}", self.style.wrap(code, message))?;
             }
-            EventKind::TurnEnded { outcome, .. } => {
+            EventKind::ItemUpdated { item } | EventKind::ItemCompleted { item } => {
+                self.tool_line(item)?;
+            }
+            EventKind::TurnEnded {
+                outcome,
+                files_changed,
+                ..
+            } => {
                 if self.wrote_any {
                     writeln!(self.out)?;
+                }
+                if !files_changed.is_empty() {
+                    // A turn that edits a file and says nothing about it is
+                    // indistinguishable from a no-op, and "Fix it." is exactly
+                    // the prompt that produces one.
+                    let names: Vec<String> = files_changed
+                        .iter()
+                        .take(10)
+                        .map(|p| p.display().to_string())
+                        .collect();
+                    let more = files_changed.len().saturating_sub(names.len());
+                    let tail = if more > 0 {
+                        format!(" (+{more} more)")
+                    } else {
+                        String::new()
+                    };
+                    writeln!(
+                        self.err,
+                        "{}",
+                        self.style.wrap(
+                            Style::DIM,
+                            &format!("[changed: {}{tail}]", names.join(", "))
+                        )
+                    )?;
+                }
+                if self.denied > 0 {
+                    let n = self.denied;
+                    let plural = if n == 1 { "action" } else { "actions" };
+                    writeln!(
+                        self.err,
+                        "{}",
+                        self.style.wrap(
+                            Style::YELLOW,
+                            &format!(
+                                "[{n} {plural} refused — the answer above may describe work that \
+                                 did not happen; re-run with --yes to allow them]"
+                            )
+                        )
+                    )?;
                 }
                 match outcome {
                     TurnOutcome::Completed => {}
@@ -221,6 +365,22 @@ mod tests {
         })
     }
 
+    fn tool(call_id: &str, subject: &str, status: ToolStatus) -> Event {
+        event(EventKind::ItemCompleted {
+            item: Item {
+                id: ItemId::nil(),
+                body: ItemBody::ToolCall {
+                    call_id: call_id.into(),
+                    name: "write".into(),
+                    input: serde_json::Value::Null,
+                    subject: subject.into(),
+                    preview: None,
+                    status,
+                },
+            },
+        })
+    }
+
     fn render(events: &[Event], style: Style) -> (String, String) {
         let mut out = Vec::new();
         let err = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -316,6 +476,121 @@ mod tests {
         );
         assert_eq!(out, "");
         assert!(err.contains("error: authentication failed"));
+    }
+
+    #[test]
+    fn a_denial_is_reported_even_when_the_answer_claims_success() {
+        // The failure this covers: the model says "the bullet has been added",
+        // stderr is empty, exit is 0, and the file was never touched.
+        let (out, err) = render(
+            &[
+                tool(
+                    "call_1",
+                    "write:notes.md",
+                    ToolStatus::Denied {
+                        message: "needs approval".into(),
+                    },
+                ),
+                text_delta("The bullet has been added to notes.md."),
+                ended(TurnOutcome::Completed),
+            ],
+            Style::PLAIN,
+        );
+        assert_eq!(out, "The bullet has been added to notes.md.\n");
+        assert!(
+            err.contains("[denied] write:notes.md"),
+            "stderr was: {err:?}"
+        );
+        assert!(
+            err.contains("1 action refused"),
+            "the turn must not end quietly: {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_call_reported_twice_prints_one_line() {
+        // A terminal status arrives as both ItemUpdated and ItemCompleted.
+        let denied = ToolStatus::Denied {
+            message: "needs approval".into(),
+        };
+        let updated = event(EventKind::ItemUpdated {
+            item: match tool("call_1", "write:a", denied.clone()).kind {
+                EventKind::ItemCompleted { item } => item,
+                _ => unreachable!(),
+            },
+        });
+        let (_out, err) = render(
+            &[
+                updated,
+                tool("call_1", "write:a", denied),
+                ended(TurnOutcome::Completed),
+            ],
+            Style::PLAIN,
+        );
+        assert_eq!(err.matches("[denied]").count(), 1);
+        assert!(err.contains("1 action refused"));
+    }
+
+    #[test]
+    fn a_failed_call_is_not_swallowed() {
+        let (_out, err) = render(
+            &[
+                tool(
+                    "call_1",
+                    "bash:cargo",
+                    ToolStatus::Failed {
+                        message: "no such command".into(),
+                    },
+                ),
+                ended(TurnOutcome::Completed),
+            ],
+            Style::PLAIN,
+        );
+        assert!(err.contains("[failed] bash:cargo: no such command"));
+        // A failure is not a refusal; only refusals change the exit code.
+        assert!(!err.contains("refused"));
+    }
+
+    #[test]
+    fn a_turn_that_edits_a_file_and_says_nothing_still_says_something() {
+        // "Fix it." with --yes produced a correct edit and zero bytes of
+        // output, which is indistinguishable from a no-op.
+        let (out, err) = render(
+            &[event(EventKind::TurnEnded {
+                outcome: TurnOutcome::Completed,
+                usage: Usage::default(),
+                files_changed: vec!["reorder.py".into()],
+            })],
+            Style::PLAIN,
+        );
+        assert_eq!(out, "");
+        assert!(err.contains("[changed: reorder.py]"), "stderr was: {err:?}");
+    }
+
+    #[test]
+    fn refusals_are_counted_once_per_call_for_the_exit_code() {
+        let mut refusals = Refusals::default();
+        let denied = ToolStatus::Denied {
+            message: "needs approval".into(),
+        };
+        for event in [
+            tool("call_1", "write:a", denied.clone()),
+            tool("call_1", "write:a", denied.clone()),
+            tool("call_2", "write:b", denied),
+            tool(
+                "call_3",
+                "read:c",
+                ToolStatus::Ok {
+                    output: String::new(),
+                    truncated: false,
+                    spill: None,
+                    ms: 1,
+                },
+            ),
+        ] {
+            refusals.observe(&event);
+        }
+        assert_eq!(refusals.count(), 2);
     }
 
     #[test]

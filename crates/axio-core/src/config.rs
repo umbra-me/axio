@@ -300,7 +300,7 @@ pub fn resolve(paths: &Paths, env: &[(String, String)], flags: &Flags) -> Resolv
         }
     }
 
-    let (env_table, env_keys) = env_layer(env, &mut notices);
+    let (env_table, env_keys) = env_layer(env, &merged, &mut notices);
     for (key, var) in env_keys {
         provenance.insert(key, Layer::Env(var));
     }
@@ -493,8 +493,17 @@ fn backup(path: &Path, notices: &mut Vec<Notice>) {
 /// scheme: an environment variable is the layer most likely to be set by
 /// accident in a shell profile and forgotten, so every one of them should be a
 /// deliberate decision by someone reading this list.
+///
+/// `below` is everything merged so far, and every value is validated against
+/// the section it would land in before it goes anywhere near the whole-config
+/// deserialise. A file gets that protection from `section_is_valid`; without
+/// the same check here, one typo in one variable fails the final `try_into`,
+/// falls back to `Config::default()`, and silently discards the entire
+/// configuration — including budget limits from a section the typo never
+/// touched.
 fn env_layer(
     env: &[(String, String)],
+    below: &toml::Table,
     notices: &mut Vec<Notice>,
 ) -> (toml::Table, Vec<(String, String)>) {
     let mut table = toml::Table::new();
@@ -519,6 +528,21 @@ fn env_layer(
             "budget.max_usd_per_turn" => raw.parse::<f64>().ok().map(toml::Value::Float),
             _ => Some(toml::Value::String(raw.clone())),
         };
+        let value = value.filter(|value| {
+            let (section, _) = key.split_once('.').expect("every key names a section");
+            let mut candidate = below
+                .get(section)
+                .and_then(toml::Value::as_table)
+                .cloned()
+                .unwrap_or_default();
+            let mut probe = toml::Table::new();
+            set(&mut probe, key, value.clone());
+            if let Some(toml::Value::Table(over)) = probe.get(section) {
+                merge(&mut candidate, over);
+            }
+            section_is_valid(section, &toml::Value::Table(candidate))
+        });
+
         match value {
             Some(value) => {
                 set(&mut table, key, value);
@@ -768,6 +792,48 @@ mod tests {
         // A key nobody set still explains itself.
         assert_eq!(r.explain("output.show_cost"), Some(&Layer::Default));
         assert_eq!(r.explain("nonsense.key"), None);
+    }
+
+    /// Regression. `section_is_valid` protects a file from one broken table,
+    /// and the env layer bypassed it entirely: a typo in `AXIO_EFFORT` failed
+    /// the whole-config deserialise, fell back to `Config::default()`, and
+    /// silently discarded the model, the provider and the budget — including
+    /// sections the typo never touched. The failure then surfaced as "no
+    /// credential for `anthropic`" to someone who had selected `ollama`.
+    #[test]
+    fn one_bad_environment_value_does_not_reset_the_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write(
+            dir.path(),
+            "user.toml",
+            "[model]\nprovider = \"ollama\"\nname = \"kept-model\"\n[budget]\nmax_steps = 9\n",
+        );
+        let r = resolve(
+            &Paths {
+                user: Some(user),
+                project: None,
+            },
+            &[
+                ("AXIO_PROVIDER".into(), "ollama".into()),
+                ("AXIO_EFFORT".into(), "bogus".into()),
+            ],
+            &Flags {
+                model: None,
+                effort: None,
+            },
+        );
+        let c = r.config();
+        assert_eq!(c.model.name, "kept-model");
+        assert_eq!(c.model.provider, "ollama");
+        assert_eq!(c.budget.max_steps, 9, "another section must not be reset");
+        assert_ne!(c.model.effort.as_wire(), "bogus");
+        assert!(
+            r.notices()
+                .iter()
+                .any(|n| n.message.contains("AXIO_EFFORT")),
+            "the dropped value must be named: {:?}",
+            r.notices()
+        );
     }
 
     #[test]

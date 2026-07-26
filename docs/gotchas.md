@@ -104,6 +104,14 @@ how an approved diff stops matching what actually runs. The `edit` tool computes
 the entire updated file during planning and hands it to `run` as the payload, so
 what was approved is byte-for-byte what is written.
 
+**Truncate a diff by hunk, never by position in a whole-file walk.** Capping a
+walk head-first spends the entire budget on unchanged context, so an edit past
+the cap is elided out of its own preview: the approver is shown two hundred
+untouched lines, told the rest was omitted, and asked to approve a change that
+appears nowhere. `added`/`removed` were still right, which is what made it look
+fine. The test that missed it previewed a new file, where every line is an
+insertion and head-first truncation happens to show the changes.
+
 **Every call in a batch is planned and authorised before any of them executes.**
 Otherwise a batch where the third call is refused has already half-run.
 
@@ -111,6 +119,37 @@ Otherwise a batch where the third call is refused has already half-run.
 running. Children get their own process group and the group is signalled, so
 cancellation reaches the whole tree. There is a test that greps `ps` for
 survivors, because nothing else catches this.
+
+**`std::process::exit` in a signal handler undoes all of that.** It runs no
+destructor and polls no task, so `kill_on_drop` never fires and the tree kill —
+which needs about 100ms of runtime to do its `SIGTERM`-then-`SIGKILL` work —
+never gets scheduled. `SIGTERM` and `SIGHUP` therefore cancel and let the
+runtime unwind, on a deadline, rather than exiting where the signal is seen. The
+in-process cancellation test cannot catch this: it exercises the path that
+works. The signal tests spawn the real binary and send it a real signal.
+
+**A denial the user never sees is worse than a failure.** Policy refuses, the
+session records it, `--json` carries it — and if the plain renderer drops the
+event, the model's confident summary is the only thing anyone reads. The
+renderer prints every terminal tool status on stderr, and a completed turn with
+refusals exits `5`, because prose is not something `&&` can inspect.
+
+**A subject cannot classify what a shell command reads.** `bash:cat` is the
+program name; the built-in deny list matches paths. A plan carries the paths its
+arguments name so the two meet. Quoting and separators are stripped first, so
+`cat ".env"` and `ls; cat .env` are both seen — but a computed path is not, and
+the docs say so rather than implying a guarantee that does not hold.
+
+**A spill file named for anything but its call id will be overwritten.** Two
+large outputs in one session otherwise land on the same path, and the first
+call's recorded marker goes on promising content the second one replaced. The
+failure is not a missing file — which the model would notice — but a file
+quietly holding a different command's output.
+
+**A truncation marker that names an unreachable path is worse than no marker.**
+The spill directory is outside the workspace and `resolve` refuses every
+absolute path, so `read` on the path the marker names was rejected outright.
+`resolve_readable` exists for exactly this one case, for reads only.
 
 **`creation_flags` is inherent on tokio's `Command`.** Importing
 `std::os::windows::process::CommandExt` to reach it leaves an unused import,
@@ -150,6 +189,20 @@ clone` is remote code execution by `cd`.
 
 **A backup on every load is not salvage, it is litter.** The `.corrupt-<ts>`
 copy is written only when a section was actually lost.
+
+**Per-section salvage protects files and does nothing for the environment
+layer.** An environment variable merges a raw string into the table, so one typo
+in `AXIO_EFFORT` failed the whole-config deserialise and fell back to
+`Config::default()` — discarding the model, the provider, and the budget limits
+in a section the typo never touched. Every env value is now validated against
+its own section before it merges, the same way a file's is. The symptom was not
+a config error: it was "no credential for `anthropic`" shown to someone who had
+selected `ollama` on that very command line.
+
+**A notice nobody reaches explains nothing.** Config notices are replayed
+through `announce`, which is downstream of building the provider — so the one
+notice that explains a failed credential lookup was unreachable on exactly the
+run it described. The failure path prints them itself.
 
 **Compaction must be pure.** If it depended on anything but the transcript, a
 resumed session would compact at a different point than the original and the

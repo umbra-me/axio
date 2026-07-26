@@ -70,7 +70,9 @@ impl Tool for Read {
 
     async fn plan(&self, args: &Value, cx: &ToolCx) -> Result<Plan, ToolError> {
         let rel = schema::str_arg(args, "path")?;
-        let path = cx.workspace.resolve(rel)?;
+        // The spill directory is outside the workspace, and the truncation
+        // marker tells the model to read a file in it by absolute path.
+        let path = cx.workspace.resolve_readable(rel)?;
         Ok(Plan::new(format!("read:{rel}"), Effects::READ_ONLY)
             .with_preview(Preview::Text {
                 text: format!("read {rel}"),

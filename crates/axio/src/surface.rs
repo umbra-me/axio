@@ -20,6 +20,14 @@ pub const EXIT_SIGHUP: u8 = 129;
 /// A second interrupt inside this window stops waiting for a clean shutdown.
 const IMPATIENT_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How long a termination signal waits for the turn to take its children down
+/// before the process leaves anyway.
+///
+/// Bounded because a wedged turn must not turn `SIGTERM` into a hang, and well
+/// clear of the tree kill's own SIGTERM-then-SIGKILL grace period, which is the
+/// thing being waited for.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(1_500);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Surface {
     /// Run one turn and exit.
@@ -76,9 +84,17 @@ pub fn spawn_signal_watcher(cancel: CancellationToken) -> Arc<AtomicU8> {
                 continue;
             }
 
-            // SIGTERM and SIGHUP are not a request for a second chance.
+            // SIGTERM and SIGHUP are not a request for a second chance — but
+            // the process still has to reap what it started. `process::exit`
+            // here would run no destructor and poll no task, so the tree kill
+            // that cancellation triggers would never get a chance to run and a
+            // `sleep 55` or a running build would outlive axio, reparented to
+            // init. Cancel, let the runtime do it, and leave on a deadline.
             cancel.cancel();
-            std::process::exit(signal as i32);
+            tokio::spawn(async move {
+                tokio::time::sleep(SHUTDOWN_GRACE).await;
+                std::process::exit(signal as i32);
+            });
         }
     });
 

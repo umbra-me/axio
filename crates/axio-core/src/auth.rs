@@ -38,6 +38,17 @@ impl Source {
     }
 }
 
+/// Every provider name axio accepts.
+///
+/// One list, so `auth status`, `auth login` and the run itself cannot disagree
+/// about what exists — a name only one of them knows produces a credential that
+/// stores fine and can never be used or listed.
+pub const PROVIDERS: &[&str] = &["anthropic", "ollama", "openai-compatible"];
+
+pub fn is_known(provider: &str) -> bool {
+    PROVIDERS.contains(&provider)
+}
+
 /// The environment variable a provider reads, if it has one.
 pub fn env_var_for(provider: &str) -> Option<&'static str> {
     match provider {

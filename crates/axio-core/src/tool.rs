@@ -43,6 +43,14 @@ pub struct Plan {
     pub subject: String,
     pub effects: Effects,
     pub preview: Option<Preview>,
+    /// Concrete paths this action would touch, when the subject cannot carry
+    /// them.
+    ///
+    /// `read:.env` says everything about itself; `bash:cat` does not, and the
+    /// built-in deny list matches on paths. Without these, `cat .env` is
+    /// classified as `cat` and a list written to stop `.env` reaching the model
+    /// can never fire on the one tool that can read any byte on the machine.
+    pub paths: Vec<String>,
     /// Opaque hand-off from `plan` to `run`. `Box<dyn Any>` rather than a
     /// core-side enum, so adding a tool never edits a type in this crate. The
     /// producer and consumer are the same `&dyn Tool`, so a downcast miss is an
@@ -56,12 +64,20 @@ impl Plan {
             subject: subject.into(),
             effects,
             preview: None,
+            paths: Vec::new(),
             payload: Box::new(()),
         }
     }
 
     pub fn with_preview(mut self, preview: Preview) -> Self {
         self.preview = Some(preview);
+        self
+    }
+
+    /// Declare the paths the built-in deny list should test, for a subject that
+    /// cannot express them itself.
+    pub fn with_paths(mut self, paths: Vec<String>) -> Self {
+        self.paths = paths;
         self
     }
 
@@ -201,6 +217,14 @@ impl std::fmt::Debug for ProgressSink {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     root: PathBuf,
+    /// Absolute directories a **read** may reach outside the root.
+    ///
+    /// One caller and one purpose: the spill directory, where the loop parks
+    /// output too large to send. Without this the truncation marker names a
+    /// path and then the only tool that could open it refuses every absolute
+    /// path, so the model's documented way to recover the rest of a large
+    /// output does not exist.
+    readable: Vec<PathBuf>,
 }
 
 impl Workspace {
@@ -209,7 +233,19 @@ impl Workspace {
     pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
         Ok(Self {
             root: root.as_ref().canonicalize()?,
+            readable: Vec::new(),
         })
+    }
+
+    /// Let reads reach one directory outside the root. Reads only — `resolve`,
+    /// which every write goes through, is untouched.
+    pub fn with_readable(mut self, dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref();
+        // It may not exist yet; the lexical prefix check is what matters, and
+        // opening a path that is not there fails on its own terms.
+        self.readable
+            .push(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        self
     }
 
     /// A root that could not be canonicalised — a deleted or unreadable
@@ -220,11 +256,33 @@ impl Workspace {
     /// nothing to resolve against. Callers should prefer [`Workspace::new`] and
     /// treat this as the last resort it is.
     pub fn unchecked(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            readable: Vec::new(),
+        }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// [`Workspace::resolve`], plus the directories [`Workspace::with_readable`]
+    /// opened up. For reads; nothing that writes may call this.
+    ///
+    /// An absolute path is accepted only when it is lexically inside a readable
+    /// root **and** contains no `..`, so the prefix cannot be walked back out
+    /// of.
+    pub fn resolve_readable(&self, p: &str) -> Result<PathBuf, ToolError> {
+        let candidate = Path::new(p);
+        if candidate.is_absolute()
+            && !candidate
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+            && self.readable.iter().any(|dir| candidate.starts_with(dir))
+        {
+            return Ok(candidate.to_path_buf());
+        }
+        self.resolve(p)
     }
 
     /// Lexically reject `..`, absolute paths, UNC and drive-relative forms
@@ -397,6 +455,32 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
+    }
+
+    /// The truncation marker names the spill file by absolute path and tells
+    /// the model to read it. Every absolute path was refused, so the documented
+    /// way to recover a large output did not exist — the model either burned
+    /// steps guessing or escaped to `bash`.
+    #[test]
+    fn a_read_reaches_the_spill_directory_and_nothing_else() {
+        let (_dir, ws) = workspace();
+        let spill = tempdir::TempDir::new();
+        std::fs::write(spill.path().join("out.txt"), "the rest").unwrap();
+        let ws = ws.with_readable(spill.path());
+
+        let named = spill.path().join("out.txt");
+        let resolved = ws
+            .resolve_readable(&named.display().to_string())
+            .expect("the spill file is reachable");
+        assert_eq!(std::fs::read_to_string(resolved).unwrap(), "the rest");
+
+        // Everything else absolute is still refused, and the prefix cannot be
+        // walked back out of.
+        assert!(ws.resolve_readable("/etc/passwd").is_err());
+        let escape = format!("{}/../../etc/passwd", spill.path().display());
+        assert!(ws.resolve_readable(&escape).is_err());
+        // And a write, which does not go through this door, is refused too.
+        assert!(ws.resolve(&named.display().to_string()).is_err());
     }
 
     #[test]

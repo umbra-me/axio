@@ -25,12 +25,22 @@ pub struct NonInteractive {
 
 impl NonInteractive {
     /// Deny anything policy could not decide alone.
+    ///
+    /// The feedback is written for the only party that reads it. It used to say
+    /// "re-run in the TUI, or pass `--yes`" — advice addressed to a human, sent
+    /// to a model that can do neither. Observed consequences: the same write
+    /// attempted eleven times in one turn, an invented `"yes": true` argument on
+    /// the tool, and `--yes` appended to the shell command itself, a habit that
+    /// then outlived the denials. Saying the decision is final is what stops the
+    /// loop; the human half of the message belongs on stderr, where a human is.
     pub fn deny() -> Self {
         Self {
             on_ask: Decision::Deny {
                 feedback: Some(
-                    "this action needs approval, and axio is running non-interactively. \
-                     Re-run in the TUI, or pass --yes to allow it."
+                    "denied: this action requires approval and no one is available to give it. \
+                     The decision is final for this session and retrying — with different \
+                     arguments, through a shell, or at all — will be denied again. Continue \
+                     without it and report plainly what you could not do."
                         .into(),
                 ),
             },

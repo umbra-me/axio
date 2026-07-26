@@ -360,3 +360,60 @@ fn doctor_never_prints_a_stored_credential() {
     assert!(text.contains("stored"), "{text}");
     assert!(!text.contains("SECRETVALUE123456"), "doctor leaked the key");
 }
+
+/// Regression. `credential()` ran before the provider name was checked, so a
+/// typo was diagnosed as a missing credential; the advice was to store one, the
+/// store accepted it, and only the *next* run said the name was never valid.
+/// The user was left with an entry `auth status` could not even list.
+#[test]
+fn an_unknown_provider_is_named_as_such_before_anything_about_credentials() {
+    let home = tempfile::tempdir().unwrap();
+    let out = axio_with_home(home.path())
+        .env("AXIO_PROVIDER", "nonsense")
+        .args(["--ephemeral", "-p", "say hi"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("unknown provider `nonsense`"), "{err}");
+    assert!(
+        !err.contains("auth login --provider nonsense"),
+        "it must not advise storing a credential that can never be used: {err}"
+    );
+
+    // And the store refuses the name too, rather than accepting an orphan.
+    let mut child = axio_with_home(home.path())
+        .args(["auth", "login", "--provider", "nonsense"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"dummy-key-123\n")
+        .unwrap();
+    let stored = child.wait_with_output().unwrap();
+    assert!(!stored.status.success());
+    assert!(!home.path().join("auth.json").exists());
+}
+
+/// A provider with no environment variable must not produce an `export` line
+/// naming a placeholder, which is not a command anyone can type.
+#[test]
+fn the_export_hint_is_omitted_when_there_is_no_variable_to_name() {
+    let home = tempfile::tempdir().unwrap();
+    let out = axio_with_home(home.path())
+        .env("AXIO_PROVIDER", "openai-compatible")
+        .args(["--ephemeral", "-p", "say hi"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no credential"), "{err}");
+    assert!(
+        !err.contains("export the provider's API key"),
+        "an untypable command was suggested: {err}"
+    );
+}

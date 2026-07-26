@@ -17,7 +17,7 @@ use crate::compact::{self, ContextBudget, Elisions};
 use crate::policy::{Policy, Verdict};
 use crate::protocol::{
     ApprovalId, ApprovalRequest, Decision, Delta, Event, EventKind, Item, ItemBody, ItemId,
-    NoticeLevel, PROTOCOL_VERSION, SessionId, ToolStatus, TurnId, TurnOutcome, Usage,
+    NoticeLevel, PROTOCOL_VERSION, Preview, SessionId, ToolStatus, TurnId, TurnOutcome, Usage,
 };
 use crate::provider::{
     BlockKind, Effort, ModelRequest, Provider, ProviderError, ReasoningDisplay, StopReason,
@@ -68,6 +68,10 @@ impl RuntimeConfig {
             max_steps: c.budget.max_steps,
             max_usd_per_turn: c.budget.max_usd_per_turn,
             tool_limits: c.tool_limits(),
+            // The loop's own choke point reads this field, so leaving it at the
+            // default made `[tools] max_output_bytes` a setting that `--explain`
+            // reported and nothing obeyed.
+            max_output_bytes: c.tools.max_output_bytes,
             ..Self::default()
         }
     }
@@ -115,11 +119,15 @@ fn finish_status(
     started: std::time::Instant,
     limit: usize,
     spill_dir: Option<&std::path::Path>,
+    call_id: &str,
 ) -> ToolStatus {
     let ms = started.elapsed().as_millis() as u64;
     match outcome {
         Ok(out) => {
-            let capped = crate::truncate::finish(&out.content, limit, spill_dir, "output");
+            // The call id, not a constant: two large outputs in one session
+            // otherwise land on the same file, and the first one's marker keeps
+            // promising content the second one overwrote.
+            let capped = crate::truncate::finish(&out.content, limit, spill_dir, call_id);
             match capped {
                 Ok(capped) => ToolStatus::Ok {
                     output: capped.content,
@@ -225,10 +233,15 @@ impl Agent {
         system: Vec<SystemBlock>,
         events: mpsc::UnboundedSender<Event>,
     ) -> Self {
-        let workspace = Arc::new(
-            Workspace::new(session.cwd())
-                .unwrap_or_else(|_| Workspace::unchecked(session.cwd().clone())),
-        );
+        let mut workspace = Workspace::new(session.cwd())
+            .unwrap_or_else(|_| Workspace::unchecked(session.cwd().clone()));
+        if let Some(spill) = &cfg.spill_dir {
+            // Otherwise the truncation marker names a path that `read` refuses,
+            // and recovering a large output costs a shell command or a lot of
+            // wasted steps.
+            workspace = workspace.with_readable(spill);
+        }
+        let workspace = Arc::new(workspace);
         Self {
             provider,
             tools: BTreeMap::new(),
@@ -831,15 +844,13 @@ impl Agent {
                 Planned::Run(call_id, tool, plan) if plan.effects.parallel_safe() => {
                     let cx = self.tool_cx(cancel.child_token());
                     let limit = self.cfg.max_output_bytes;
-                    let spill = self.spill_dir(&call_id);
+                    let spill = self.spill_dir();
                     concurrent.spawn(async move {
                         let started = std::time::Instant::now();
                         let outcome = tool.run(plan, &cx).await;
-                        (
-                            index,
-                            call_id,
-                            finish_status(outcome, started, limit, spill.as_deref()),
-                        )
+                        let status =
+                            finish_status(outcome, started, limit, spill.as_deref(), &call_id);
+                        (index, call_id, status)
                     });
                 }
                 Planned::Run(call_id, tool, plan) => {
@@ -847,12 +858,13 @@ impl Agent {
                     let cx = self.tool_cx(cancel.child_token());
                     let started = std::time::Instant::now();
                     let outcome = tool.run(plan, &cx).await;
-                    let spill = self.spill_dir(&call_id);
+                    let spill = self.spill_dir();
                     let status = finish_status(
                         outcome,
                         started,
                         self.cfg.max_output_bytes,
                         spill.as_deref(),
+                        &call_id,
                     );
                     results.push((index, call_id, status));
                 }
@@ -894,6 +906,22 @@ impl Agent {
 
     fn set_status(&mut self, turn: TurnId, call_id: &str, status: ToolStatus) {
         if let Some(item) = self.session.set_tool_status(call_id, status) {
+            // A call that succeeded and previewed a diff changed that file.
+            // Without this, `files_changed` on `TurnEnded` is always empty —
+            // present in the protocol, emitted every turn, and never true, which
+            // is worse for a `--json` consumer than not being there at all.
+            //
+            // Only what is knowable: `write` and `edit` name their file, and a
+            // shell command that rewrites a tree does not. Guessing at the rest
+            // would trade a visible gap for an invisible wrong answer.
+            if let ItemBody::ToolCall {
+                status: ToolStatus::Ok { .. },
+                preview: Some(Preview::Diff { path, .. }),
+                ..
+            } = &item.body
+            {
+                self.session.record_file_changed(path.clone());
+            }
             self.recorder.append_item(&item);
             self.emit(Some(turn), EventKind::ItemUpdated { item });
         }
@@ -906,7 +934,7 @@ impl Agent {
         }
     }
 
-    fn spill_dir(&self, _call_id: &str) -> Option<std::path::PathBuf> {
+    fn spill_dir(&self) -> Option<std::path::PathBuf> {
         self.cfg
             .spill_dir
             .as_ref()

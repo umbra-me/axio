@@ -221,6 +221,13 @@ impl Policy {
         if let Some(reason) = self.builtin_denial(subject, plan.effects) {
             return Verdict::Deny(reason);
         }
+        // A subject like `bash:cat` says nothing about what is being read, so
+        // the arguments get their own pass through the same lists.
+        for path in &plan.paths {
+            if let Some(reason) = self.builtin_path_denial(path, plan.effects) {
+                return Verdict::Deny(reason);
+            }
+        }
 
         if let Some(rule) = self.deny.iter().find(|r| r.matches(subject)) {
             return Verdict::Deny(format!("denied by rule `{}`", rule.pattern()));
@@ -249,7 +256,12 @@ impl Policy {
 
     fn builtin_denial(&self, subject: &str, effects: Effects) -> Option<String> {
         let path = subject.split_once(':').map(|(_, p)| p).unwrap_or(subject);
+        self.builtin_path_denial(path, effects)
+    }
 
+    /// The same test against a path that is already a path — a declared
+    /// argument rather than the tail of a subject.
+    fn builtin_path_denial(&self, path: &str, effects: Effects) -> Option<String> {
         if effects.reads && self.builtin_read.iter().any(|m| matches(m, path)) {
             return Some(format!(
                 "`{path}` is on the built-in protected list; \
@@ -314,6 +326,40 @@ mod tests {
         executes: true,
         network: true,
     };
+
+    /// Regression. The subject of a shell command is `bash:<program>`, so the
+    /// built-in list — which matches paths — could never fire on the one tool
+    /// that can read any byte on the machine. `read .env` was refused and
+    /// `bash cat .env` printed the key, under `--yes` and equally under a
+    /// perfectly ordinary `allow = ["bash:cat"]`.
+    #[test]
+    fn a_shell_command_cannot_read_past_the_built_in_deny_list() {
+        let policy = Policy::new()
+            .allow_rule("bash:cat")
+            .expect("a valid pattern")
+            .unattended_allow();
+
+        let denied = plan("bash:cat", EXEC).with_paths(vec![".env".into()]);
+        assert!(
+            matches!(policy.evaluate(&denied), Verdict::Deny(_)),
+            "`cat .env` must not be reachable through an allow rule"
+        );
+
+        // The same command against something not on the list still runs.
+        let allowed = plan("bash:cat", EXEC).with_paths(vec!["README.md".into()]);
+        assert_eq!(policy.evaluate(&allowed), Verdict::Allow);
+    }
+
+    /// The credential store is protected by path, and a shell command names
+    /// paths in its arguments rather than in its subject.
+    #[test]
+    fn a_shell_command_cannot_read_a_protected_directory() {
+        let policy = Policy::new()
+            .protect(std::path::Path::new("/home/u/.config/axio"))
+            .unattended_allow();
+        let plan = plan("bash:cat", EXEC).with_paths(vec!["/home/u/.config/axio/auth.json".into()]);
+        assert!(matches!(policy.evaluate(&plan), Verdict::Deny(_)));
+    }
 
     #[test]
     fn built_in_patterns_all_compile() {

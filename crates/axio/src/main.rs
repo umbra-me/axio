@@ -23,7 +23,7 @@ use axio_core::session::Session;
 use axio_core::tool::ToolEnv;
 use axio_provider::{AnthropicProvider, OLLAMA_BASE, OpenAiProvider};
 use clap::{Parser, Subcommand};
-use render::{JsonlRenderer, PlainRenderer, Renderer, Style};
+use render::{JsonlRenderer, PlainRenderer, Refusals, Renderer, Style};
 use surface::Surface;
 use tokio_util::sync::CancellationToken;
 
@@ -170,6 +170,14 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     let provider: Arc<dyn axio_core::provider::Provider> = match build_provider(resolved) {
         Ok(provider) => provider,
         Err(message) => {
+            // Config notices normally reach the user through `announce`, which
+            // is downstream of here. On this path they are the explanation —
+            // "no credential for `anthropic`" makes no sense to someone who
+            // selected a different one until they are told their config was
+            // rejected.
+            for notice in resolved.notices() {
+                eprintln!("axio: {}", notice.message);
+            }
             eprintln!("axio: {message}");
             return 1;
         }
@@ -183,8 +191,12 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     let (policy, mut policy_notices) = resolved.policy(cli.yes);
     // axio's own directory holds the credential file. Without this, running
     // from a parent of it puts auth.json inside the workspace, where the read
-    // tool would hand the key straight to the model.
-    let policy = policy.protect(&axio_home()).protect(&state_dir());
+    // tool would hand the key straight to the model. Sessions are named rather
+    // than the whole state directory because the spill files beside them are
+    // the model's own tool output, which it is meant to be able to read back.
+    let policy = policy
+        .protect(&axio_home())
+        .protect(&state_dir().join("sessions"));
     notices.append(&mut policy_notices);
 
     // Resume before the agent exists: the header decides the model, because a
@@ -256,6 +268,8 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
         ))
     };
 
+    let mut refusals = Refusals::default();
+
     let cancel = CancellationToken::new();
     let signal_code = surface::spawn_signal_watcher(cancel.clone());
 
@@ -272,6 +286,7 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     let outcome = loop {
         tokio::select! {
             Some(event) = rx.recv() => {
+                refusals.observe(&event);
                 if let Err(e) = renderer.handle(&event)
                     && e.kind() != std::io::ErrorKind::BrokenPipe
                 {
@@ -286,6 +301,7 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
                     Ok((outcome, _agent)) => {
                         // Drain what is still queued before reporting.
                         while let Ok(event) = rx.try_recv() {
+                            refusals.observe(&event);
                             let _ = renderer.handle(&event);
                         }
                         break outcome;
@@ -306,10 +322,19 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
     // A signal's own exit code outranks the outcome's: the caller asked the
     // process to stop, and the shell reports how it stopped.
     match signal_code.load(std::sync::atomic::Ordering::SeqCst) {
-        0 => outcome.exit_code(),
+        // A turn can complete with its work refused: the model narrates a
+        // success it was never allowed to perform, and prose is not something
+        // a script can check. `&&` has to see that.
+        0 => match outcome {
+            TurnOutcome::Completed if refusals.count() > 0 => EXIT_REFUSED_ACTIONS,
+            other => other.exit_code(),
+        },
         code => code,
     }
 }
+
+/// The turn ran to completion, but policy refused at least one action.
+const EXIT_REFUSED_ACTIONS: u8 = 5;
 
 // ---------------------------------------------------------------- local modes
 
@@ -553,6 +578,13 @@ fn default_config_dir() -> Option<PathBuf> {
 
 /// Find a credential, environment first, then the store.
 fn credential(provider: &str) -> Result<(Secret, auth::Source), String> {
+    // Before anything about credentials: does this provider exist? Otherwise a
+    // typo is diagnosed as a missing credential, the advice is to store one,
+    // storing it succeeds, and only the next run says the name was never valid.
+    if !auth::is_known(provider) {
+        return Err(unknown_provider(provider));
+    }
+
     let env: Vec<(String, String)> = std::env::vars().collect();
     let home = axio_home();
     if let Some(found) = auth::resolve(provider, &home, &env) {
@@ -563,13 +595,12 @@ fn credential(provider: &str) -> Result<(Secret, auth::Source), String> {
     // one is already configured. "You have no credential" is unhelpful when
     // the real situation is "you have one, for something else" — which is what
     // happens to anyone whose only provider is not the default.
-    let others: Vec<String> = auth::status(&["anthropic", "ollama"], &home, &env)
+    let others: Vec<String> = auth::status(auth::PROVIDERS, &home, &env)
         .into_iter()
         .filter(|(name, source)| name != provider && source.is_some())
         .map(|(name, _)| name)
         .collect();
 
-    let var = auth::env_var_for(provider).unwrap_or("the provider's API key");
     let mut message = format!("no credential for `{provider}`.\n\n");
 
     if let Some(other) = others.first() {
@@ -583,10 +614,27 @@ fn credential(provider: &str) -> Result<(Secret, auth::Source), String> {
     }
 
     message.push_str(&format!(
-        "Store a credential for `{provider}`:\n    axio auth login --provider {provider}\n\n\
-         Or set it for this shell:\n    export {var}=..."
+        "Store a credential for `{provider}`:\n    axio auth login --provider {provider}"
     ));
+    // Only when there is a variable to name. Splicing the fallback prose into
+    // an `export` line hands the user something that cannot be typed.
+    if let Some(var) = auth::env_var_for(provider) {
+        message.push_str(&format!(
+            "\n\nOr set it for this shell:\n    export {var}=..."
+        ));
+    }
     Err(message)
+}
+
+fn unknown_provider(provider: &str) -> String {
+    format!(
+        "unknown provider `{provider}`; expected one of {}",
+        auth::PROVIDERS
+            .iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn auth_command(action: &AuthAction) -> u8 {
@@ -595,6 +643,12 @@ fn auth_command(action: &AuthAction) -> u8 {
 
     match action {
         AuthAction::Login { provider } => {
+            // Refuse the name here rather than storing a credential that no run
+            // can use and `auth status` cannot even list.
+            if !auth::is_known(provider) {
+                eprintln!("axio: {}", unknown_provider(provider));
+                return 1;
+            }
             // Read from stdin, never from an argument. A credential in argv is
             // visible in `ps` to every user on the machine and lands in shell
             // history besides.
@@ -655,7 +709,7 @@ fn auth_command(action: &AuthAction) -> u8 {
         }
 
         AuthAction::Status => {
-            let rows = auth::status(&["anthropic", "ollama"], &home, &env);
+            let rows = auth::status(auth::PROVIDERS, &home, &env);
             for (provider, source) in rows {
                 match source {
                     Some(source) => println!("{provider:<12} {}", source.describe()),
@@ -712,9 +766,7 @@ fn build_provider(resolved: &Resolved) -> Result<Arc<dyn axio_core::provider::Pr
                 .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
                 .map_err(|e| format!("could not start the http client: {e}"))
         }
-        other => Err(format!(
-            "unknown provider `{other}`; expected `anthropic` or `ollama`"
-        )),
+        other => Err(unknown_provider(other)),
     }
 }
 
@@ -753,7 +805,8 @@ fn doctor(resolved: &Resolved) -> u8 {
     // One resolution path, the same one the run itself uses, so doctor cannot
     // disagree with reality about which credential is in play.
     let env: Vec<(String, String)> = std::env::vars().collect();
-    for (provider, source) in axio_core::auth::status(&["anthropic", "ollama"], &axio_home(), &env)
+    for (provider, source) in
+        axio_core::auth::status(axio_core::auth::PROVIDERS, &axio_home(), &env)
     {
         match source {
             Some(source) => {

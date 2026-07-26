@@ -586,6 +586,65 @@ async fn a_large_output_is_capped_and_spilled_where_the_model_can_read_it() {
     }
 }
 
+/// Regression. The spill path was built from a hardcoded `"output"` rather
+/// than the call id, so a session's second large output silently overwrote the
+/// first — and the first call's recorded marker went on naming a file that now
+/// held someone else's bytes. Silent substitution in the one mechanism whose
+/// entire job is not to lose output.
+///
+/// Unix-only for the same reason as its neighbour: it needs a shell command
+/// that produces predictable bulk output.
+#[cfg(unix)]
+#[tokio::test]
+async fn two_large_outputs_in_one_session_do_not_overwrite_each_other() {
+    let mut h = harness(
+        vec![
+            turn_with(tool_call(
+                0,
+                "call_a",
+                "bash",
+                r#"{"command":"head -c 60000 /dev/zero | tr '\\0' 'a'"}"#,
+            )),
+            turn_with(tool_call(
+                0,
+                "call_b",
+                "bash",
+                r#"{"command":"head -c 60000 /dev/zero | tr '\\0' 'b'"}"#,
+            )),
+            done(),
+        ],
+        Policy::new().unattended_allow(),
+        Arc::new(CountingApprover {
+            asked: Arc::new(AtomicUsize::new(0)),
+            answer: Decision::Allow,
+        }),
+    );
+    h.agent
+        .run_turn("make noise twice".into(), CancellationToken::new())
+        .await;
+
+    let spills: Vec<std::path::PathBuf> = h
+        .agent
+        .session()
+        .transcript()
+        .iter()
+        .filter_map(|i| match &i.body {
+            ItemBody::ToolCall {
+                status: ToolStatus::Ok { spill, .. },
+                ..
+            } => spill.clone(),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(spills.len(), 2, "both calls must have spilled");
+    assert_ne!(spills[0], spills[1], "two calls shared one spill file");
+    let first = std::fs::read_to_string(&spills[0]).expect("the first spill survived");
+    let second = std::fs::read_to_string(&spills[1]).expect("the second spill exists");
+    assert!(first.starts_with('a'), "the first spill was overwritten");
+    assert!(second.starts_with('b'));
+}
+
 /// Unix-only: the assertion depends on how the shell renders an unset
 /// variable. `proc::filter_env` is unit-tested on every platform.
 #[cfg(unix)]

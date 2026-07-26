@@ -10,12 +10,21 @@ Concretely, in the shipped design:
 - File reads and writes are confined to the workspace root. Every path goes
   through one constructor, which rejects `..`, absolute paths, UNC and
   drive-relative spellings lexically, then canonicalises to close the symlink
-  escape.
+  escape. Reads may additionally reach the spill directory, where axio parks
+  tool output too large to send; nothing else outside the root is reachable, and
+  writes have no such exception.
 - Writes, edits and shell commands require approval. Reads, globs and greps do
   not.
 - A built-in deny list is evaluated **before** read-only auto-approval, so a
   rule cannot accidentally expose `.env`, private keys, `~/.ssh`, `~/.aws`, or
-  axio's own state directory. It is not overridable by an allow rule.
+  axio's own credential store. It is not overridable by an allow rule or by
+  `--yes`.
+- The deny list is tested against a shell command's arguments as well as against
+  the file tools' paths, so `bash cat .env` is refused the same way `read .env`
+  is. **This holds only for a path the command states plainly.** A shell can
+  compute one — `cat $(echo .env)`, `cat .e''nv`, a script that reads it — and
+  nothing short of intercepting the syscalls would see that. Treat the deny list
+  as a guard against accident, not against a determined agent with a shell.
 - The credential is stripped from the environment of any child process axio
   spawns.
 
