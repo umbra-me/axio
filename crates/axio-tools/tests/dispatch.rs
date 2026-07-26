@@ -419,6 +419,7 @@ async fn a_compound_command_cannot_use_an_allow_rule_for_its_first_word() {
     assert_eq!(subject, "bash:!compound");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_simple_command_matching_an_allow_rule_runs_without_asking() {
     let asked = Arc::new(AtomicUsize::new(0));
@@ -525,6 +526,10 @@ async fn an_ambiguous_edit_is_refused_rather_than_guessed() {
     assert!(err.to_string().contains("2 times"), "{err}");
 }
 
+/// Unix-only because it needs a shell command that reliably produces 200KB.
+/// The capping and spilling themselves are covered cross-platform by the unit
+/// tests in `axio_core::truncate`; this asserts the loop wires them up.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_large_output_is_capped_and_spilled_where_the_model_can_read_it() {
     let mut h = harness(
@@ -578,6 +583,9 @@ async fn a_large_output_is_capped_and_spilled_where_the_model_can_read_it() {
     }
 }
 
+/// Unix-only: the assertion depends on how the shell renders an unset
+/// variable. `proc::filter_env` is unit-tested on every platform.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_credential_is_absent_from_a_child_process() {
     let mut h = harness(
@@ -656,6 +664,7 @@ async fn cancelling_leaves_no_orphan_process() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_cancelled_call_is_recorded_rather_than_left_pending() {
     let mut h = harness(

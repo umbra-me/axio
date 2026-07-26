@@ -112,6 +112,12 @@ running. Children get their own process group and the group is signalled, so
 cancellation reaches the whole tree. There is a test that greps `ps` for
 survivors, because nothing else catches this.
 
+**`creation_flags` is inherent on tokio's `Command`.** Importing
+`std::os::windows::process::CommandExt` to reach it leaves an unused import,
+which fails clippy at `-D warnings` on Windows and on no other platform — so it
+passes locally and breaks in CI. This one was written down here *before* it was
+made, and made anyway.
+
 **`CREATE_NO_WINDOW` is deliberately not set on Windows.** It belongs to a GUI
 application spawning a console child. In a console application it detaches the
 child, breaking anything that checks whether it is attached to a terminal.

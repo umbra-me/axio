@@ -76,7 +76,10 @@ pub fn configure(cmd: &mut Command, cwd: &std::path::Path, env: &[(String, Strin
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
+        // `creation_flags` is INHERENT on tokio's Command. Importing
+        // `std::os::windows::process::CommandExt` to reach it leaves an unused
+        // import, which fails clippy at -D warnings on Windows and nowhere
+        // else — so the mistake only ever shows up in CI.
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
