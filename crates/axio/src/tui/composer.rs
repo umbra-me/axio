@@ -121,34 +121,42 @@ impl Composer {
         Edit::None
     }
 
-    /// The text as it should be drawn, wrapped to `width`, with the cursor's
-    /// position among those rows.
+    /// The text as it should be drawn, wrapped to `width` columns, with the
+    /// cursor's position among those rows.
+    ///
+    /// Columns, not characters: a prompt with a wide character in it is one
+    /// column further along than counting characters would say, and a cursor
+    /// drawn in the wrong column is a cursor that edits the wrong place.
     pub fn rows(&self, width: usize) -> (Vec<String>, (usize, usize)) {
         let width = width.max(1);
         let mut rows: Vec<String> = Vec::new();
         let mut at = (0usize, 0usize);
-        let mut seen = 0usize;
+        let mut index = 0usize;
 
-        for line in self.text.split('\n') {
-            let chars: Vec<char> = line.chars().collect();
-            let start = rows.len();
-            if chars.is_empty() {
-                rows.push(String::new());
-            } else {
-                for chunk in chars.chunks(width) {
-                    rows.push(chunk.iter().collect());
-                }
+        for (n, line) in self.text.split('\n').enumerate() {
+            if n > 0 {
+                index += 1; // the newline that ended the line before
             }
-            // The cursor sits in this line if it has not already been placed
-            // and does not run past the line's own end.
-            if self.cursor >= seen && self.cursor <= seen + chars.len() {
-                let offset = self.cursor - seen;
-                at = (start + offset / width, offset % width);
-            }
-            seen += chars.len() + 1;
-        }
-        if rows.is_empty() {
             rows.push(String::new());
+            let mut used = 0usize;
+            for c in line.chars() {
+                let cell = super::markdown::cell_width(c);
+                if used + cell > width {
+                    rows.push(String::new());
+                    used = 0;
+                }
+                if self.cursor == index {
+                    at = (rows.len() - 1, used);
+                }
+                rows.last_mut().expect("a row").push(c);
+                used += cell;
+                index += 1;
+            }
+            // The cursor may also sit at the end of the line, past its last
+            // character and before the newline.
+            if self.cursor == index {
+                at = (rows.len() - 1, used);
+            }
         }
         (rows, at)
     }
@@ -469,6 +477,23 @@ mod tests {
         }
         let (_, at) = c.rows(4);
         assert_eq!(at, (1, 2));
+    }
+
+    #[test]
+    fn the_cursor_column_counts_columns_and_not_characters() {
+        // Two ideographs are two characters and four columns; a cursor placed
+        // at character two would sit in the middle of the second one.
+        let mut c = Composer::default();
+        c.paste("日本");
+        assert_eq!(c.rows(20), (vec!["日本".to_owned()], (0, 4)));
+    }
+
+    #[test]
+    fn wide_characters_wrap_by_the_room_they_take() {
+        let mut c = Composer::default();
+        c.paste("日本語です");
+        let (rows, _) = c.rows(4);
+        assert_eq!(rows, vec!["日本", "語で", "す"]);
     }
 
     #[test]

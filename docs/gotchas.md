@@ -262,6 +262,13 @@ line by line and rendering it whole must produce identical output or a resumed
 transcript would not match what was watched live; that equivalence is a test,
 and an open code fence is the only state allowed to cross a line boundary.
 
+**A character is not a column.** An ideograph or an emoji occupies two columns
+and counts as one character, and a combining mark occupies none. Wrapping by
+character count writes those lines wider than they were measured, and the
+terminal clips what does not fit — silently, at the right-hand edge, which is
+where the reader is least likely to notice a word has gone. Widths come from
+ratatui's own text measurement so the renderer and the terminal agree.
+
 **Without bracketed paste, a pasted paragraph is a series of keystrokes.** Its
 first newline submits it and the rest types itself into whatever the surface
 does next — an approval prompt, if the timing is unlucky. `EnableBracketedPaste`

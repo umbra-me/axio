@@ -59,9 +59,15 @@ ordered permission engine, sessions on disk, and layered configuration.
   gives back the draft it was interrupted. It grows to three rows and then
   scrolls, keeping what is being typed on screen.
 - **Paced drawing.** A fast stream marks the surface dirty far more often than a
-  terminal can usefully repaint; frames are coalesced to at most one every 16ms,
-  and the status carries a spinner and the turn's elapsed time so a quiet model
-  still looks different from a hung one.
+  terminal can usefully repaint; frames are coalesced to at most one every 16ms.
+- **A status line that says what is happening** — thinking, writing, or the
+  subject of the tool being waited on — with a spinner, the turn's elapsed time
+  and its token usage, so a quiet model looks different from a hung one.
+- **Tables.** Rendered as aligned columns with the alignment the markdown asked
+  for, narrowed to fit the terminal rather than overflowing it.
+- **Widths measured in columns.** A CJK character or an emoji occupies two
+  columns and counts as one character; counting characters wrote every such line
+  a column too wide and lost its end to the clip.
 - **An optional sandbox**, Linux only: Landlock, applied before the runtime
   starts and inherited by every command axio spawns. `--sandbox`, or
   `[sandbox] enabled`.

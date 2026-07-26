@@ -93,8 +93,9 @@ with the scrollbar and copies with the mouse. Only the live part — a status
 line, the composer, the question being asked — is redrawn.
 
 The answer arrives a line at a time with its markdown rendered: headings, lists,
-quotes, code and emphasis become styles rather than asterisks, and the sentence
-still being written waits dim in the viewport until it is finished.
+quotes, code, tables and emphasis become styles and columns rather than
+asterisks and pipes, and the sentence still being written waits dim in the
+viewport until it is finished.
 
 The composer is a line editor. A pasted paragraph stays one prompt rather than
 submitting its first line.

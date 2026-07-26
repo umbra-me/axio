@@ -77,10 +77,21 @@ pub struct Tui {
     /// an open code fence is the only thing that outlives a line.
     md: markdown::Renderer,
     /// Whether any of the current message has already reached scrollback, which
-    /// decides both what a completed message still has to render and whether a
-    /// discarded stream needs to warn that the text above may repeat.
+    /// is what decides whether a discarded stream has to warn that the text
+    /// above may repeat.
     flushed: bool,
+    /// Whether the renderer has already been fed this message's deltas. It is
+    /// not the same question as `flushed`: a message whose lines are all still
+    /// held back — a table, whose columns are only known at its last row — has
+    /// been consumed without anything reaching the screen, and rendering the
+    /// completed item again would draw it twice.
+    streamed: bool,
+    /// What the turn is doing right now — thinking, writing, or the subject of
+    /// the tool it is waiting on.
     status: String,
+    /// The turn's cumulative usage, kept apart from `status` so a token count
+    /// arriving does not overwrite what the turn was doing.
+    tokens: Option<(u64, u64)>,
     interrupt_armed: bool,
     model: String,
     /// When the running turn started, which is what the status counts up from.
@@ -147,7 +158,9 @@ pub async fn run(
         live: String::new(),
         md: markdown::Renderer::default(),
         flushed: false,
+        streamed: false,
         status: String::new(),
+        tokens: None,
         interrupt_armed: false,
         model,
         started: None,
@@ -216,6 +229,7 @@ pub async fn run(
                 }
                 app.mode = Mode::Idle;
                 app.status.clear();
+                app.tokens = None;
                 app.started = None;
                 clock.mark();
                 if leaving {
@@ -429,8 +443,19 @@ impl Tui {
                 delta: Delta::Text { text },
                 ..
             } => {
+                self.status = "writing".into();
+                self.streamed = true;
                 self.live.push_str(text);
                 self.flush_lines(terminal)?;
+            }
+            // Reasoning is never shown — it is the model's working, not its
+            // answer — but the fact that it is happening is the difference
+            // between a long silence and a broken one.
+            EventKind::ItemDelta {
+                delta: Delta::Reasoning { .. },
+                ..
+            } => {
+                self.status = "thinking".into();
             }
             EventKind::ItemDiscarded { .. } => {
                 // A retry re-sends what was dropped. The unflushed tail is
@@ -468,10 +493,7 @@ impl Tui {
                 self.on_item(terminal, item)?;
             }
             EventKind::Usage(usage) => {
-                self.status = format!(
-                    "working · {} in / {} out",
-                    usage.input_tokens, usage.output_tokens
-                );
+                self.tokens = Some((usage.input_tokens, usage.output_tokens));
             }
             _ => {}
         }
@@ -484,6 +506,7 @@ impl Tui {
         self.live.clear();
         self.md = markdown::Renderer::default();
         self.flushed = false;
+        self.streamed = false;
     }
 
     /// Commit every complete line of the streaming message to scrollback,
@@ -532,7 +555,7 @@ impl Tui {
                 // tail they left behind. A provider that streamed nothing
                 // leaves both empty, and the whole message is rendered here.
                 let width = self.width(terminal);
-                let remainder = if self.flushed || !self.live.is_empty() {
+                let remainder = if self.streamed {
                     std::mem::take(&mut self.live)
                 } else {
                     text.clone()
@@ -542,6 +565,9 @@ impl Tui {
                 } else {
                     self.md.block(&remainder, width as usize)
                 };
+                // Whatever the renderer is still holding — a table ends at the
+                // end of the message as often as it ends at a blank line.
+                lines.extend(self.md.finish(width as usize));
                 lines.push(Line::raw(""));
                 self.begin_message();
                 self.push(terminal, lines)?;
@@ -575,6 +601,12 @@ impl Tui {
                         format!("  ⊘ {subject}  cancelled"),
                         Style::default().add_modifier(Modifier::DIM),
                     )),
+                    // Not finished, so nothing to report — but a tool that
+                    // takes a minute should say which one is taking it.
+                    ToolStatus::Running => {
+                        self.status = subject.clone();
+                        None
+                    }
                     _ => None,
                 };
                 if let Some(line) = line {
@@ -807,20 +839,27 @@ impl Tui {
         Paragraph::new(lines)
     }
 
+    /// What is happening, how long it has been happening, and what it has cost
+    /// so far — because "working" alone is the same pixel whether the model is
+    /// thinking, running a command, or gone.
     fn status_row(&self) -> Paragraph<'_> {
         let text = match &self.mode {
             Mode::Approving(request, _) => format!("  {}", request.subject),
             _ if self.status.is_empty() => String::new(),
-            _ => match self.started {
-                // A spinner and a clock, because "working" alone is the same
-                // pixel whether the model is thinking or the connection died.
-                Some(at) => {
-                    let elapsed = at.elapsed();
-                    let turning = SPINNER[(elapsed.as_millis() / 120) as usize % SPINNER.len()];
-                    format!("  {turning} {} · {}s", self.status, elapsed.as_secs())
+            _ => {
+                let mut parts = vec![self.status.clone()];
+                if let Some(at) = self.started {
+                    parts.push(format!("{}s", at.elapsed().as_secs()));
                 }
-                None => format!("  {}", self.status),
-            },
+                if let Some((input, output)) = self.tokens {
+                    parts.push(format!("{input} in / {output} out"));
+                }
+                let turning = match self.started {
+                    Some(at) => SPINNER[(at.elapsed().as_millis() / 120) as usize % SPINNER.len()],
+                    None => " ",
+                };
+                format!("  {turning} {}", parts.join(" · "))
+            }
         };
         Paragraph::new(Line::styled(
             text,
@@ -901,18 +940,30 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         let mut line = String::new();
         for word in paragraph.split(' ') {
             let mut word = word;
-            while word.chars().count() > width {
+            // Measured in columns, not characters: a line of ideographs counted
+            // by character is written twice as wide as it was measured, and the
+            // end of it is clipped away.
+            while markdown::text_width(word) > width {
                 if !line.is_empty() {
                     out.push(std::mem::take(&mut line));
                 }
-                let split: String = word.chars().take(width).collect();
+                let mut split = String::new();
+                let mut used = 0;
+                for c in word.chars() {
+                    let cell = markdown::cell_width(c);
+                    if used + cell > width {
+                        break;
+                    }
+                    split.push(c);
+                    used += cell;
+                }
                 let taken = split.len();
                 out.push(split);
                 word = &word[taken..];
             }
             if line.is_empty() {
                 line.push_str(word);
-            } else if line.chars().count() + 1 + word.chars().count() <= width {
+            } else if markdown::text_width(&line) + 1 + markdown::text_width(word) <= width {
                 line.push(' ');
                 line.push_str(word);
             } else {
@@ -1004,7 +1055,9 @@ mod tests {
             live: String::new(),
             md: markdown::Renderer::default(),
             flushed: false,
+            streamed: false,
             status: String::new(),
+            tokens: None,
             interrupt_armed: false,
             model: "test-model".into(),
             started: None,
@@ -1094,6 +1147,23 @@ mod tests {
         let visible = everything(&terminal);
         assert_eq!(visible.matches("alpha").count(), 1, "{visible}");
         assert_eq!(visible.matches("beta").count(), 1, "{visible}");
+    }
+
+    #[test]
+    fn a_table_that_runs_to_the_end_of_a_message_is_drawn_once() {
+        // The trap the `streamed` flag exists for: a table is held back until
+        // its last row, so nothing has reached the screen when the message
+        // completes — and a surface that took that for "nothing was streamed"
+        // would render the whole message again on top of the held-back table.
+        let (mut app, mut terminal) = surface(50, 14);
+        let table = "| Fruit | Cost |\n|---|---|\n| apple | 3 |";
+        app.on_event(&mut terminal, &delta(table)).expect("handled");
+        app.on_event(&mut terminal, &completed(table))
+            .expect("handled");
+
+        let visible = everything(&terminal);
+        assert_eq!(visible.matches("apple").count(), 1, "{visible}");
+        assert!(!visible.contains('|'), "{visible}");
     }
 
     #[test]

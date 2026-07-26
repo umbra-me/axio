@@ -34,6 +34,23 @@ const MIN_WIDTH: usize = 20;
 /// asterisks, and recursion is not the way to find out.
 const MAX_NESTING: usize = 4;
 
+/// Columns a character occupies on screen, which is not how many characters it
+/// is. A CJK ideograph and most emoji take two; a combining mark takes none.
+/// Counting characters instead means every such line is written a column too
+/// wide and loses its right-hand end to the clip.
+///
+/// Measured through ratatui's own text measurement rather than a second
+/// dependency, so the renderer and the terminal cannot disagree about it.
+pub fn cell_width(c: char) -> usize {
+    let mut buffer = [0u8; 4];
+    Span::raw(&*c.encode_utf8(&mut buffer)).width()
+}
+
+/// Columns a string occupies on screen.
+pub fn text_width(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
 fn code() -> Style {
     Style::default().fg(Color::Cyan)
 }
@@ -48,6 +65,10 @@ fn dim() -> Style {
 pub struct Renderer {
     /// Inside a fenced code block, where nothing is markdown any more.
     fenced: bool,
+    /// Rows of a table being collected. A table is the one construct that
+    /// cannot be rendered a line at a time: its columns are as wide as their
+    /// widest cell, and the widest cell may not have arrived yet.
+    table: Vec<Vec<String>>,
 }
 
 impl Renderer {
@@ -57,11 +78,36 @@ impl Renderer {
         text.split('\n').flat_map(|l| self.line(l, width)).collect()
     }
 
+    /// Anything held back waiting for more input — which is a table that ran to
+    /// the end of the message. A caller that stops feeding lines without
+    /// calling this loses it.
+    pub fn finish(&mut self, width: usize) -> Vec<Line<'static>> {
+        if self.table.is_empty() {
+            return Vec::new();
+        }
+        let rows = std::mem::take(&mut self.table);
+        table(&rows, width.saturating_sub(GUTTER.len()).max(MIN_WIDTH))
+    }
+
     /// Render one source line, which may become several terminal rows once it
     /// is wrapped — or none at all, for a fence marker that only changes state.
     pub fn line(&mut self, src: &str, width: usize) -> Vec<Line<'static>> {
         let src = src.strip_suffix('\r').unwrap_or(src);
         let body = width.saturating_sub(GUTTER.len()).max(MIN_WIDTH);
+
+        // A table row joins the one being collected; anything else ends it, and
+        // the finished table is drawn before whatever ended it.
+        if !self.fenced {
+            if let Some(cells) = table_row(src) {
+                self.table.push(cells);
+                return Vec::new();
+            }
+            if !self.table.is_empty() {
+                let mut lines = self.finish(width);
+                lines.extend(self.line(src, width));
+                return lines;
+            }
+        }
 
         if is_fence(src) {
             // The marker itself is not content: the styling says "code", and a
@@ -200,6 +246,191 @@ fn list_item(line: &str) -> Option<(String, &str)> {
     let delim = after.chars().next().filter(|c| matches!(c, '.' | ')'))?;
     let rest = after[1..].strip_prefix(' ')?;
     Some((format!("{}{delim}", &line[..digits]), rest.trim_start()))
+}
+
+// -------------------------------------------------------------------- tables
+
+/// How a column's cells sit in the space they are given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Align {
+    Left,
+    Right,
+    Centre,
+}
+
+/// The cells of a table row, or nothing if the line is not one.
+///
+/// A leading pipe is what identifies a row: a sentence with a pipe in the
+/// middle of it is a sentence, and treating it as a table would eat it.
+fn table_row(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|')?;
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    Some(inner.split('|').map(|c| c.trim().to_owned()).collect())
+}
+
+/// `---`, `:--`, `--:` or `:-:` in every cell: the row that says where the
+/// header ends and how the columns align, rather than a row of data.
+fn alignments(cells: &[String]) -> Option<Vec<Align>> {
+    if cells.is_empty() {
+        return None;
+    }
+    cells
+        .iter()
+        .map(|cell| {
+            let body = cell.trim();
+            let stripped = body.trim_start_matches(':').trim_end_matches(':');
+            if stripped.is_empty() || !stripped.chars().all(|c| c == '-') {
+                return None;
+            }
+            Some(match (body.starts_with(':'), body.ends_with(':')) {
+                (true, true) => Align::Centre,
+                (false, true) => Align::Right,
+                _ => Align::Left,
+            })
+        })
+        .collect()
+}
+
+/// Draw a collected table, fitted to the width it has.
+///
+/// Columns are as wide as their widest cell until they do not fit, at which
+/// point the widest column gives up a column at a time — narrowing what has the
+/// most to give rather than truncating every cell equally.
+fn table(rows: &[Vec<String>], width: usize) -> Vec<Line<'static>> {
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if columns == 0 {
+        return Vec::new();
+    }
+
+    let divider = rows.iter().position(|r| alignments(r).is_some());
+    let align: Vec<Align> = divider
+        .and_then(|at| alignments(&rows[at]))
+        .unwrap_or_default();
+    let align = |column: usize| align.get(column).copied().unwrap_or(Align::Left);
+
+    let cell = |row: &Vec<String>, column: usize| -> Vec<(String, Style)> {
+        row.get(column).map(|c| inline(c, 0)).unwrap_or_default()
+    };
+    let body: Vec<&Vec<String>> = rows
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| Some(*i) != divider)
+        .map(|(_, r)| r)
+        .collect();
+
+    // Natural widths, then shaved down until the whole thing fits.
+    let mut widths: Vec<usize> = (0..columns)
+        .map(|c| {
+            body.iter()
+                .map(|row| segs_width(&cell(row, c)))
+                .max()
+                .unwrap_or(0)
+                .max(1)
+        })
+        .collect();
+    let separators = 3 * columns.saturating_sub(1);
+    while widths.iter().sum::<usize>() + separators > width {
+        let Some(widest) = widths
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, w)| **w)
+            .map(|(i, _)| i)
+        else {
+            break;
+        };
+        if widths[widest] <= 1 {
+            break;
+        }
+        widths[widest] -= 1;
+    }
+
+    let dim_bar = Span::styled(" │ ", dim());
+    let mut lines = Vec::new();
+    for (n, row) in body.iter().enumerate() {
+        // The row above the divider is a header, and reads as one.
+        let header = divider.is_some_and(|at| n < at);
+        let mut spans = vec![Span::raw(GUTTER)];
+        for (column, room) in widths.iter().enumerate() {
+            if column > 0 {
+                spans.push(dim_bar.clone());
+            }
+            let mut segs = fit(cell(row, column), *room);
+            if header {
+                segs = segs
+                    .into_iter()
+                    .map(|(t, s)| (t, s.patch(Style::default().add_modifier(Modifier::BOLD))))
+                    .collect();
+            }
+            spans.extend(pad(segs, *room, align(column)));
+        }
+        lines.push(Line::from(spans));
+
+        if header && divider.is_some_and(|at| n + 1 == at) {
+            let rule: String = widths
+                .iter()
+                .map(|w| "─".repeat(*w))
+                .collect::<Vec<_>>()
+                .join("─┼─");
+            lines.push(Line::from(vec![
+                Span::raw(GUTTER),
+                Span::styled(rule, dim()),
+            ]));
+        }
+    }
+    lines
+}
+
+fn segs_width(segs: &[(String, Style)]) -> usize {
+    segs.iter().map(|(t, _)| text_width(t)).sum()
+}
+
+/// Cut styled runs down to `width` columns, marking the cut.
+fn fit(segs: Vec<(String, Style)>, width: usize) -> Vec<(String, Style)> {
+    if segs_width(&segs) <= width {
+        return segs;
+    }
+    let room = width.saturating_sub(1);
+    let mut out: Vec<(String, Style)> = Vec::new();
+    let mut used = 0usize;
+    for (text, style) in segs {
+        let mut kept = String::new();
+        for c in text.chars() {
+            let cell = cell_width(c);
+            if used + cell > room {
+                break;
+            }
+            kept.push(c);
+            used += cell;
+        }
+        if !kept.is_empty() {
+            out.push((kept, style));
+        }
+        if used >= room {
+            break;
+        }
+    }
+    out.push(("…".to_owned(), dim()));
+    out
+}
+
+/// Place a cell's runs in a column of exactly `width`.
+fn pad(segs: Vec<(String, Style)>, width: usize, align: Align) -> Vec<Span<'static>> {
+    let slack = width.saturating_sub(segs_width(&segs));
+    let (before, after) = match align {
+        Align::Left => (0, slack),
+        Align::Right => (slack, 0),
+        Align::Centre => (slack / 2, slack - slack / 2),
+    };
+    let mut spans = Vec::new();
+    if before > 0 {
+        spans.push(Span::raw(" ".repeat(before)));
+    }
+    spans.extend(segs.into_iter().map(|(t, s)| Span::styled(t, s)));
+    if after > 0 {
+        spans.push(Span::raw(" ".repeat(after)));
+    }
+    spans
 }
 
 // ------------------------------------------------------------------- inline
@@ -355,7 +586,7 @@ fn compose(
     segs: Vec<(String, Style)>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let prefix = first.content.chars().count();
+    let prefix = first.width();
     let avail = width.saturating_sub(prefix).max(MIN_WIDTH);
     let styled: Vec<(char, Style)> = segs
         .iter()
@@ -383,10 +614,12 @@ fn wrap_styled(chars: &[(char, Style)], width: usize) -> Vec<Vec<(char, Style)>>
     let width = width.max(1);
     let mut rows: Vec<Vec<(char, Style)>> = Vec::new();
     let mut row: Vec<(char, Style)> = Vec::new();
+    let mut used = 0usize;
     let mut last_space: Option<usize> = None;
 
     for &(c, style) in chars {
-        if row.len() == width {
+        let cell = cell_width(c);
+        if used + cell > width && !row.is_empty() {
             match last_space {
                 Some(at) => {
                     let rest = row.split_off(at + 1);
@@ -395,6 +628,7 @@ fn wrap_styled(chars: &[(char, Style)], width: usize) -> Vec<Vec<(char, Style)>>
                 }
                 None => rows.push(std::mem::take(&mut row)),
             }
+            used = row.iter().map(|(c, _)| cell_width(*c)).sum();
             last_space = row.iter().rposition(|(c, _)| *c == ' ');
         }
         // A row never opens with the space it was broken on.
@@ -405,6 +639,7 @@ fn wrap_styled(chars: &[(char, Style)], width: usize) -> Vec<Vec<(char, Style)>>
             last_space = Some(row.len());
         }
         row.push((c, style));
+        used += cell;
     }
     rows.push(row);
     rows
@@ -439,11 +674,18 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     if text.is_empty() {
         return vec![String::new()];
     }
-    let chars: Vec<char> = text.chars().collect();
-    chars
-        .chunks(width)
-        .map(|chunk| chunk.iter().collect())
-        .collect()
+    let mut rows = vec![String::new()];
+    let mut used = 0usize;
+    for c in text.chars() {
+        let cell = cell_width(c);
+        if used + cell > width && !rows.last().expect("a row").is_empty() {
+            rows.push(String::new());
+            used = 0;
+        }
+        rows.last_mut().expect("a row").push(c);
+        used += cell;
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -587,6 +829,30 @@ mod tests {
     }
 
     #[test]
+    fn a_wide_character_is_measured_in_columns_not_characters() {
+        // The failure this covers: an ideograph counts as one character and
+        // occupies two columns, so a line counted by character is written a
+        // column too wide for every one of them and loses its end to the clip.
+        let src = "日本語のテキストがここにあります and some latin words too";
+        for width in [24usize, 30, 48] {
+            for line in render(src, width) {
+                let drawn: usize = line.spans.iter().map(|s| s.width()).sum();
+                assert!(drawn <= width, "width {width}: drew {drawn}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_emoji_is_two_columns_wide() {
+        assert_eq!(cell_width('✅'), 2);
+        assert_eq!(cell_width('a'), 1);
+        for line in render("✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅", 24) {
+            let drawn: usize = line.spans.iter().map(|s| s.width()).sum();
+            assert!(drawn <= 24, "drew {drawn}");
+        }
+    }
+
+    #[test]
     fn a_blank_line_survives() {
         assert_eq!(text_of(&render("a\n\nb", 40)), "  a\n\n  b");
     }
@@ -607,6 +873,91 @@ mod tests {
 
         assert_eq!(text_of(&whole), text_of(&piecemeal));
         assert_eq!(styles_of(&whole), styles_of(&piecemeal));
+    }
+
+    /// Tables are held back until they end, so a test that only calls `block`
+    /// sees nothing — the same trap the surface has to handle.
+    fn render_all(src: &str, width: usize) -> Vec<Line<'static>> {
+        let mut renderer = Renderer::default();
+        let mut lines = renderer.block(src, width);
+        lines.extend(renderer.finish(width));
+        lines
+    }
+
+    const TABLE: &str = "| Fruit | Cost |\n|---|---:|\n| apple | 3 |\n| **plum** | 12 |";
+
+    #[test]
+    fn a_table_is_drawn_as_columns_rather_than_pipes() {
+        let text = text_of(&render_all(TABLE, 40));
+        assert!(!text.contains('|'), "{text}");
+        assert!(text.contains("Fruit"), "{text}");
+        // Aligned: every row's separator sits in the same column.
+        let bars: Vec<usize> = text.lines().filter_map(|l| l.find('│')).collect();
+        assert!(bars.windows(2).all(|w| w[0] == w[1]), "{text}");
+        // The header is bold and the markers inside a cell are still rendered.
+        assert!(
+            styles_of(&render_all(TABLE, 40))
+                .iter()
+                .any(|(t, s)| t == "Fruit" && s.add_modifier.contains(Modifier::BOLD))
+        );
+        assert!(
+            text.contains("plum") && !text.contains("**plum**"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_right_aligned_column_is_right_aligned() {
+        let text = text_of(&render_all(TABLE, 40));
+        let rows: Vec<&str> = text.lines().collect();
+        let ends: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.contains('3') || r.contains("12"))
+            .copied()
+            .collect();
+        assert!(
+            ends.iter().all(|r| r.ends_with('3') || r.ends_with("12")),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_table_ends_where_the_prose_starts_again() {
+        let src = format!("{TABLE}\n\nand then a sentence");
+        let text = text_of(&render_all(&src, 40));
+        assert!(text.contains("apple"), "{text}");
+        assert!(text.contains("and then a sentence"), "{text}");
+        assert_eq!(text.matches("apple").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn a_table_too_wide_for_the_terminal_is_narrowed_and_says_so() {
+        let text = text_of(&render_all(
+            "| Column | Another |\n|---|---|\n| a very long value indeed | short |",
+            26,
+        ));
+        for line in text.lines() {
+            assert!(text_width(line) <= 26, "{line:?} in {text}");
+        }
+        assert!(text.contains('…'), "{text}");
+    }
+
+    #[test]
+    fn a_sentence_with_a_pipe_in_it_is_not_a_table() {
+        let text = text_of(&render_all("run a | b to pipe it", 40));
+        assert_eq!(text, "  run a | b to pipe it");
+    }
+
+    #[test]
+    fn a_table_renders_the_same_whether_it_streamed_or_not() {
+        let whole = render_all(TABLE, 36);
+        let mut streamed = Renderer::default();
+        let mut piecemeal = Vec::new();
+        for line in TABLE.split('\n') {
+            piecemeal.extend(streamed.line(line, 36));
+        }
+        piecemeal.extend(streamed.finish(36));
+        assert_eq!(text_of(&whole), text_of(&piecemeal));
     }
 
     #[test]
