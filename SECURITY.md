@@ -25,8 +25,10 @@ Concretely, in the shipped design:
   compute one — `cat $(echo .env)`, `cat .e''nv`, a script that reads it — and
   nothing short of intercepting the syscalls would see that. Treat the deny list
   as a guard against accident, not against a determined agent with a shell.
-- The credential is stripped from the environment of any child process axio
-  spawns.
+- Every provider's credential variable — and everything named `AXIO_*` — is
+  stripped from the environment of any child process axio spawns. The list is
+  derived from the providers themselves, so adding one cannot leave its key
+  behind.
 
 ## What axio does not do
 
@@ -62,6 +64,11 @@ A command that goes looking for `~/.ssh/id_rsa` gets `EACCES` from the kernel
 rather than a refusal from a policy engine, and `TMPDIR` points inside the state
 directory so the shared `/tmp` need not be opened up.
 
+A granted path that is a regular file rather than a directory gets the
+file-applicable subset of the same rights — so `~/.gitconfig`, and anything you
+list under `read`, is readable and not writable. That distinction is load-
+bearing: a writable git config is `core.hooksPath` pointing wherever it likes.
+
 Add what your toolchain needs:
 
 ```toml
@@ -88,9 +95,6 @@ write = ["/home/me/.cache/go-build"]
 If the kernel enforces only part of the ruleset, axio says so and tells you to
 treat it as no confinement. It never reports a sandbox it does not have.
 
-The first unattended run against untrusted input is the tripwire for adding
-Linux Landlock support, at which point this document will say "sandboxed on
-Linux only" and nothing stronger.
 
 ## Reporting a vulnerability
 

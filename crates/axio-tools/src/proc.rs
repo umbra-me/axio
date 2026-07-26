@@ -14,7 +14,7 @@ use tokio::process::Command;
 /// This is not a security boundary: under `--yes` the agent has the shell, and
 /// anything the shell can read it can read. It is a cheap way to stop a
 /// model-authored `curl -d "$ANTHROPIC_API_KEY"` from working by accident.
-const STRIP: &[&str] = &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+const STRIP: &[&str] = &["ANTHROPIC_AUTH_TOKEN"];
 
 /// Prefixes stripped wholesale — axio's own configuration, including anything
 /// added later, so a new variable is protected by default rather than by
@@ -43,7 +43,18 @@ pub fn filter_env(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, 
 }
 
 pub fn is_stripped(key: &str) -> bool {
-    STRIP.contains(&key) || STRIP_PREFIX.iter().any(|p| key.starts_with(p))
+    if STRIP.contains(&key) || STRIP_PREFIX.iter().any(|p| key.starts_with(p)) {
+        return true;
+    }
+    // Derived, not listed. A hand-written list held only the Anthropic
+    // variables, so `OLLAMA_API_KEY` — the credential for two of the three
+    // provider names — was inherited verbatim by every command axio spawned.
+    // Asking the auth module means adding a provider cannot leave its key
+    // behind.
+    axio_core::auth::PROVIDERS
+        .iter()
+        .filter_map(|p| axio_core::auth::env_var_for(p))
+        .any(|var| var == key)
 }
 
 /// Configure a command for containment and cancellation.
@@ -120,9 +131,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_providers_credential_is_stripped() {
+        // A hand-written list is how `OLLAMA_API_KEY` got left in: it protected
+        // the provider the author had in mind and no other.
+        for provider in axio_core::auth::PROVIDERS {
+            if let Some(var) = axio_core::auth::env_var_for(provider) {
+                assert!(
+                    is_stripped(var),
+                    "{var}, the credential for `{provider}`, reaches every child"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_credential_never_reaches_a_child() {
         assert!(is_stripped("ANTHROPIC_API_KEY"));
         assert!(is_stripped("ANTHROPIC_AUTH_TOKEN"));
+        assert!(is_stripped("OLLAMA_API_KEY"));
         assert!(!is_stripped("PATH"));
         assert!(!is_stripped("HOME"));
     }

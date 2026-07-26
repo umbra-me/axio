@@ -15,6 +15,9 @@ structure rather than describing it: `firewall.sh`, `limits.sh`, `deps.sh`.
 The event vocabulary, the `Provider` / `Tool` / `Approver` traits, `Workspace`
 path confinement, `Redacted`, and the Messages transport: a hand-written SSE
 decoder, the request builder, the block state machine and error classification.
+A second dialect followed — chat-completions, reached by the provider names
+`ollama` and `openai-compatible` — which is how the trait was shown to be an
+abstraction rather than one implementation with a header on it.
 
 ### M2 — turn loop and one-shot CLI
 
@@ -36,10 +39,18 @@ deterministic compaction, per-turn cost records and budget enforcement.
 
 ### M5 — packaging, and the interactive surface
 
-Tag-driven release workflow for five targets, `cargo install`, a changelog, and
+Tag-driven release workflow for five targets, `cargo install --git`, a changelog, and
 `scripts/live-check.sh` — a real turn against a real model rather than a stub.
 The interactive surface arrived here rather than in v0.2: an inline viewport, a
 composer, and an `Approver` that shows the diff before it asks.
+
+### M6 — the optional sandbox
+
+Landlock on Linux, off by default: `--sandbox` or `[sandbox] enabled`, with
+`read` and `write` for whatever a toolchain needs beyond the workspace. Applied
+before the runtime starts, so every command axio spawns inherits it. Filesystem
+only, and a second wall behind the permission engine rather than a replacement
+for it.
 
 ## Next
 

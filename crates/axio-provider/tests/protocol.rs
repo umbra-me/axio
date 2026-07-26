@@ -623,3 +623,66 @@ fn a_fallback_block_produces_no_item() {
         "a fallback block must not open a content block: {out:?}"
     );
 }
+
+/// Regression. `reqwest`'s `Display` prints only its outermost layer, so the
+/// cause — "relative URL without a base", "connection refused", a certificate
+/// failure — was thrown away and the user got "builder error", which names
+/// neither the problem nor the setting that caused it.
+#[test]
+fn an_error_chain_keeps_the_cause_not_just_the_outermost_layer() {
+    #[derive(Debug)]
+    struct Inner;
+    impl std::fmt::Display for Inner {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("relative URL without a base")
+        }
+    }
+    impl std::error::Error for Inner {}
+
+    #[derive(Debug)]
+    struct Outer(Inner);
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("builder error")
+        }
+    }
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    let chain = ProviderError::full_chain(&Outer(Inner));
+    assert!(chain.contains("builder error"), "{chain}");
+    assert!(chain.contains("relative URL without a base"), "{chain}");
+}
+
+/// A configuration error is not a bad moment on the network: retrying a base URL
+/// that will not parse spends the whole backoff schedule to fail identically.
+#[test]
+fn a_configuration_error_is_not_retryable() {
+    let e = ProviderError::Configuration("`not a url` is not a usable endpoint".into());
+    assert!(!e.retryable());
+    assert!(e.to_string().contains("not a url"));
+}
+
+/// The body reached the terminal, and on a recorded run the session file,
+/// uncapped — and the one useful fact, that it was not JSON at all, was the
+/// thing it did not say.
+#[test]
+fn a_non_json_error_body_is_capped_and_diagnosed() {
+    let html = format!("<!doctype html><body>{}</body>", "x".repeat(50_000));
+    let err = classify(405, None, &html);
+    let text = err.to_string();
+    assert!(
+        text.len() < 1_000,
+        "an error body must not dump {} bytes",
+        text.len()
+    );
+    assert!(text.contains("not JSON"), "{text}");
+
+    // A real API error keeps its message and gains no commentary.
+    let json = r#"{"error":{"type":"invalid_request_error","message":"bad model"}}"#;
+    let text = classify(400, None, json).to_string();
+    assert!(!text.contains("not JSON"), "{text}");
+}

@@ -76,7 +76,7 @@ struct Cli {
     #[arg(long)]
     yes: bool,
 
-    /// Report configuration, credentials and assumed prices, then exit.
+    /// Report configuration, credentials, prices and permissions, then exit.
     #[arg(long)]
     doctor: bool,
 

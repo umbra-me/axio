@@ -11,19 +11,26 @@ cargo test --workspace
 
 ## What CI checks
 
-Everything below runs on Linux, macOS and Windows. Run the cheap gates locally
-before pushing; they fail in seconds.
+The three-OS matrix runs clippy, the tests and the feature builds. The cheap
+gates and the two Linux-only checks run once, on Linux. Run the cheap gates
+locally before pushing; they fail in seconds.
 
 ```sh
 bash scripts/firewall.sh                            # naming firewall
 bash scripts/limits.sh                              # structural budgets
 bash scripts/deps.sh                                # axio-core dependency isolation
-bash scripts/check-windows.sh                       # cfg-gated code compiles for Windows
+bash scripts/check-windows.sh                       # core and tools still compile for Windows
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo build -p axio --no-default-features           # the headless path must not rot
+bash scripts/features.sh                            # both feature sets, with CI's -D warnings
 ```
+
+A third job runs `cargo-deny` over `deny.toml`, on Linux only: permissive
+licences, no yanked or advisory-flagged crates, no wildcard versions, one TLS
+stack. It is not part of a stock toolchain — `cargo install cargo-deny`, then
+`cargo deny check`. It runs on every pull request, so a new upstream advisory
+can turn it red when nothing about the dependencies changed.
 
 There is deliberately **no local pre-push gate** beyond the firewall hook. Plain
 CI is the gate.
@@ -64,6 +71,14 @@ Three tiers, in the order you should reach for them:
    single test in the suite — treat a snapshot change as a real review item.
 3. **Wire-layer tests.** A handful, at the transport boundary only: byte-split
    SSE, 429 with `Retry-After`, mid-stream disconnect, oversize-prompt 400.
+4. **End to end through the binary.** A stub HTTP server speaking a provider
+   dialect, driven by the real `axio` process — for anything a library test
+   structurally cannot see, like what a signal does to a running command.
+
+None of those four touches a real provider. `bash scripts/live-check.sh` runs a
+real turn against the configured model in a throwaway directory, and is the only
+check that proves the wire format. It needs a credential and it spends money, so
+it never runs in CI; run it by hand after a transport or provider change.
 
 ## Commits
 

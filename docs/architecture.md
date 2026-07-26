@@ -3,10 +3,10 @@
 Four crates and one binary, in a tree rooted at a dependency-free core.
 
 ```
-                    ┌──────────────── axio (bin) ────────────────┐
-                    │ clap · surface selection · renderers        │
-                    │ inline TUI · signal handling · exit codes    │
-                    └──────┬──────────────────────────┬───────────┘
+                    ┌──────────────────── axio (bin) ─────────────────────┐
+                    │ clap · surface selection · renderers                │
+                    │ inline TUI · sandbox · signal handling · exit codes │
+                    └──────┬──────────────────────────┬───────────────────┘
                            │ constructs               │ constructs
                            ▼                          ▼
         ┌──────────────────────────────┐   ┌────────────────────────┐
@@ -82,6 +82,7 @@ run_turn
         │     ├── retryable error → ItemDiscarded, back off, retry
         │     ├── context overflow → compact and retry once, else fail
         │     └── cancelled → Interrupted
+        ├── emit Usage         the turn's running total, per step
         ├── budget check
         ├── refusal → Refused (an outcome, never an error)
         ├── append the full assistant content, reasoning verbatim
@@ -267,8 +268,8 @@ reports. A key nobody set still explains itself as a built-in default.
 
 **A project config may only make axio ask more.** `[permissions] allow` is
 ignored from a project file with a notice: a cloned repository that can grant
-itself shell access is remote code execution by `cd`, on a tool that ships no
-sandbox and has `--yes`.
+itself shell access is remote code execution by `cd`, on a tool whose sandbox is
+off by default and which has `--yes`.
 
 **A broken section resets that section and nothing else.** The whole file is
 parsed first; each table is then validated independently, and one that fails is
@@ -285,6 +286,7 @@ until something needs it to be.
 | --- | --- | --- |
 | `anthropic` (default) | the Messages API | `ANTHROPIC_API_KEY` |
 | `ollama` | the OpenAI chat-completions dialect | `OLLAMA_API_KEY` |
+| `openai-compatible` | the same dialect and the same implementation; set `base_url` to reach an endpoint of your own | `OLLAMA_API_KEY` |
 
 The second one exists to answer a question the design could not answer by
 inspection: is `Provider` actually provider-shaped, or is it one API wearing a
@@ -326,5 +328,6 @@ able to reach it.
 
 ## What is not built yet
 
-The interactive surface prints a pointer to the one-shot form. See
-`docs/roadmap.md`.
+Both surfaces are built. A binary compiled without the `tui` feature has no
+interactive surface and prints a pointer to the one-shot form instead. What is
+deferred, and what would change each decision, is in `docs/roadmap.md`.

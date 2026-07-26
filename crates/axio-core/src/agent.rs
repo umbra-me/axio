@@ -1423,6 +1423,59 @@ mod tests {
         }
     }
 
+    /// A cap the provider cannot measure is not a cap. Silently inert is the
+    /// worst outcome for a guardrail: the user believes they set one.
+    #[tokio::test]
+    async fn a_budget_that_cannot_be_measured_says_so() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut agent = Agent::new(
+            Arc::new(ScriptedProvider::say("hi").unpriced()),
+            Arc::new(NonInteractive::deny()),
+            Session::new(PathBuf::from("/w"), "gpt-oss:120b"),
+            RuntimeConfig {
+                max_usd_per_turn: Some(2.0),
+                ..Default::default()
+            },
+            vec![],
+            tx,
+        );
+        agent.announce(false, vec![]);
+
+        let mut warned = false;
+        while let Ok(event) = rx.try_recv() {
+            if let EventKind::Notice { level, message } = &event.kind
+                && *level == NoticeLevel::Warn
+                && message.contains("cannot trip")
+            {
+                warned = true;
+            }
+        }
+        assert!(warned, "an inert spend cap must announce itself");
+    }
+
+    /// And a provider that does report prices must not be warned about.
+    #[tokio::test]
+    async fn a_budget_that_can_be_measured_is_not_warned_about() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut agent = Agent::new(
+            Arc::new(ScriptedProvider::say("hi")),
+            Arc::new(NonInteractive::deny()),
+            Session::new(PathBuf::from("/w"), "claude-opus-5"),
+            RuntimeConfig {
+                max_usd_per_turn: Some(2.0),
+                ..Default::default()
+            },
+            vec![],
+            tx,
+        );
+        agent.announce(false, vec![]);
+        while let Ok(event) = rx.try_recv() {
+            if let EventKind::Notice { message, .. } = &event.kind {
+                assert!(!message.contains("cannot trip"), "{message}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn reasoning_blocks_survive_into_the_next_request_verbatim() {
         let (mut agent, _rx) = harness(vec![

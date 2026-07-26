@@ -325,3 +325,34 @@ impl Tool for Grep {
         Ok(ToolOutput::text(text))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression. The walker is rooted at the workspace, so a pattern pointing
+    /// outside it came back as a clean "no matches" — a factual-sounding claim
+    /// the model believes, so it keeps searching instead of changing approach.
+    /// A false negative costs more than an error.
+    #[test]
+    fn a_pattern_pointing_outside_the_workspace_is_an_error_not_an_empty_result() {
+        for pattern in ["../other/**/*.txt", "/etc/*", "a/../../b", "..\\win\\*"] {
+            assert!(
+                reject_escaping(pattern).is_err(),
+                "{pattern} should have been refused"
+            );
+        }
+    }
+
+    /// And the ordinary patterns still work: a guard that refuses `src/**` is
+    /// worse than the bug it fixes.
+    #[test]
+    fn an_ordinary_pattern_is_accepted() {
+        for pattern in ["**/*.rs", "src/**/mod.rs", "a..b/*.txt", "./src/*"] {
+            assert!(
+                reject_escaping(pattern).is_ok(),
+                "{pattern} should have been accepted"
+            );
+        }
+    }
+}

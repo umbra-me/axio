@@ -9,8 +9,8 @@ a minor bump may break things.
 
 ## [0.1.0] — unreleased
 
-First release. A one-shot CLI, six tools, an ordered permission engine, sessions
-on disk, and layered configuration.
+First release. A one-shot CLI and an interactive terminal surface, six tools, an
+ordered permission engine, sessions on disk, and layered configuration.
 
 ### Added
 
@@ -37,6 +37,13 @@ on disk, and layered configuration.
   protocol version so a consumer can refuse a stream it does not understand.
 - **`axio auth`** — `login`, `status`, `logout`. Credentials are read from stdin
   and stored `0600`; an environment variable always wins.
+- **Budgets.** `budget.max_steps` ends a turn that will not stop;
+  `budget.max_usd_per_turn` ends one that has spent more than it was given.
+  Usage is reported cumulatively per step rather than only at the end, and every
+  turn carries its own cost.
+- **An exit code for refused work.** A turn that completes with at least one
+  action refused exits `5`. The model narrates a success it was never allowed to
+  perform, and prose is not something a script can check.
 - **Signal handling.** `SIGINT` cancels and flushes a partial answer; a second
   within two seconds gives up. `SIGTERM` and `SIGHUP` cancel and unwind on a
   deadline, taking the whole child process tree with them.
@@ -59,5 +66,4 @@ on disk, and layered configuration.
 - `budget.max_usd_per_turn` cannot fire on a provider that reports no prices.
   `--doctor` says so rather than leaving it looking enforced.
 
-[Unreleased]: https://github.com/umbra-me/axio/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/umbra-me/axio/releases/tag/v0.1.0
+[Unreleased]: https://github.com/umbra-me/axio/commits/main

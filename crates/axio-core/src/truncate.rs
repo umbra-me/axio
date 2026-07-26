@@ -305,6 +305,38 @@ mod tests {
         assert!(!path.to_string_lossy().contains(".."));
     }
 
+    /// The marker has to be actionable. `read`'s offset is a line number, and a
+    /// byte count cannot be turned into one — so the only safe move left to the
+    /// model was `offset: 1`, which re-injects the head already in context at
+    /// exactly the moment the output was declared too big.
+    #[test]
+    fn the_marker_names_a_line_to_resume_at_not_a_byte_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let text: String = (1..=4_000).map(|i| format!("line {i}\n")).collect();
+        let out = finish(&text, 2_000, Some(dir.path()), "call_1").unwrap();
+
+        assert!(out.truncated);
+        assert!(
+            out.content.contains("read it with offset"),
+            "the marker must say where to continue: {}",
+            out.content
+        );
+        let resume: usize = out
+            .content
+            .split("offset ")
+            .nth(1)
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|n| n.parse().ok())
+            .expect("the marker carries a line number");
+        assert!(resume > 1, "offset 1 re-reads what the model already has");
+        assert!(resume <= 4_000);
+        assert!(
+            out.content.contains("lines"),
+            "omitted lines, not only bytes: {}",
+            out.content
+        );
+    }
+
     #[test]
     fn output_that_fits_has_no_spill_file() {
         let dir = tempfile::tempdir().unwrap();

@@ -246,6 +246,24 @@ pub fn protection_note() -> &'static str {
 mod tests {
     use super::*;
 
+    /// Claiming file protection on a platform that has none is worse than
+    /// claiming nothing, so the sentence differs by platform and both halves
+    /// are asserted rather than only the mode.
+    #[test]
+    fn the_protection_note_promises_only_what_the_platform_delivers() {
+        let note = protection_note();
+        if cfg!(unix) {
+            assert!(note.contains("0600"), "{note}");
+        } else {
+            assert!(!note.contains("0600"), "{note}");
+            assert!(
+                note.to_ascii_lowercase().contains("not")
+                    || note.to_ascii_lowercase().contains("no "),
+                "off unix it must not imply a guarantee: {note}"
+            );
+        }
+    }
+
     fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
             .iter()

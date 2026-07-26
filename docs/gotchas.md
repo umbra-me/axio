@@ -1,6 +1,7 @@
 # Gotchas
 
-The non-obvious traps, each one found the hard way. Every entry here has a test.
+The non-obvious traps, each one found the hard way. Most are guarded by a test;
+a few by a script, by a compile check in CI, or by a run nothing automates.
 
 ## The model
 
@@ -99,6 +100,13 @@ ordinary "reads are safe" rule silently hands over every credential on the
 machine. The built-in list is also not overridable by `--yes`: an unattended
 flag is a statement about prompting, not about what is safe to read.
 
+**A word-split command preview is not the command.** The permission engine
+matches on the program, so a plan carries `program` and `argv` — but `cat
+<<'EOF' > greet.py` lexes to a `cat` with three arguments: the redirect target
+reads as an operand and the heredoc disappears. A reviewer shown that approves a
+harmless read and gets a file overwritten. The plan carries `raw` as well, and
+the approval surface shows that.
+
 **`plan()` must not mutate.** A preview that changes the thing it previews is
 how an approved diff stops matching what actually runs. The `edit` tool computes
 the entire updated file during planning and hands it to `run` as the payload, so
@@ -113,7 +121,9 @@ fine. The test that missed it previewed a new file, where every line is an
 insertion and head-first truncation happens to show the changes.
 
 **Every call in a batch is planned and authorised before any of them executes.**
-Otherwise a batch where the third call is refused has already half-run.
+Otherwise a batch where the third call is refused has already half-run. The
+batch test allows every call, so nothing exercises the refusal case; that half
+rests on the phase split alone.
 
 **Killing a child is not enough.** A shell that started a build leaves the build
 running. Children get their own process group and the group is signalled, so
@@ -238,14 +248,28 @@ does not. `scripts/features.sh` builds both sets with CI's flag, because the gap
 was exactly one flag wide and it cost a red build.
 
 **A key event fires on release too, on Windows.** Filtering to
-`KeyEventKind::Press` is the difference between one character and two.
+`KeyEventKind::Press` is the difference between one character and two. It is one
+guard in the key reader, and nothing in the suite asserts it.
 
 **Restore the terminal from a panic hook.** A panic in raw mode leaves the user
 with no echo and no line discipline: they have to type `reset` blind, without
 seeing what they type. The hook runs before the default one so the message is
-still readable when it arrives.
+still readable when it arrives. Like everything else that touches raw mode it is
+unreachable from the suite — a test that installs a hook installs it for every
+test after.
 
 ## The sandbox
+
+**A hand-written list of credential variables protects the provider its author
+had in mind.** `ANTHROPIC_API_KEY` was stripped from every child environment and
+`OLLAMA_API_KEY` — the credential for two of the three provider names — was not,
+so a shell command inherited it verbatim. The list is derived from the providers
+themselves, so adding one cannot leave its key behind.
+
+**`AccessFs::from_file` is every right a file can carry, including write.**
+Substituting it for a *read* grant on a regular file made `~/.gitconfig`
+writable under the sandbox, and a writable git config is `core.hooksPath`
+pointing wherever it likes. Narrow by intersection, never by substitution.
 
 **A Landlock domain belongs to a thread, not a process.** Applying one on a
 tokio worker restricts that worker and nothing else — and the command runs on a
@@ -270,6 +294,14 @@ Grant the rest of the system and forget these two and every command fails with
 "could not start a shell: permission denied" before it has run.
 
 ## Sessions, config and compaction
+
+**A derived `Default` on the permission engine would empty the built-in deny
+lists.** They are ordinary fields, populated only by `Policy::new`, so a derived
+`Default` yields a policy with no built-in denies at all — and read-only effects
+are auto-approved as soon as the deny lists have had their say, so that policy
+hands over every credential on the machine. It is one `..Default::default()`
+away at all times and nothing in the type signals it, so `Default` delegates to
+`new` and the safe construction is the only construction.
 
 **A context-elision marker must never be persisted.** It describes the
 in-memory projection, not the history. The file still holds every item it claims
@@ -334,7 +366,8 @@ has no configuration to be confused by.
 **If an environment variable relocates a home directory, it must relocate
 everything in it.** `AXIO_HOME` moved the credential file but not the config
 file, so isolation was half-applied and `--doctor` reported a home that only
-some things lived in.
+some things lived in. The credential half has a test; the config half rests on
+`config_file_path` deriving from the same `axio_home`, and on nothing else.
 
 ## Credentials
 

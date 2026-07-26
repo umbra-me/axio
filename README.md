@@ -12,11 +12,14 @@ read-only.
 ## Status
 
 Early, but it works, and `scripts/live-check.sh` proves it against a real model
-rather than a stub: the turn loop, the transport, the one-shot CLI, all six
-tools, the deny list, sessions on disk, and layered configuration. It can read,
+rather than a stub: the turn loop, the transport, the one-shot CLI, the read,
+write and bash tools, the deny list, sessions on disk, and resume. It can read,
 search, edit and run commands in a workspace, and pick up where it left off.
 
-Writes and shell commands ask before they happen; reads do not.
+Writes and shell commands need approval; reads do not. Interactively you are
+asked. In a one-shot run there is nobody to ask, so they are refused unless
+`--yes` was given — and a turn that completed with something refused exits `5`,
+so `&&` sees it.
 
 One caveat worth stating plainly: while the OpenAI-compatible provider is
 exercised against a live endpoint on every check, the Anthropic path has only
@@ -52,6 +55,8 @@ axio --list                         # recent sessions
 axio --resume 01K3F               # continue one; a unique prefix is enough
 axio --explain model.effort         # where a setting came from
 axio --ephemeral -p "..."           # record nothing
+axio --model NAME -p "..."          # override the model for this run
+axio --sandbox -p "..."             # confine commands to the workspace (Linux)
 ```
 
 Configuration is layered — defaults, then `~/.config/axio/config.toml`, then the
@@ -67,6 +72,11 @@ max_steps = 50
 
 [permissions]
 deny = ["bash:curl"]
+
+[sandbox]          # Linux only, off by default
+enabled = true
+read = ["/home/me/.pyenv"]
+write = ["/home/me/.cache/go-build"]
 ```
 
 A project's own `.axio/config.toml` may only add restrictions, never remove
@@ -96,15 +106,19 @@ the viewport asks:
   allow? y once  a this session  n no
 ```
 
-`enter` sends · `ctrl-c` interrupts a running turn, or exits at an empty prompt
-· `ctrl-d` leaves · `up`/`down` walk what you have already asked.
+`enter` sends · `ctrl-c` or `esc` interrupts a running turn · a second `ctrl-c`
+at an empty prompt exits, as does `ctrl-d` · `up`/`down` walk what you have
+already asked.
 
 A shell command is shown as the string the shell actually receives, never a
 word-split of it: the split reads as a simpler command than the one that runs.
 
 ## Providers
 
-Two, selected by name — not a plugin system:
+Three names over two implementations, not a plugin system. `anthropic` speaks
+the Messages API; `ollama` and `openai-compatible` share the chat-completions
+one, the second for any other host speaking that dialect, pointed at it with
+`model.base_url` or `AXIO_BASE_URL`:
 
 ```sh
 axio auth login                             # the default provider
@@ -124,8 +138,9 @@ AXIO_PROVIDER=ollama AXIO_MODEL=gpt-oss:120b axio -p "..."
 The second exists mostly to keep the first honest: implementing a differently
 shaped API is how you find out whether an abstraction is one.
 
-Actions that change something ask first. `--yes` approves everything without
-asking — unattended and unsandboxed, so read [`SECURITY.md`](SECURITY.md) before
+Actions that change something ask first. `--yes` answers every one of those
+prompts with yes — unattended and unsandboxed, though the built-in deny list
+still refuses what it refuses — so read [`SECURITY.md`](SECURITY.md) before
 reaching for it.
 
 `--json` emits the event stream as one object per line. It is unstable and

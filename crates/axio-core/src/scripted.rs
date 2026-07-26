@@ -29,6 +29,10 @@ pub struct ScriptedProvider {
     /// Every request this provider was asked for, in order — so a test can
     /// assert on the exact bytes that would have gone out.
     pub seen: Arc<Mutex<Vec<ModelRequest>>>,
+    /// Report no prices, the way the OpenAI-compatible provider does. Some
+    /// paths exist only because a provider can be unpriced, and they are
+    /// unreachable from a priced one.
+    unpriced: bool,
 }
 
 impl ScriptedProvider {
@@ -36,7 +40,14 @@ impl ScriptedProvider {
         Self {
             scripts: Mutex::new(scripts.into_iter().collect()),
             seen: Arc::new(Mutex::new(Vec::new())),
+            unpriced: false,
         }
+    }
+
+    /// The same provider, reporting no prices for anything.
+    pub fn unpriced(mut self) -> Self {
+        self.unpriced = true;
+        self
     }
 
     /// The common case: one turn that streams text and ends.
@@ -72,6 +83,18 @@ impl Provider for ScriptedProvider {
     }
 
     fn model_info(&self, _model: &str) -> ModelInfo {
+        if self.unpriced {
+            // What the OpenAI-compatible provider reports, so a test can reach
+            // the paths that only exist because some providers have no prices.
+            return ModelInfo {
+                context_window: 128_000,
+                max_output_tokens: 32_000,
+                input_price: 0.0,
+                output_price: 0.0,
+                cache_read_price: 0.0,
+                cache_write_price: 0.0,
+            };
+        }
         ModelInfo {
             context_window: 1_000_000,
             max_output_tokens: 64_000,

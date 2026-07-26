@@ -156,13 +156,25 @@ pub fn apply(plan: &Plan) -> Outcome {
     // Directory rights on a regular file are not a smaller request but an
     // impossible one: `ReadDir` on `~/.gitconfig` cannot be honoured, so the
     // kernel enforces a reduced ruleset and the whole sandbox reports itself as
-    // only partly applied. The rights have to match what the path actually is.
-    let file_read = AccessFs::from_file(abi);
+    // only partly applied. The rights have to match what the path is.
+    //
+    // Narrowed by intersection, never replaced. `AccessFs::from_file` is every
+    // right a file can carry — including `WriteFile` and `Truncate` — so
+    // substituting it for a *read* grant made `~/.gitconfig` writable, and a
+    // writable git config is `core.hooksPath` pointing anywhere it likes.
+    let file_rights = AccessFs::from_file(abi);
     for (paths, dir_access) in [(&plan.read, read_only), (&plan.write, read_write)] {
         for path in paths {
             let Ok(fd) = PathFd::new(path) else { continue };
             let is_dir = std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false);
-            let access = if is_dir { dir_access } else { file_read };
+            let access = if is_dir {
+                dir_access
+            } else {
+                dir_access & file_rights
+            };
+            if access.is_empty() {
+                continue;
+            }
             match ruleset.add_rule(PathBeneath::new(fd, access)) {
                 Ok(next) => ruleset = next,
                 Err(e) => return Outcome::Partial(format!("{}: {e}", path.display())),
@@ -255,5 +267,16 @@ mod tests {
                 "{expected} must be readable or nothing runs"
             );
         }
+        // Dropping either of these is a change nothing else catches: the
+        // end-to-end test looks for a canary that is equally absent when the
+        // shell never started at all.
+        assert!(
+            plan.read.contains(&PathBuf::from("/proc")),
+            "the standard library closes inherited descriptors through /proc"
+        );
+        assert!(
+            plan.write.contains(&PathBuf::from("/dev")),
+            "Stdio::null() opens /dev/null"
+        );
     }
 }
