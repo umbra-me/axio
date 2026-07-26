@@ -15,9 +15,12 @@ license = "Apache-2.0"
 repository = "https://github.com/umbra-me/axio"
 
 [workspace.dependencies]
-axio-core = { path = "crates/axio-core" }
-axio-provider = { path = "crates/axio-provider" }
-axio-tools = { path = "crates/axio-tools" }
+# Versioned, not bare paths. A path dependency with no version cannot be
+# published, and cargo-deny reads it as a wildcard — which is the same hazard
+# it is for a registry dependency, just harder to see.
+axio-core = { path = "crates/axio-core", version = "0.1.0-dev" }
+axio-provider = { path = "crates/axio-provider", version = "0.1.0-dev" }
+axio-tools = { path = "crates/axio-tools", version = "0.1.0-dev" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.91"

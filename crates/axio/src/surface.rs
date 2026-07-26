@@ -10,7 +10,11 @@ use crate::render::compose_prompt;
 /// Exit codes for the signals we handle. These are the shell's convention
 /// (128 + signal number), and scripts depend on them.
 pub const EXIT_SIGINT: u8 = 130;
+/// Unix only: Windows has no SIGTERM to receive, so naming one there would be
+/// a constant that can never be returned.
+#[cfg(unix)]
 pub const EXIT_SIGTERM: u8 = 143;
+#[cfg(unix)]
 pub const EXIT_SIGHUP: u8 = 129;
 
 /// A second interrupt inside this window stops waiting for a clean shutdown.
@@ -159,7 +163,10 @@ mod tests {
     #[test]
     fn signal_exit_codes_follow_the_shell_convention() {
         assert_eq!(EXIT_SIGINT, 130);
-        assert_eq!(EXIT_SIGTERM, 143);
-        assert_eq!(EXIT_SIGHUP, 129);
+        #[cfg(unix)]
+        {
+            assert_eq!(EXIT_SIGTERM, 143);
+            assert_eq!(EXIT_SIGHUP, 129);
+        }
     }
 }

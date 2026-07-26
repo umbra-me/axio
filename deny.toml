@@ -24,11 +24,10 @@ confidence-threshold = 0.9
 
 [bans]
 multiple-versions = "warn"
-# A wildcard on a registry dependency is a real hazard: it silently accepts a
-# future breaking release. A path dependency inside this workspace has no
-# version by construction and is not the same thing.
+# A wildcard silently accepts a future breaking release. Workspace path
+# dependencies carry an explicit version for the same reason, so this needs no
+# exemption.
 wildcards = "deny"
-allow-wildcard-paths = true
 # One TLS stack. Two means one of them is not the one we configured.
 deny = [
     { name = "openssl-sys" },
