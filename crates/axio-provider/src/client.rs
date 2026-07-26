@@ -41,8 +41,13 @@ impl AnthropicProvider {
 
         let http = reqwest::Client::builder()
             .user_agent(concat!("axio/", env!("CARGO_PKG_VERSION")))
+            // reqwest follows up to 10 redirects by default, re-sending the
+            // `x-api-key` header and the full request body to whatever host the
+            // hop names. An API client carrying a bearer-equivalent credential
+            // has no legitimate reason to follow one.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::Transport(Redacted::new(e.to_string())))?;
 
         Ok(Self {
             http,
@@ -96,7 +101,7 @@ impl Provider for AnthropicProvider {
                 .header("anthropic-version", API_VERSION)
                 .header("content-type", "application/json")
                 .json(&body)
-                .send() => r.map_err(|e| ProviderError::Transport(e.to_string()))?,
+                .send() => r.map_err(|e| ProviderError::Transport(Redacted::new(e.to_string())))?,
         };
 
         let status = response.status().as_u16();
@@ -146,7 +151,9 @@ impl Provider for AnthropicProvider {
                         },
                         Poll::Ready(Some(Err(e))) => {
                             self.finished = true;
-                            return Poll::Ready(Some(Err(ProviderError::Transport(e.to_string()))));
+                            return Poll::Ready(Some(Err(ProviderError::Transport(
+                                Redacted::new(e.to_string()),
+                            ))));
                         }
                         Poll::Ready(None) => {
                             self.finished = true;
@@ -181,12 +188,7 @@ pub fn load_api_key() -> Result<String, ProviderError> {
     {
         return Ok(key);
     }
-    Err(ProviderError::Auth(
-        "no credential found. Set ANTHROPIC_API_KEY, or run `axio auth login`.".into(),
-    ))
-}
-
-/// Wrap a body in the redacting newtype before it can reach a log or an error.
-pub fn redact(body: impl Into<String>) -> Redacted {
-    Redacted::new(body)
+    Err(ProviderError::Auth(Redacted::new(
+        "no credential found. Set ANTHROPIC_API_KEY, or run `axio auth login`.",
+    )))
 }

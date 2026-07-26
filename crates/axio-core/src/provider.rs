@@ -294,10 +294,17 @@ pub enum StreamEvent {
     },
 }
 
+/// Every variant that carries provider-supplied text carries it as [`Redacted`].
+///
+/// A 401 or 403 body is the response most likely to quote back what was sent,
+/// and an intermediary — a corporate proxy, a custom base URL — may echo the
+/// `x-api-key` header verbatim. `Auth` and `Transport` therefore redact for the
+/// same reason `Http` does; the invariant is that no provider body reaches an
+/// error, a log or a session file in the clear, not that one variant does.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("authentication failed: {0}")]
-    Auth(String),
+    Auth(Redacted),
     #[error("rate limited")]
     RateLimited { retry_after: Option<Duration> },
     #[error("overloaded")]
@@ -309,7 +316,7 @@ pub enum ProviderError {
     #[error("stream ended mid-message")]
     Truncated,
     #[error("transport: {0}")]
-    Transport(String),
+    Transport(Redacted),
     /// `raw` is the verbatim SSE span. Keeping it is the difference between a
     /// debuggable bug report and a shrug.
     #[error("decode failed: {source}")]

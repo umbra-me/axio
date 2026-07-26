@@ -99,7 +99,7 @@ impl Provider for ScriptedProvider {
             .unwrap()
             .pop_front()
             .unwrap_or(Script::Error(ProviderError::Transport(
-                "scripted provider ran out of scripts".into(),
+                crate::redact::Redacted::new("scripted provider ran out of scripts"),
             )));
 
         let items: Vec<Result<StreamEvent, ProviderError>> = match script {

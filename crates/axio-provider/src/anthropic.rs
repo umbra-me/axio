@@ -364,9 +364,9 @@ fn mid_stream_error(etype: &str, message: &str) -> ProviderError {
     match etype {
         "overloaded_error" => ProviderError::Overloaded,
         "rate_limit_error" => ProviderError::RateLimited { retry_after: None },
-        "authentication_error" | "permission_error" => ProviderError::Auth(message.to_owned()),
+        "authentication_error" | "permission_error" => ProviderError::Auth(Redacted::new(message)),
         _ if is_context_overflow(message) => ProviderError::ContextOverflow,
-        _ => ProviderError::Transport(format!("{etype}: {message}")),
+        _ => ProviderError::Transport(Redacted::new(format!("{etype}: {message}"))),
     }
 }
 
@@ -391,7 +391,7 @@ pub fn classify(status: u16, retry_after: Option<&str>, body: &str) -> ProviderE
         .unwrap_or(body);
 
     match status {
-        401 | 403 => ProviderError::Auth(message.to_owned()),
+        401 | 403 => ProviderError::Auth(Redacted::new(message)),
         429 => ProviderError::RateLimited {
             retry_after: parse_retry_after(retry_after),
         },

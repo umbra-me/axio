@@ -193,14 +193,26 @@ pub enum ToolStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Struct variants throughout, deliberately: serde cannot serialise an
+/// internally-tagged **newtype** variant wrapping a string — it fails at
+/// runtime, not at compile time, with "cannot serialize tagged newtype variant".
+/// A newtype `Text(String)` here would break every `--json` consumer on the
+/// first streamed token while still compiling and passing a test that only ever
+/// constructs the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "delta", rename_all = "snake_case")]
 pub enum Delta {
-    Text(String),
-    Reasoning(String),
+    Text {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+    },
     /// Argument fragments. Concatenate, parse once at block end. Surfaced so a
     /// TUI can render a command forming.
-    ToolInputJson(String),
+    ToolInputJson {
+        json: String,
+    },
     ToolOutput {
         stream: OutStream,
         text: String,
@@ -372,6 +384,95 @@ mod tests {
         // Round-trips: flatten + two internal tags must not eat each other.
         let back: Item = serde_json::from_value(json).unwrap();
         assert!(matches!(back.body, ItemBody::ToolCall { .. }));
+    }
+
+    /// Regression: an internally-tagged newtype variant wrapping a string fails
+    /// to serialise at runtime while compiling perfectly happily. Every variant
+    /// of every protocol enum must survive a round trip, and the only way to
+    /// know is to actually do it.
+    #[test]
+    fn every_delta_variant_round_trips() {
+        let deltas = [
+            Delta::Text { text: "hi".into() },
+            Delta::Reasoning {
+                text: "thinking".into(),
+            },
+            Delta::ToolInputJson {
+                json: "{\"a\":1}".into(),
+            },
+            Delta::ToolOutput {
+                stream: OutStream::Stderr,
+                text: "warn".into(),
+            },
+        ];
+        for delta in deltas {
+            let json = serde_json::to_value(&delta)
+                .unwrap_or_else(|e| panic!("{delta:?} failed to serialise: {e}"));
+            assert!(json.get("delta").is_some(), "{json} lost its tag");
+            let back: Delta = serde_json::from_value(json).unwrap();
+            assert_eq!(back, delta);
+        }
+    }
+
+    /// The same hazard one level up: `EventKind` has a newtype variant too.
+    /// `Usage` is a struct so it serialises as a map and is fine — but that is
+    /// a property of `Usage`, not of the enum, so it is worth pinning.
+    #[test]
+    fn every_event_kind_variant_serialises() {
+        let kinds = vec![
+            EventKind::TurnStarted,
+            EventKind::SessionStarted {
+                protocol: PROTOCOL_VERSION,
+                session: SessionId::nil(),
+                model: "claude-opus-5".into(),
+                cwd: PathBuf::from("/w"),
+                effort: crate::provider::Effort::XHigh,
+                resumed: false,
+            },
+            EventKind::ItemStarted {
+                item: Item::new(ItemBody::AgentMessage { text: "a".into() }),
+            },
+            EventKind::ItemDiscarded {
+                id: ItemId::nil(),
+                reason: "retry".into(),
+            },
+            EventKind::ItemDelta {
+                id: ItemId::nil(),
+                delta: Delta::Text { text: "t".into() },
+            },
+            EventKind::ApprovalResolved {
+                id: ApprovalId::nil(),
+                decision: Decision::Allow,
+            },
+            EventKind::Compacted {
+                stage: 1,
+                tokens_before: 10,
+                tokens_after: 5,
+            },
+            EventKind::Usage(Usage::default()),
+            EventKind::Notice {
+                level: NoticeLevel::Warn,
+                message: "truncated".into(),
+            },
+            EventKind::TurnEnded {
+                outcome: TurnOutcome::Completed,
+                usage: Usage::default(),
+                files_changed: vec![],
+            },
+        ];
+        for kind in kinds {
+            let ev = Event {
+                seq: 1,
+                session: SessionId::nil(),
+                turn: None,
+                at_ms: 0,
+                kind,
+            };
+            let json = serde_json::to_value(&ev)
+                .unwrap_or_else(|e| panic!("{:?} failed to serialise: {e}", ev.kind));
+            assert!(json.get("type").is_some());
+            assert!(json.get("seq").is_some(), "flatten dropped the envelope");
+        }
     }
 
     #[test]

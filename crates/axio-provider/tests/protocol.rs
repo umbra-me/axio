@@ -368,3 +368,60 @@ fn a_rolling_breakpoint_attaches_to_the_last_block_of_its_message() {
     assert!(content[0].get("cache_control").is_none());
     assert_eq!(content[1]["cache_control"]["type"], "ephemeral");
 }
+
+/// Regression. The redaction invariant is "no provider body reaches an error in
+/// the clear", not "the Http variant redacts". A 401 or 403 is the response most
+/// likely to quote back what was sent, and an intermediary may echo the header
+/// verbatim — so the variants that carry those bodies must redact too.
+#[test]
+fn every_error_variant_carrying_a_body_redacts_it() {
+    const KEY: &str = "sk-ant-api03-SECRETVALUE123456";
+
+    let cases = vec![
+        (
+            "401",
+            classify(401, None, &format!("invalid x-api-key {KEY}")),
+        ),
+        ("403", classify(403, None, &format!("proxy rejected {KEY}"))),
+        ("400", classify(400, None, &format!("bad request {KEY}"))),
+        ("500", classify(500, None, &format!("upstream said {KEY}"))),
+    ];
+    for (label, err) in cases {
+        assert!(
+            !format!("{err}").contains(KEY),
+            "{label}: Display leaked the key: {err}"
+        );
+        assert!(
+            !format!("{err:?}").contains(KEY),
+            "{label}: Debug leaked the key"
+        );
+    }
+
+    // And a mid-stream error frame, which routes through a different path.
+    let frame = format!(
+        "event: error\ndata: {{\"type\":\"error\",\"error\":{{\"type\":\"api_error\",\"message\":\"upstream said {KEY}\"}}}}\n\n"
+    );
+    let mut s = AnthropicStream::new();
+    let err = s.push(frame.as_bytes()).expect_err("an error frame fails");
+    assert!(
+        !format!("{err}").contains(KEY),
+        "error frame leaked the key: {err}"
+    );
+    assert!(!format!("{err:?}").contains(KEY));
+}
+
+/// A credential registered at client construction is scrubbed by value, not just
+/// by shape — a proxy token looks nothing like an API key.
+#[test]
+fn a_registered_credential_is_scrubbed_from_every_variant() {
+    const TOKEN: &str = "my-corporate-proxy-token-abcdef";
+    axio_core::redact::register_secret(TOKEN);
+
+    for err in [
+        classify(403, None, &format!("proxy rejected token {TOKEN}")),
+        classify(400, None, &format!("bad request {TOKEN}")),
+    ] {
+        assert!(!format!("{err}").contains(TOKEN), "leaked: {err}");
+        assert!(!format!("{err:?}").contains(TOKEN));
+    }
+}

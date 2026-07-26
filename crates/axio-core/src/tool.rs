@@ -259,26 +259,73 @@ impl Workspace {
 
         let joined = self.root.join(candidate);
 
-        // Canonicalise the deepest existing ancestor: a path being created does
-        // not exist yet, but every parent that does exist must stay inside.
-        let mut probe = joined.as_path();
-        let real = loop {
-            match probe.canonicalize() {
-                Ok(real) => break real,
-                Err(_) => match probe.parent() {
-                    Some(parent) => probe = parent,
-                    None => {
-                        return Err(ToolError::BadInput(format!("cannot resolve path: {p}")));
-                    }
-                },
+        // Walk every component from the root. Checking only the deepest
+        // *existing* ancestor is not enough: a symlink whose target does not
+        // exist yet fails to canonicalise, so an ancestor-only check treats it
+        // as "a path being created" and falls back to the root, which trivially
+        // passes — and the write then follows the link out of the workspace.
+        // A dangling link is still a real directory entry.
+        let mut current = self.root.clone();
+        for component in candidate.components() {
+            let Component::Normal(name) = component else {
+                // CurDir is harmless; everything else was rejected above.
+                continue;
+            };
+            current.push(name);
+
+            let meta = match std::fs::symlink_metadata(&current) {
+                Ok(meta) => meta,
+                // This component does not exist, so neither do any below it,
+                // and a path that does not exist cannot be a symlink.
+                Err(_) => break,
+            };
+
+            if meta.file_type().is_symlink() {
+                let target = std::fs::read_link(&current).map_err(|e| {
+                    ToolError::BadInput(format!("cannot read symlink {}: {e}", current.display()))
+                })?;
+                let absolute = if target.is_absolute() {
+                    target
+                } else {
+                    current.parent().unwrap_or(&self.root).join(target)
+                };
+                // The target may not exist yet either, so canonicalise as far
+                // as it goes and judge that.
+                let real = deepest_existing(&absolute).ok_or_else(|| {
+                    ToolError::BadInput(format!("cannot resolve symlink target for: {p}"))
+                })?;
+                if !real.starts_with(&self.root) {
+                    return Err(ToolError::BadInput(format!(
+                        "path escapes the workspace root via a symlink: {p}"
+                    )));
+                }
             }
-        };
+        }
+
+        // Belt and braces: the deepest existing ancestor of the whole path must
+        // also land inside the root.
+        let real = deepest_existing(&joined)
+            .ok_or_else(|| ToolError::BadInput(format!("cannot resolve path: {p}")))?;
         if !real.starts_with(&self.root) {
             return Err(ToolError::BadInput(format!(
                 "path escapes the workspace root: {p}"
             )));
         }
         Ok(joined)
+    }
+}
+
+/// Canonicalise the deepest ancestor of `path` that exists.
+///
+/// Returns `None` only if nothing in the chain resolves, which means the path
+/// is not judgeable and must be refused rather than assumed safe.
+fn deepest_existing(path: &Path) -> Option<PathBuf> {
+    let mut probe = path;
+    loop {
+        if let Ok(real) = probe.canonicalize() {
+            return Some(real);
+        }
+        probe = probe.parent()?;
     }
 }
 
@@ -398,6 +445,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&outside);
     }
 
+    /// Regression. A symlink whose target does not exist yet cannot be
+    /// canonicalised, so a check that looks only at the deepest *existing*
+    /// ancestor falls back to the root, passes, and hands back a path that a
+    /// write then follows straight out of the workspace. The link is a real
+    /// directory entry even though its target is not.
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_dangling_symlink_pointing_outside_the_root() {
+        let (dir, ws) = workspace();
+        let outside = std::env::temp_dir().join(format!(
+            "axio-dangle-{}-{:?}",
+            std::process::id(),
+            dir.path().file_name().unwrap()
+        ));
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("does-not-exist-yet");
+        std::os::unix::fs::symlink(&target, dir.path().join("link")).unwrap();
+
+        let resolved = ws.resolve("link");
+        assert!(
+            resolved.is_err(),
+            "a dangling symlink out of the root must be refused; got {resolved:?}"
+        );
+        assert!(
+            !target.exists(),
+            "nothing should have been created outside the root"
+        );
+
+        // A dangling symlink pointing *inside* the root is still fine.
+        std::os::unix::fs::symlink(dir.path().join("later.rs"), dir.path().join("inner")).unwrap();
+        assert!(ws.resolve("inner").is_ok());
+
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// The same escape one level up: a dangling directory link with a child.
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_child_of_a_dangling_directory_symlink() {
+        let (dir, ws) = workspace();
+        let outside = std::env::temp_dir().join(format!("axio-dangle2-{}", std::process::id()));
+        std::os::unix::fs::symlink(outside.join("nodir"), dir.path().join("dlink")).unwrap();
+        assert!(ws.resolve("dlink/child").is_err());
+    }
+
     #[test]
     fn effects_gate_parallelism() {
         assert!(Effects::READ_ONLY.parallel_safe());
@@ -427,9 +519,14 @@ mod tests {
         let (tx, rx) = mpsc::channel(1);
         let sink = ProgressSink::new(tx);
         // Second send has nowhere to go; must not panic or block.
-        sink.send(ItemId::nil(), Delta::Text("one".into()));
-        sink.send(ItemId::nil(), Delta::Text("two".into()));
+        sink.send(ItemId::nil(), Delta::Text { text: "one".into() });
+        sink.send(ItemId::nil(), Delta::Text { text: "two".into() });
         drop(rx);
-        sink.send(ItemId::nil(), Delta::Text("after close".into()));
+        sink.send(
+            ItemId::nil(),
+            Delta::Text {
+                text: "after close".into(),
+            },
+        );
     }
 }
