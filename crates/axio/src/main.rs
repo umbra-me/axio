@@ -7,7 +7,7 @@ mod render;
 mod surface;
 
 use std::io::{IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axio_core::agent::Agent;
@@ -315,7 +315,7 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
 
 fn resolve_config(cli: &Cli) -> Resolved {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let user = user_config_path();
+    let user = Some(config_file_path());
     // Bounded at the home directory so the walk cannot reach into an unrelated
     // parent and apply someone else's project settings.
     let project = config::find_project_config(&cwd, home_dir().as_deref());
@@ -335,13 +335,6 @@ fn home_dir() -> Option<PathBuf> {
     etcetera::choose_base_strategy()
         .ok()
         .map(|s| s.home_dir().to_path_buf())
-}
-
-fn user_config_path() -> Option<PathBuf> {
-    use etcetera::BaseStrategy;
-    etcetera::choose_base_strategy()
-        .ok()
-        .map(|s| s.config_dir().join("axio").join("config.toml"))
 }
 
 fn explain(resolved: &Resolved, key: &str) -> u8 {
@@ -537,28 +530,63 @@ fn read_stdin(stdin_is_tty: bool, have_prompt: bool) -> Option<String> {
     rx.recv_timeout(stdin_wait()).ok()
 }
 
+/// The user's configuration file. Always inside `axio_home`, so relocating
+/// the home relocates everything axio owns rather than only half of it.
+fn config_file_path() -> PathBuf {
+    axio_home().join("config.toml")
+}
+
 /// axio's own directory: configuration, and the credential file.
 fn axio_home() -> PathBuf {
     if let Some(explicit) = std::env::var_os("AXIO_HOME") {
         return PathBuf::from(explicit);
     }
-    user_config_path()
-        .and_then(|p| p.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from(".axio"))
+    default_config_dir().unwrap_or_else(|| PathBuf::from(".axio"))
+}
+
+fn default_config_dir() -> Option<PathBuf> {
+    use etcetera::BaseStrategy;
+    etcetera::choose_base_strategy()
+        .ok()
+        .map(|s| s.config_dir().join("axio"))
 }
 
 /// Find a credential, environment first, then the store.
 fn credential(provider: &str) -> Result<(Secret, auth::Source), String> {
     let env: Vec<(String, String)> = std::env::vars().collect();
-    auth::resolve(provider, &axio_home(), &env).ok_or_else(|| {
-        let var = auth::env_var_for(provider).unwrap_or("the provider's API key");
-        format!(
-            "no credential for `{provider}`.\n\n\
-             Store one:\n    axio auth login --provider {provider}\n\n\
-             Or set it for this shell:\n    export {var}=...\n\n\
-             `axio --doctor` shows what axio can currently see."
-        )
-    })
+    let home = axio_home();
+    if let Some(found) = auth::resolve(provider, &home, &env) {
+        return Ok(found);
+    }
+
+    // Before explaining how to configure this provider, check whether another
+    // one is already configured. "You have no credential" is unhelpful when
+    // the real situation is "you have one, for something else" — which is what
+    // happens to anyone whose only provider is not the default.
+    let others: Vec<String> = auth::status(&["anthropic", "ollama"], &home, &env)
+        .into_iter()
+        .filter(|(name, source)| name != provider && source.is_some())
+        .map(|(name, _)| name)
+        .collect();
+
+    let var = auth::env_var_for(provider).unwrap_or("the provider's API key");
+    let mut message = format!("no credential for `{provider}`.\n\n");
+
+    if let Some(other) = others.first() {
+        message.push_str(&format!(
+            "`{other}` is configured, but `{provider}` is the one selected.\n\n\
+             Use it for this command:\n    AXIO_PROVIDER={other} axio ...\n\n\
+             Or make it the default:\n    [model]\n    provider = \"{other}\"\n\
+             in {}\n\n",
+            config_file_path().display()
+        ));
+    }
+
+    message.push_str(&format!(
+        "Store a credential for `{provider}`:\n    axio auth login --provider {provider}\n\n\
+         Or set it for this shell:\n    export {var}=..."
+    ));
+    Err(message)
 }
 
 fn auth_command(action: &AuthAction) -> u8 {
@@ -763,9 +791,7 @@ fn doctor(resolved: &Resolved) -> u8 {
     let _ = writeln!(
         out,
         "  user config         {}",
-        user_config_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "(unknown)".into())
+        config_file_path().display()
     );
     let _ = writeln!(out, "  axio home           {}", axio_home().display());
     let _ = writeln!(out, "  state               {}", state_dir().display());

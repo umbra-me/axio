@@ -169,6 +169,21 @@ transcript, skip to the end and never cut at all.
 `message_delta` each carry the running total for the same message, so summing
 them double-counts the input tokens. The only symptom is the invoice.
 
+## Testing
+
+**A test suite that reads the user's real configuration passes in CI and fails
+on a configured machine.** The CLI tests cleared two environment variables and
+believed that made them independent; they still read the real `AXIO_HOME`, so
+the moment anyone ran `axio auth login` five of them failed — and one proceeded
+far enough to make a real, billed network call. Every test now points at an
+empty temporary home and state directory. Found by dogfooding, not by CI, which
+has no configuration to be confused by.
+
+**If an environment variable relocates a home directory, it must relocate
+everything in it.** `AXIO_HOME` moved the credential file but not the config
+file, so isolation was half-applied and `--doctor` reported a home that only
+some things lived in.
+
 ## Credentials
 
 **An empty stdin and an empty answer are different failures.** A credential

@@ -4,11 +4,40 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// An empty home and state directory, shared by every test in this binary.
+///
+/// Created once and never populated, so the tests see no configuration file,
+/// no stored credential and no sessions.
+fn sandbox() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("a temp dir"))
+        .path()
+}
+
+/// A binary that cannot see the developer's own configuration.
+///
+/// This is not tidiness. Without it the suite reads the real `AXIO_HOME`, so
+/// the moment anyone runs `axio auth login` the tests start finding a
+/// credential they were written to do without — and one of them proceeds far
+/// enough to make a real, billed network call. The suite passed in CI and
+/// failed on a configured machine, which is the worst way round.
 fn axio() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_axio"));
-    // Every test here must be independent of the developer's own shell.
-    c.env_remove("ANTHROPIC_API_KEY");
-    c.env_remove("NO_COLOR");
+    for var in [
+        "ANTHROPIC_API_KEY",
+        "OLLAMA_API_KEY",
+        "NO_COLOR",
+        "AXIO_PROVIDER",
+        "AXIO_MODEL",
+        "AXIO_BASE_URL",
+        "AXIO_MAX_STEPS",
+        "AXIO_MAX_USD_PER_TURN",
+        "AXIO_STDIN_WAIT_MS",
+    ] {
+        c.env_remove(var);
+    }
+    c.env("AXIO_HOME", sandbox());
+    c.env("AXIO_STATE", sandbox().join("state"));
     c
 }
 
@@ -46,8 +75,8 @@ fn a_missing_credential_names_the_exact_next_step() {
         "the error must name the variable: {err}"
     );
     assert!(
-        err.contains("export ANTHROPIC_API_KEY="),
-        "and give the command to run: {err}"
+        err.contains("axio auth login") && err.contains("export ANTHROPIC_API_KEY="),
+        "and give both ways to fix it: {err}"
     );
 }
 
