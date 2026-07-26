@@ -176,6 +176,28 @@ impl Policy {
         Ok(self)
     }
 
+    /// Protect a directory from the agent's own tools, non-overridably.
+    ///
+    /// This exists for axio's own home. A credential file inside the workspace
+    /// — which is exactly what `cd ~ && axio` produces — would otherwise be
+    /// readable by the `read` tool, putting the key straight into the model's
+    /// context. Added to the built-in lists rather than the user ones, so no
+    /// allow rule and no `--yes` can reach past it.
+    pub fn protect(mut self, dir: &std::path::Path) -> Self {
+        let mut pattern = dir.display().to_string().replace('\\', "/");
+        if !pattern.ends_with('/') {
+            pattern.push('/');
+        }
+        pattern.push('*');
+        // Both the directory's contents and the directory path itself.
+        let bare = pattern.trim_end_matches("/*").to_owned();
+        for p in [pattern, bare] {
+            self.builtin_read.push(p.clone());
+            self.builtin_write.push(p);
+        }
+        self
+    }
+
     /// Remember an `AllowSession` grant. Memory only.
     pub fn grant(&mut self, subject: &str) {
         if !self.session_grants.iter().any(|g| g == subject) {
@@ -311,6 +333,37 @@ mod tests {
         ));
         assert!(matches!(
             Policy::default().evaluate(&plan("read:deploy/id_rsa", Effects::READ_ONLY)),
+            Verdict::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn a_protected_directory_is_unreachable_by_any_rule() {
+        // axio's own home holds the credential file; the read tool must not be
+        // able to hand it to the model.
+        let home = std::path::PathBuf::from("/home/u/.config/axio");
+        let p = Policy::new()
+            .protect(&home)
+            .allow_rule("read:*")
+            .unwrap()
+            .unattended_allow();
+
+        for subject in [
+            "read:/home/u/.config/axio/auth.json",
+            "read:/home/u/.config/axio/config.toml",
+            "write:/home/u/.config/axio/auth.json",
+        ] {
+            assert!(
+                matches!(p.evaluate(&plan(subject, WRITE)), Verdict::Deny(_)),
+                "{subject} must be unreachable"
+            );
+        }
+        // And it does not over-reach into a sibling directory.
+        assert!(!matches!(
+            p.evaluate(&plan(
+                "read:/home/u/.config/axio-notes/x",
+                Effects::READ_ONLY
+            )),
             Verdict::Deny(_)
         ));
     }

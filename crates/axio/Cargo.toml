@@ -30,3 +30,4 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 axio-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true

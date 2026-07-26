@@ -62,11 +62,12 @@ fn doctor_reports_what_axio_can_see() {
     let text = String::from_utf8_lossy(&out.stdout);
     for expected in [
         "credentials",
-        "ANTHROPIC_API_KEY",
+        "anthropic",
         "claude-opus-5",
         "xhigh",
         "assumed prices",
         "paths",
+        "axio home",
     ] {
         assert!(
             text.contains(expected),
@@ -84,7 +85,10 @@ fn doctor_never_prints_the_key_itself() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("set ("), "it should confirm the key is set");
+    assert!(
+        text.contains("environment"),
+        "it should say where the credential came from:\n{text}"
+    );
     assert!(
         !text.contains("SECRETVALUE123456"),
         "doctor leaked the credential:\n{text}"
@@ -191,4 +195,139 @@ fn the_yes_flag_announces_itself() {
     // Exactly once. Asserting only presence lets a duplicate survive, and a
     // duplicated warning reads as a bug in the thing doing the warning.
     assert_eq!(err.matches("--yes is on").count(), 1, "{err}");
+}
+
+// ------------------------------------------------------------------ auth
+
+fn axio_with_home(home: &std::path::Path) -> Command {
+    let mut c = axio();
+    c.env("AXIO_HOME", home);
+    c.env_remove("OLLAMA_API_KEY");
+    c
+}
+
+#[test]
+fn a_credential_round_trips_through_login_and_status() {
+    let home = tempfile::tempdir().unwrap();
+
+    let out = axio_with_home(home.path())
+        .args(["auth", "status"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("not configured"));
+
+    let mut child = axio_with_home(home.path())
+        .args(["auth", "login", "--provider", "ollama"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"secret-value-abcdef\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("stored the credential"));
+
+    let out = axio_with_home(home.path())
+        .args(["auth", "status"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("stored"), "{text}");
+    // Status reports that a credential exists; it never reports what it is.
+    assert!(
+        !text.contains("secret-value-abcdef"),
+        "status leaked the key"
+    );
+}
+
+#[test]
+fn logging_out_removes_the_credential() {
+    let home = tempfile::tempdir().unwrap();
+    let mut child = axio_with_home(home.path())
+        .args(["auth", "login", "--provider", "ollama"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"k\n").unwrap();
+    child.wait().unwrap();
+
+    let out = axio_with_home(home.path())
+        .args(["auth", "logout", "--provider", "ollama"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("removed"));
+
+    let out = axio_with_home(home.path())
+        .args(["auth", "status"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("not configured"));
+}
+
+#[test]
+fn an_empty_login_stores_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let mut child = axio_with_home(home.path())
+        .args(["auth", "login"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!home.path().join("auth.json").exists());
+}
+
+#[test]
+fn a_missing_credential_points_at_the_login_command() {
+    let home = tempfile::tempdir().unwrap();
+    let out = axio_with_home(home.path())
+        .env("AXIO_PROVIDER", "ollama")
+        .args(["-p", "hi"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("axio auth login"), "{err}");
+}
+
+#[test]
+fn doctor_never_prints_a_stored_credential() {
+    let home = tempfile::tempdir().unwrap();
+    let mut child = axio_with_home(home.path())
+        .args(["auth", "login", "--provider", "ollama"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"SECRETVALUE123456\n")
+        .unwrap();
+    child.wait().unwrap();
+
+    let out = axio_with_home(home.path())
+        .arg("--doctor")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("stored"), "{text}");
+    assert!(!text.contains("SECRETVALUE123456"), "doctor leaked the key");
 }

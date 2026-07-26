@@ -51,11 +51,18 @@ them.
 Two, selected by name — not a plugin system:
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...        # the default
-axio -p "..."
+axio auth login                             # the default provider
+axio auth login --provider ollama < key.txt
+axio auth status
+axio auth logout --provider ollama
+```
 
-export OLLAMA_API_KEY=...                   # anything speaking the
-AXIO_PROVIDER=ollama AXIO_MODEL=gpt-oss:120b axio -p "..."   # chat-completions dialect
+Credentials are stored at `$AXIO_HOME/auth.json`, `0600` on unix, and an
+environment variable (`ANTHROPIC_API_KEY`, `OLLAMA_API_KEY`) always takes
+precedence. Nothing ever prints the credential back.
+
+```sh
+AXIO_PROVIDER=ollama AXIO_MODEL=gpt-oss:120b axio -p "..."
 ```
 
 The second exists mostly to keep the first honest: implementing a differently

@@ -7,11 +7,12 @@ mod render;
 mod surface;
 
 use std::io::{IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axio_core::agent::Agent;
 use axio_core::approver::NonInteractive;
+use axio_core::auth::{self, Secret};
 use axio_core::config::{self, Flags, Paths, Resolved};
 use axio_core::protocol::{Notice, SessionId, TurnOutcome};
 use axio_core::provider::SystemBlock;
@@ -20,18 +21,46 @@ use axio_core::record::{
 };
 use axio_core::session::Session;
 use axio_core::tool::ToolEnv;
-use axio_provider::client::load_api_key;
 use axio_provider::{AnthropicProvider, OLLAMA_BASE, OpenAiProvider};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use render::{JsonlRenderer, PlainRenderer, Renderer, Style};
 use surface::Surface;
 use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("AXIO_BUILD_SHA"), ")");
 
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Manage stored credentials.
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AuthAction {
+    /// Store a credential, read from stdin.
+    Login {
+        /// Which provider the credential is for.
+        #[arg(long, default_value = "anthropic")]
+        provider: String,
+    },
+    /// Show which providers have a credential, and where it came from.
+    Status,
+    /// Remove a stored credential.
+    Logout {
+        #[arg(long, default_value = "anthropic")]
+        provider: String,
+    },
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "axio", version = VERSION, about = "A coding agent for the terminal.")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Run one turn with this prompt and exit. Piped stdin is appended.
     #[arg(short, long)]
     prompt: Option<String>,
@@ -82,6 +111,10 @@ fn main() -> std::process::ExitCode {
 
 async fn run(cli: Cli) -> u8 {
     let resolved = resolve_config(&cli);
+
+    if let Some(Command::Auth { action }) = &cli.command {
+        return auth_command(action);
+    }
 
     // Local modes answer from configuration alone and must never touch stdin,
     // a credential or the network.
@@ -148,6 +181,10 @@ async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty:
 
     let mut notices: Vec<Notice> = resolved.notices().to_vec();
     let (policy, mut policy_notices) = resolved.policy(cli.yes);
+    // axio's own directory holds the credential file. Without this, running
+    // from a parent of it puts auth.json inside the workspace, where the read
+    // tool would hand the key straight to the model.
+    let policy = policy.protect(&axio_home()).protect(&state_dir());
     notices.append(&mut policy_notices);
 
     // Resume before the agent exists: the header decides the model, because a
@@ -500,40 +537,137 @@ fn read_stdin(stdin_is_tty: bool, have_prompt: bool) -> Option<String> {
     rx.recv_timeout(stdin_wait()).ok()
 }
 
+/// axio's own directory: configuration, and the credential file.
+fn axio_home() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("AXIO_HOME") {
+        return PathBuf::from(explicit);
+    }
+    user_config_path()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from(".axio"))
+}
+
+/// Find a credential, environment first, then the store.
+fn credential(provider: &str) -> Result<(Secret, auth::Source), String> {
+    let env: Vec<(String, String)> = std::env::vars().collect();
+    auth::resolve(provider, &axio_home(), &env).ok_or_else(|| {
+        let var = auth::env_var_for(provider).unwrap_or("the provider's API key");
+        format!(
+            "no credential for `{provider}`.\n\n\
+             Store one:\n    axio auth login --provider {provider}\n\n\
+             Or set it for this shell:\n    export {var}=...\n\n\
+             `axio --doctor` shows what axio can currently see."
+        )
+    })
+}
+
+fn auth_command(action: &AuthAction) -> u8 {
+    let home = axio_home();
+    let env: Vec<(String, String)> = std::env::vars().collect();
+
+    match action {
+        AuthAction::Login { provider } => {
+            // Read from stdin, never from an argument. A credential in argv is
+            // visible in `ps` to every user on the machine and lands in shell
+            // history besides.
+            if std::io::stdin().is_terminal() {
+                eprintln!(
+                    "Paste the credential for `{provider}` and press enter.\n\
+                     It will be visible as you type; pipe it in instead if that matters:\n\
+                     \n    axio auth login --provider {provider} < key.txt\n"
+                );
+            }
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_err() {
+                eprintln!("axio: could not read the credential");
+                return 1;
+            }
+            let secret = Secret::new(input.trim());
+            if secret.is_empty() {
+                eprintln!("axio: no credential given; nothing was stored");
+                return 1;
+            }
+
+            match auth::save(&home, provider, secret) {
+                Ok(path) => {
+                    println!(
+                        "stored the credential for `{provider}` at {}",
+                        path.display()
+                    );
+                    println!("{}", auth::protection_note());
+                    if let Some(var) = auth::env_var_for(provider)
+                        && env.iter().any(|(k, v)| k == var && !v.trim().is_empty())
+                    {
+                        // Otherwise the next run uses the variable and the user
+                        // concludes the login did nothing.
+                        println!(
+                            "note: {var} is set in this shell and takes precedence over the stored credential"
+                        );
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("axio: could not store the credential: {e}");
+                    1
+                }
+            }
+        }
+
+        AuthAction::Status => {
+            let rows = auth::status(&["anthropic", "ollama"], &home, &env);
+            for (provider, source) in rows {
+                match source {
+                    Some(source) => println!("{provider:<12} {}", source.describe()),
+                    None => println!("{provider:<12} not configured"),
+                }
+            }
+            println!();
+            println!("credential file: {}", auth::auth_path(&home).display());
+            0
+        }
+
+        AuthAction::Logout { provider } => match auth::forget(&home, provider) {
+            Ok(true) => {
+                println!("removed the stored credential for `{provider}`");
+                if let Some(var) = auth::env_var_for(provider)
+                    && env.iter().any(|(k, v)| k == var && !v.trim().is_empty())
+                {
+                    println!("note: {var} is still set in this shell");
+                }
+                0
+            }
+            Ok(false) => {
+                println!("no stored credential for `{provider}`");
+                0
+            }
+            Err(e) => {
+                eprintln!("axio: could not remove the credential: {e}");
+                1
+            }
+        },
+    }
+}
+
 /// Construct the provider the configuration names.
 ///
 /// Two implementations selected by name. Adding a third would be the moment to
 /// ask for a registry; two is not.
 fn build_provider(resolved: &Resolved) -> Result<Arc<dyn axio_core::provider::Provider>, String> {
     let model = &resolved.config().model;
+    // One lookup for every provider: the environment, then the store. A second
+    // resolution path is how the two disagree about which key is in use.
+    let (secret, _source) = credential(&model.provider)?;
+
     match model.provider.as_str() {
-        "anthropic" => {
-            let key = load_api_key().map_err(|e| {
-                format!(
-                    "{e}\n\n\
-                     Set a key for this shell:\n    export ANTHROPIC_API_KEY=sk-ant-...\n\n\
-                     Then re-run. `axio --doctor` shows what axio can currently see."
-                )
-            })?;
-            AnthropicProvider::new(key)
-                .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
-                .map_err(|e| format!("could not start the http client: {e}"))
-        }
+        "anthropic" => AnthropicProvider::new(secret.expose())
+            .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
+            .map_err(|e| format!("could not start the http client: {e}")),
         "ollama" | "openai-compatible" => {
-            let key = std::env::var("OLLAMA_API_KEY")
-                .ok()
-                .filter(|k| !k.trim().is_empty())
-                .ok_or_else(|| {
-                    "no credential found for this provider.\n\n\
-                     Set one for this shell:\n    export OLLAMA_API_KEY=...\n\n\
-                     Then re-run. `axio --doctor` shows what axio can currently see."
-                        .to_owned()
-                })?;
             let base = model
                 .base_url
                 .clone()
                 .unwrap_or_else(|| OLLAMA_BASE.to_owned());
-            OpenAiProvider::new(key, base, model.provider.clone())
+            OpenAiProvider::new(secret.expose(), base, model.provider.clone())
                 .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
                 .map_err(|e| format!("could not start the http client: {e}"))
         }
@@ -575,34 +709,25 @@ fn doctor(resolved: &Resolved) -> u8 {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "credentials");
-    if cfg.model.provider != "anthropic" {
-        match std::env::var("OLLAMA_API_KEY") {
-            Ok(k) if !k.trim().is_empty() => {
-                let _ = writeln!(
-                    out,
-                    "  OLLAMA_API_KEY      set ({} chars, never printed)",
-                    k.len()
-                );
+    // One resolution path, the same one the run itself uses, so doctor cannot
+    // disagree with reality about which credential is in play.
+    let env: Vec<(String, String)> = std::env::vars().collect();
+    for (provider, source) in axio_core::auth::status(&["anthropic", "ollama"], &axio_home(), &env)
+    {
+        match source {
+            Some(source) => {
+                let _ = writeln!(out, "  {provider:<10}          {}", source.describe());
             }
-            _ => {
-                let _ = writeln!(out, "  OLLAMA_API_KEY      not set");
-                let _ = writeln!(out, "  -> export OLLAMA_API_KEY=...");
+            None => {
+                let _ = writeln!(out, "  {provider:<10}          not configured");
             }
         }
     }
-    match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(k) if !k.trim().is_empty() => {
-            let _ = writeln!(
-                out,
-                "  ANTHROPIC_API_KEY   set ({} chars, never printed)",
-                k.len()
-            );
-        }
-        _ => {
-            let _ = writeln!(out, "  ANTHROPIC_API_KEY   not set");
-            let _ = writeln!(out, "  -> export ANTHROPIC_API_KEY=sk-ant-...");
-        }
-    }
+    let _ = writeln!(
+        out,
+        "  -> axio auth login --provider {}",
+        cfg.model.provider
+    );
     let _ = writeln!(out);
 
     let _ = writeln!(out, "model");
@@ -629,6 +754,7 @@ fn doctor(resolved: &Resolved) -> u8 {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "(unknown)".into())
     );
+    let _ = writeln!(out, "  axio home           {}", axio_home().display());
     let _ = writeln!(out, "  state               {}", state_dir().display());
     let _ = writeln!(
         out,

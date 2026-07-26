@@ -18,6 +18,7 @@
 
 pub mod agent;
 pub mod approver;
+pub mod auth;
 pub mod compact;
 pub mod config;
 pub mod policy;

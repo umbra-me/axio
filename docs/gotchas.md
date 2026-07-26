@@ -169,6 +169,23 @@ transcript, skip to the end and never cut at all.
 `message_delta` each carry the running total for the same message, so summing
 them double-counts the input tokens. The only symptom is the invoice.
 
+## Credentials
+
+**A credential must never be a command-line argument.** argv is visible in `ps`
+to every user on the machine, and lands in shell history besides. `auth login`
+reads stdin.
+
+**Set the file mode at creation, not afterwards.** Creating world-readable and
+chmodding leaves a window in which the credential is exposed.
+
+**axio's own home must be denied to axio's own tools.** Run from a parent
+directory, `auth.json` is inside the workspace and the `read` tool can hand the
+key to the model. The deny is built-in, so no allow rule and no `--yes` reaches
+past it.
+
+**Claiming file protection on a platform that has none is worse than claiming
+nothing.** Windows gets an honest note instead of a false guarantee.
+
 ## Providers
 
 **`WireMessage` is Messages-API-shaped.** One user message carrying N

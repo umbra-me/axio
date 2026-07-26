@@ -261,6 +261,29 @@ What the second provider cannot do is price itself. `ModelInfo` reports zeros,
 so cost is reported as zero rather than invented — a made-up price would make
 the budget check silently wrong rather than visibly absent.
 
+## Credentials
+
+`axio auth login` reads a credential from stdin — never from an argument, which
+would put it in shell history and in `ps` output for every user on the machine —
+and stores it at `$AXIO_HOME/auth.json`.
+
+An environment variable always outranks the stored file. That makes a stored
+credential easy to override for one command, and it means CI never silently
+picks up a developer's saved key. `axio auth status` and `--doctor` both report
+which source won, and neither ever prints the credential itself.
+
+On unix the file is created `0600` — at creation, not chmodded afterwards,
+which would leave a window where it is world-readable. **On Windows no
+protection is claimed at all**, and `login` says so. The predecessor project
+shipped a `restrict_to_owner` that was a documented no-op there; a false claim
+about a credential is worse than an honest absence of one.
+
+The directory holding it is added to the permission engine's built-in deny
+list, for read *and* write, non-overridably. Without that, running axio from a
+parent of its own home puts `auth.json` inside the workspace, where the `read`
+tool would hand the key to the model — and no allow rule or `--yes` should be
+able to reach it.
+
 ## What is not built yet
 
 The interactive surface prints a pointer to the one-shot form. See
