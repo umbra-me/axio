@@ -162,8 +162,80 @@ tool. A tool that forgot would put ten megabytes in the next request and nothing
 would error; doing it once means a new tool inherits the behaviour without
 knowing it exists.
 
+## Sessions on disk
+
+**The file is the record of what happened, not of what was sent.** That one rule
+decides everything else about persistence.
+
+A session is append-only JSONL. Line one is always the header, written by the
+same call that creates the file, so a header can never appear after an item and
+a concurrent reader sees either a complete header or nothing. `--list` reads
+exactly that line and never parses a transcript, which is what keeps listing
+cheap as sessions accumulate.
+
+Compaction never writes. It is a request-shaping decision re-derived per step
+from the transcript in memory, so a resumed session rebuilds the full history
+and reproduces the same elisions rather than drifting further on each resume.
+
+Two things are excluded from the record even though the wire would replay them:
+an empty assistant message, which the wire rejects anyway, and a context-elision
+marker. The second matters more than it looks — the file still contains every
+item such a marker claims was removed, so persisting one writes a lie, and
+because the file is append-only every resume would append another.
+
+Loading never fails on a damaged line. A torn final line is a crash, not
+corruption, and erroring there would lose an entire session over its last few
+bytes; it is skipped with a notice. A bad line in the *middle* is different: the
+transcript has a hole the model would misread as history, so the session is
+marked degraded. Any tool call without a result is repaired to cancelled,
+because a `tool_use` with no matching `tool_result` is rejected outright and
+would make the session unresumable.
+
+## Compaction
+
+Two staged elisions plus a force-only third, all pure functions of the
+transcript:
+
+| Stage | Fires at | Does |
+| --- | --- | --- |
+| 1 | 55% of the window | Drops `read` results whose path was later re-read or edited — the content is stale, a newer copy is already in context |
+| 2 | 70% | Replaces tool outputs over 200 bytes with a marker |
+| 3 | overflow only | Drops a prefix, leaving a marker so the hole is visible |
+
+Purity is the point: the same items always produce the same plan, which is what
+makes a resumed request identical to the original rather than approximately so.
+
+Two clamps protect what cannot be detected as missing from the request itself.
+Index 0 always survives, because the opening prompt is the task. And a prefix
+drop never advances past the most recent user message — losing it leaves a
+perfectly valid request about the wrong question, at full price.
+
+There is deliberately no clamp for tool pairings. One `ToolCall` item emits both
+the `tool_use` and its `tool_result`, so dropping whole items can never orphan
+half a pair. That is why compaction removes items rather than editing the wire
+projection.
+
+## Configuration
+
+Five layers, weakest first: built-in defaults, the user file, the nearest
+project file walking up from the working directory, `AXIO_*` environment
+variables, then command-line flags. The merge is leaf-wise, so a layer that
+mentions one key does not clobber the rest of its section.
+
+The winning layer is retained per key, which is what `axio --explain <key>`
+reports. A key nobody set still explains itself as a built-in default.
+
+**A project config may only make axio ask more.** `[permissions] allow` is
+ignored from a project file with a notice: a cloned repository that can grant
+itself shell access is remote code execution by `cd`, on a tool that ships no
+sandbox and has `--yes`.
+
+**A broken section resets that section and nothing else.** The whole file is
+parsed first; each table is then validated independently, and one that fails is
+dropped with a notice while the rest survive. A backup is written only when
+something was actually lost — a healthy config never litters.
+
 ## What is not built yet
 
-The interactive surface prints a pointer to the one-shot form. Session
-persistence, layered configuration and compaction have their shapes reserved in
-the types but no implementation. See `docs/roadmap.md`.
+The interactive surface prints a pointer to the one-shot form. See
+`docs/roadmap.md`.

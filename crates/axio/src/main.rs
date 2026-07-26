@@ -10,11 +10,14 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axio_core::agent::{Agent, RuntimeConfig};
+use axio_core::agent::Agent;
 use axio_core::approver::NonInteractive;
-use axio_core::policy::Policy;
-use axio_core::protocol::TurnOutcome;
+use axio_core::config::{self, Flags, Paths, Resolved};
+use axio_core::protocol::{Notice, SessionId, TurnOutcome};
 use axio_core::provider::SystemBlock;
+use axio_core::record::{
+    self, Header, Recorder, SESSION_FORMAT_VERSION, SessionFile, SessionStore,
+};
 use axio_core::session::Session;
 use axio_core::tool::ToolEnv;
 use axio_provider::AnthropicProvider;
@@ -44,6 +47,26 @@ struct Cli {
     /// Report configuration, credentials and assumed prices, then exit.
     #[arg(long)]
     doctor: bool,
+
+    /// Continue a previous session. A unique prefix of its id is enough.
+    #[arg(long, value_name = "ID", conflicts_with = "ephemeral")]
+    resume: Option<String>,
+
+    /// List recent sessions and exit.
+    #[arg(long, conflicts_with_all = ["prompt", "resume"])]
+    list: bool,
+
+    /// Record nothing to disk.
+    #[arg(long)]
+    ephemeral: bool,
+
+    /// Explain where a configuration key's value came from, then exit.
+    #[arg(long, value_name = "KEY")]
+    explain: Option<String>,
+
+    /// Override the model for this run.
+    #[arg(long, value_name = "NAME")]
+    model: Option<String>,
 }
 
 fn main() -> std::process::ExitCode {
@@ -58,8 +81,18 @@ fn main() -> std::process::ExitCode {
 }
 
 async fn run(cli: Cli) -> u8 {
+    let resolved = resolve_config(&cli);
+
+    // Local modes answer from configuration alone and must never touch stdin,
+    // a credential or the network.
     if cli.doctor {
-        return doctor();
+        return doctor(&resolved);
+    }
+    if let Some(key) = &cli.explain {
+        return explain(&resolved, key);
+    }
+    if cli.list {
+        return list_sessions();
     }
 
     // Announced before anything else, including the credential check. An
@@ -80,7 +113,7 @@ async fn run(cli: Cli) -> u8 {
     let piped = read_stdin(stdin_is_tty, cli.prompt.is_some());
 
     match Surface::select(cli.prompt.as_deref(), piped.as_deref(), stdin_is_tty) {
-        Surface::OneShot(prompt) => one_shot(&cli, prompt, stdout_is_tty).await,
+        Surface::OneShot(prompt) => one_shot(&cli, &resolved, prompt, stdout_is_tty).await,
         Surface::Tui => {
             eprintln!(
                 "axio: the interactive interface is not built yet.\n\
@@ -100,7 +133,7 @@ async fn run(cli: Cli) -> u8 {
     }
 }
 
-async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
+async fn one_shot(cli: &Cli, resolved: &Resolved, prompt: String, stdout_is_tty: bool) -> u8 {
     let api_key = match load_api_key() {
         Ok(key) => key,
         Err(e) => {
@@ -122,20 +155,40 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
     };
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let cfg = RuntimeConfig {
-        spill_dir: Some(state_dir().join("outputs")),
-        ..Default::default()
-    };
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cfg = resolved.runtime();
+    cfg.spill_dir = Some(state_dir().join("outputs"));
 
-    // `--yes` is the only thing that changes the answer to a question policy
-    // cannot decide alone. Without it, a one-shot run has nobody to ask, so it
-    // refuses rather than waiting for an answer that will never come.
-    let policy = if cli.yes {
-        Policy::new().unattended_allow()
-    } else {
-        Policy::new()
+    let mut notices: Vec<Notice> = resolved.notices().to_vec();
+    let (policy, mut policy_notices) = resolved.policy(cli.yes);
+    notices.append(&mut policy_notices);
+
+    // Resume before the agent exists: the header decides the model, because a
+    // transcript's reasoning is only replayable under the model that minted it.
+    let store = SessionStore::new(state_dir().join("sessions"));
+    let (mut session, resumed, mut recorder) = match &cli.resume {
+        Some(needle) => match open_resumed(&store, needle, cli.model.as_deref(), &mut notices) {
+            Ok(parts) => parts,
+            Err(message) => {
+                eprintln!("axio: {message}");
+                return 1;
+            }
+        },
+        None => {
+            let session = Session::new(cwd.clone(), &cfg.model);
+            let recorder = new_recorder(cli, &store, &session, &prompt, &mut notices);
+            (session, false, recorder)
+        }
     };
+    if resumed {
+        cfg = cfg.adopt_model(session.model());
+        recorder.append(&record::Record::Resumed {
+            at_ms: now_ms(),
+            model: session.model().to_owned(),
+        });
+    }
+    session.take_files_changed();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     let mut agent = Agent::new(
         provider,
@@ -144,7 +197,7 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
         } else {
             NonInteractive::deny()
         }),
-        Session::new(cwd.clone(), &cfg.model),
+        session,
         cfg.clone(),
         vec![SystemBlock {
             text: system_prompt(&cwd),
@@ -152,6 +205,7 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
         tx,
     )
     .with_policy(policy)
+    .with_recorder(recorder)
     .with_env(ToolEnv {
         vars: axio_tools::proc::child_env(),
     });
@@ -180,7 +234,7 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
     let cancel = CancellationToken::new();
     let signal_code = surface::spawn_signal_watcher(cancel.clone());
 
-    agent.announce(false);
+    agent.announce(resumed, notices);
 
     // The renderer drains on this task while the loop runs on another, so a
     // slow sink cannot stall the turn and a long turn cannot starve the sink.
@@ -230,6 +284,184 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
         0 => outcome.exit_code(),
         code => code,
     }
+}
+
+// ---------------------------------------------------------------- local modes
+
+fn resolve_config(cli: &Cli) -> Resolved {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let user = user_config_path();
+    // Bounded at the home directory so the walk cannot reach into an unrelated
+    // parent and apply someone else's project settings.
+    let project = config::find_project_config(&cwd, home_dir().as_deref());
+    let env: Vec<(String, String)> = std::env::vars().collect();
+    config::resolve(
+        &Paths { user, project },
+        &env,
+        &Flags {
+            model: cli.model.clone(),
+            effort: None,
+        },
+    )
+}
+
+fn home_dir() -> Option<PathBuf> {
+    use etcetera::BaseStrategy;
+    etcetera::choose_base_strategy()
+        .ok()
+        .map(|s| s.home_dir().to_path_buf())
+}
+
+fn user_config_path() -> Option<PathBuf> {
+    use etcetera::BaseStrategy;
+    etcetera::choose_base_strategy()
+        .ok()
+        .map(|s| s.config_dir().join("axio").join("config.toml"))
+}
+
+fn explain(resolved: &Resolved, key: &str) -> u8 {
+    match resolved.explain(key) {
+        Some(layer) => {
+            println!("{key} came from {}", layer.describe());
+            0
+        }
+        None => {
+            eprintln!("axio: no such configuration key: {key}");
+            eprintln!("known keys:");
+            for k in resolved.keys() {
+                eprintln!("  {k}");
+            }
+            2
+        }
+    }
+}
+
+fn list_sessions() -> u8 {
+    let store = SessionStore::new(state_dir().join("sessions"));
+    let files = store.files();
+    if files.is_empty() {
+        println!("no sessions yet");
+        return 0;
+    }
+    // One line read per file: a header carries everything a listing shows, so
+    // listing never parses a transcript.
+    for path in files.iter().take(50) {
+        match record::read_header(path) {
+            Ok(h) => {
+                let label = h.label.as_deref().unwrap_or("");
+                println!(
+                    "{}  {}  {}  {}",
+                    &h.id.to_string()[..8],
+                    h.started,
+                    h.model,
+                    label
+                );
+            }
+            Err(_) => println!("{}  (unreadable)", path.display()),
+        }
+    }
+    if files.len() > 50 {
+        println!("… and {} more", files.len() - 50);
+    }
+    0
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Start recording a new session, unless asked not to.
+fn new_recorder(
+    cli: &Cli,
+    store: &SessionStore,
+    session: &Session,
+    prompt: &str,
+    notices: &mut Vec<Notice>,
+) -> Recorder {
+    if cli.ephemeral {
+        return Recorder::Ephemeral;
+    }
+    let header = Header {
+        version: SESSION_FORMAT_VERSION,
+        protocol: axio_core::PROTOCOL_VERSION,
+        id: session.id(),
+        cwd: session.cwd().clone(),
+        model: session.model().to_owned(),
+        started: iso_now(),
+        label: Some(label_from(prompt)),
+        axio: env!("CARGO_PKG_VERSION").to_owned(),
+    };
+    match SessionFile::create(store.path_for(session.id()), &header) {
+        Ok(file) => Recorder::File(file),
+        Err(e) => {
+            // Losing the log is not a reason to refuse to work.
+            notices.push(Notice::warn(format!(
+                "not recording this session ({e}); it will not be resumable"
+            )));
+            Recorder::Ephemeral
+        }
+    }
+}
+
+/// Reopen a session so the turn continues the same file.
+type ResumedParts = (Session, bool, Recorder);
+
+fn open_resumed(
+    store: &SessionStore,
+    needle: &str,
+    model_override: Option<&str>,
+    notices: &mut Vec<Notice>,
+) -> Result<ResumedParts, String> {
+    let id: SessionId = store.resolve(needle)?;
+    let path = store.path_for(id);
+    let loaded = record::load(&path).map_err(|e| format!("cannot resume {id}: {e}"))?;
+
+    let mut session = loaded.session;
+    notices.extend(loaded.notices);
+    if loaded.degraded {
+        notices.push(Notice::warn(
+            "part of this session could not be read; the model is seeing a history with a hole in it",
+        ));
+    }
+    if let Some(model) = model_override
+        && model != session.model()
+    {
+        notices.push(Notice::warn(format!(
+            "resuming under {model} instead of {}; earlier reasoning will not be replayed",
+            session.model()
+        )));
+        session.adopt_model(model);
+    }
+
+    let recorder = match SessionFile::reopen(path) {
+        Ok(file) => Recorder::File(file),
+        Err(e) => {
+            notices.push(Notice::warn(format!("continuing without recording ({e})")));
+            Recorder::Ephemeral
+        }
+    };
+    Ok((session, true, recorder))
+}
+
+fn iso_now() -> String {
+    // Seconds since the epoch is not a date a human reads, but pulling a date
+    // library into the binary for one string is not worth it either; the ULID
+    // carries the authoritative timestamp.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{secs}")
+}
+
+/// One line of the first prompt, so a listing is readable.
+fn label_from(prompt: &str) -> String {
+    let line = prompt.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let cleaned: String = line.chars().filter(|c| !c.is_control()).take(80).collect();
+    cleaned.trim().to_owned()
 }
 
 /// How long to wait for supplementary stdin before giving up on it.
@@ -305,9 +537,9 @@ fn system_prompt(cwd: &std::path::Path) -> String {
 }
 
 /// What axio can see, so a misconfiguration is one command away from obvious.
-fn doctor() -> u8 {
+fn doctor(resolved: &Resolved) -> u8 {
     let mut out = std::io::stdout();
-    let cfg = RuntimeConfig::default();
+    let cfg = resolved.config();
     let _ = writeln!(out, "axio {VERSION}");
     let _ = writeln!(out);
 
@@ -328,10 +560,10 @@ fn doctor() -> u8 {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "model");
-    let _ = writeln!(out, "  model               {}", cfg.model);
-    let _ = writeln!(out, "  effort              {}", cfg.effort.as_wire());
-    let _ = writeln!(out, "  max_tokens          {}", cfg.max_tokens);
-    let _ = writeln!(out, "  max_steps           {}", cfg.max_steps);
+    let _ = writeln!(out, "  model               {}", cfg.model.name);
+    let _ = writeln!(out, "  effort              {}", cfg.model.effort.as_wire());
+    let _ = writeln!(out, "  max_tokens          {}", cfg.model.max_tokens);
+    let _ = writeln!(out, "  max_steps           {}", cfg.budget.max_steps);
     let _ = writeln!(out);
 
     // Printed because a stale price table is otherwise invisible until the bill.
@@ -343,6 +575,14 @@ fn doctor() -> u8 {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "paths");
+    let _ = writeln!(
+        out,
+        "  user config         {}",
+        user_config_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(unknown)".into())
+    );
+    let _ = writeln!(out, "  state               {}", state_dir().display());
     let _ = writeln!(
         out,
         "  cwd                 {}",

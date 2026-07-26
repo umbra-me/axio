@@ -24,4 +24,6 @@ if [ -n "$hits" ]; then
 fi
 
 count=$(printf '%s\n' "$tree" | grep -c . || true)
+# Reported, not capped: axio-core's selling point is its dependency count, and
+# a number nobody prints is a number nobody notices growing.
 echo "axio-core normal dependencies: $count, none forbidden"

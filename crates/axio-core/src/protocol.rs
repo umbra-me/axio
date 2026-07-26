@@ -95,6 +95,38 @@ pub enum EventKind {
     },
 }
 
+/// Something worth saying that is not fatal.
+///
+/// One type, so that config salvage, session load and budget validation all
+/// reach the event stream through the same counter — a surface must never have
+/// to invent a `seq`, because gap-free is a promise `--json` makes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notice {
+    pub level: NoticeLevel,
+    pub message: String,
+}
+
+impl Notice {
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            level: NoticeLevel::Info,
+            message: message.into(),
+        }
+    }
+    pub fn warn(message: impl Into<String>) -> Self {
+        Self {
+            level: NoticeLevel::Warn,
+            message: message.into(),
+        }
+    }
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            level: NoticeLevel::Error,
+            message: message.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeLevel {

@@ -10,18 +10,41 @@ read-only.
 
 ## Status
 
-Early, but it works: the turn loop, the provider transport, the one-shot CLI and
-all six tools. It can read, search, edit and run commands in a workspace.
+Early, but it works: the turn loop, the provider transport, the one-shot CLI,
+all six tools, sessions on disk, and layered configuration. It can read, search,
+edit and run commands in a workspace, and pick up where it left off.
 
-Writes and shell commands ask before they happen; reads do not. There is no
-session persistence or configuration file yet.
+Writes and shell commands ask before they happen; reads do not.
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
 cargo run -p axio -- -p "explain this repo"
 cat src/lib.rs | cargo run -p axio -- -p "review this"
 cargo run -p axio -- --doctor       # what axio can currently see
+
+axio --list                         # recent sessions
+axio --resume 01K3F               # continue one; a unique prefix is enough
+axio --explain model.effort         # where a setting came from
+axio --ephemeral -p "..."           # record nothing
 ```
+
+Configuration is layered — defaults, then `~/.config/axio/config.toml`, then the
+nearest `.axio/config.toml`, then `AXIO_*` variables, then flags:
+
+```toml
+[model]
+effort = "xhigh"
+
+[budget]
+max_usd_per_turn = 2.0
+max_steps = 50
+
+[permissions]
+deny = ["bash:curl"]
+```
+
+A project's own `.axio/config.toml` may only add restrictions, never remove
+them.
 
 Actions that change something ask first. `--yes` approves everything without
 asking — unattended and unsandboxed, so read [`SECURITY.md`](SECURITY.md) before

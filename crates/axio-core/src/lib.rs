@@ -18,9 +18,12 @@
 
 pub mod agent;
 pub mod approver;
+pub mod compact;
+pub mod config;
 pub mod policy;
 pub mod protocol;
 pub mod provider;
+pub mod record;
 pub mod redact;
 pub mod session;
 pub mod tool;
@@ -32,7 +35,7 @@ pub mod scripted;
 pub use agent::{Agent, RuntimeConfig};
 pub use approver::{Approver, NonInteractive};
 pub use protocol::{
-    ApprovalRequest, Decision, Delta, Event, EventKind, Item, ItemBody, NoticeLevel,
+    ApprovalRequest, Decision, Delta, Event, EventKind, Item, ItemBody, Notice, NoticeLevel,
     PROTOCOL_VERSION, Preview, ToolStatus, TurnOutcome, Usage,
 };
 pub use provider::{Effort, ModelRequest, Provider, ProviderError, StopReason, StreamEvent};

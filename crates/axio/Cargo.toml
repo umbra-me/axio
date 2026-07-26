@@ -23,6 +23,7 @@ axio-provider.workspace = true
 axio-tools.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+etcetera.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util.workspace = true

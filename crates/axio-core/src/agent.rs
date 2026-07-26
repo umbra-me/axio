@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::approver::Approver;
+use crate::compact::{self, ContextBudget, Elisions};
 use crate::policy::{Policy, Verdict};
 use crate::protocol::{
     ApprovalId, ApprovalRequest, Decision, Delta, Event, EventKind, Item, ItemBody, ItemId,
@@ -22,6 +23,7 @@ use crate::provider::{
     BlockKind, Effort, ModelRequest, Provider, ProviderError, ReasoningDisplay, StopReason,
     StreamEvent, SystemBlock, ToolInputAccumulator, ToolSpec,
 };
+use crate::record::{Record, Recorder};
 use crate::session::Session;
 use crate::tool::{
     Plan, ProgressSink, Tool, ToolCx, ToolEnv, ToolError, ToolLimits, ToolOutput, Workspace,
@@ -48,6 +50,35 @@ pub struct RuntimeConfig {
     /// Where output too large to send is kept so the model can read it back.
     pub spill_dir: Option<std::path::PathBuf>,
     pub tool_limits: ToolLimits,
+}
+
+impl RuntimeConfig {
+    /// The only way to build one from configuration.
+    ///
+    /// Everything else in the loop reads `self.cfg`, so funnelling construction
+    /// through here is what makes "config is resolved once" true by
+    /// construction rather than by everyone remembering.
+    pub fn from_resolved(resolved: &crate::config::Resolved) -> Self {
+        let c = resolved.config();
+        Self {
+            model: c.model.name.clone(),
+            effort: c.model.effort,
+            reasoning: c.reasoning(),
+            max_tokens: c.model.max_tokens,
+            max_steps: c.budget.max_steps,
+            max_usd_per_turn: c.budget.max_usd_per_turn,
+            tool_limits: c.tool_limits(),
+            ..Self::default()
+        }
+    }
+
+    /// `--resume`. The model comes from the session header, because a
+    /// transcript's reasoning blocks are only replayable under the model that
+    /// minted them.
+    pub fn adopt_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -169,6 +200,16 @@ pub struct Agent {
     workspace: Arc<Workspace>,
     env: Arc<ToolEnv>,
     system: Arc<[SystemBlock]>,
+    /// Where the durable history goes. The file records what happened;
+    /// compaction never writes to it.
+    recorder: Recorder,
+    /// What the next request leaves out. Re-derived per step, and per resume,
+    /// because it is a pure function of the transcript.
+    elisions: Elisions,
+    context: ContextBudget,
+    /// Accumulated across the session, so `--json` can show what a resumed
+    /// session has cost in total rather than only this turn.
+    session_usage: Usage,
     /// Unbounded deliberately: a bounded send from inside the loop can deadlock
     /// against a surface that is slow to drain.
     events: mpsc::UnboundedSender<Event>,
@@ -198,9 +239,23 @@ impl Agent {
             workspace,
             env: Arc::new(ToolEnv::default()),
             system: Arc::from(system),
+            recorder: Recorder::Ephemeral,
+            elisions: Elisions::default(),
+            context: ContextBudget::default(),
+            session_usage: Usage::default(),
             events,
             seq: 0,
         }
+    }
+
+    /// Where to record what happens. Defaults to recording nothing.
+    pub fn with_recorder(mut self, recorder: Recorder) -> Self {
+        self.recorder = recorder;
+        self
+    }
+
+    pub fn session_path(&self) -> Option<&std::path::Path> {
+        self.recorder.path()
     }
 
     /// The permission engine. Supplied by the surface, which is the only place
@@ -230,7 +285,7 @@ impl Agent {
 
     /// Emitted once, before any turn, so a consumer can refuse a stream it does
     /// not understand before it has to interpret one.
-    pub fn announce(&mut self, resumed: bool) {
+    pub fn announce(&mut self, resumed: bool, notices: Vec<crate::protocol::Notice>) {
         let kind = EventKind::SessionStarted {
             protocol: PROTOCOL_VERSION,
             session: self.session.id(),
@@ -240,12 +295,43 @@ impl Agent {
             resumed,
         };
         self.emit(None, kind);
+
+        // Everything resolved before the agent existed — config salvage,
+        // session load, budget validation — replayed through the same counter,
+        // because `seq` being gap-free is a promise `--json` makes and a
+        // surface has no way to compute one.
+        for notice in notices {
+            self.emit(
+                None,
+                EventKind::Notice {
+                    level: notice.level,
+                    message: notice.message,
+                },
+            );
+        }
+
+        // The one silent data-loss path in the projection: a model that differs
+        // from the one that minted the transcript drops every reasoning block.
+        if self.cfg.model != self.session.model() {
+            self.emit(
+                None,
+                EventKind::Notice {
+                    level: NoticeLevel::Warn,
+                    message: format!(
+                        "this session was recorded with {} but is running under {};                          earlier reasoning will not be replayed",
+                        self.session.model(),
+                        self.cfg.model
+                    ),
+                },
+            );
+        }
     }
 
     /// One user turn. Every exit path emits exactly one `TurnEnded`.
     pub async fn run_turn(&mut self, input: String, cancel: CancellationToken) -> TurnOutcome {
         let turn = TurnId::generate();
-        self.session.push_user(&input);
+        let user_item = self.session.push_user(&input);
+        self.recorder.append_item(&user_item);
         self.emit(Some(turn), EventKind::TurnStarted);
 
         let mut usage = Usage::default();
@@ -254,6 +340,10 @@ impl Agent {
         let outcome = 'turn: {
             while steps < self.cfg.max_steps {
                 steps += 1;
+
+                // One choke point, once per step, before the wire shape is
+                // built. Neither surface has, or needs, its own pass.
+                self.compact(turn);
 
                 let req = self.build_request();
                 let sampled = match self.sample(turn, req, &cancel).await {
@@ -287,7 +377,8 @@ impl Agent {
                 // verbatim — before anything executes. It is wire state and must
                 // be echoed back unchanged on the next request.
                 for block in &sampled.blocks {
-                    self.session.push(block.clone());
+                    let item = self.session.push(block.clone());
+                    self.recorder.append_item(&item);
                 }
 
                 let calls = sampled.tool_calls();
@@ -306,6 +397,14 @@ impl Agent {
             TurnOutcome::StepLimit { steps }
         };
 
+        self.session_usage.add(&usage);
+        let cost_usd = self.provider.model_info(&self.cfg.model).cost_usd(&usage);
+        self.recorder.append(&Record::TurnEnded {
+            outcome: outcome.clone(),
+            usage,
+            cost_usd,
+        });
+
         let files_changed = self.session.take_files_changed();
         self.emit(
             Some(turn),
@@ -318,10 +417,62 @@ impl Agent {
         outcome
     }
 
+    /// Re-derive what the next request leaves out.
+    ///
+    /// Pure in the transcript, so a resumed session reproduces the same plan
+    /// rather than drifting a little further each time.
+    fn compact(&mut self, turn: TurnId) {
+        let before = compact::estimate_tokens(self.session.transcript());
+        let planned = compact::plan(self.session.transcript(), self.context);
+        if planned == self.elisions {
+            return;
+        }
+        self.elisions = planned;
+        if self.elisions.is_empty() {
+            return;
+        }
+        let projected = compact::apply(self.session.transcript(), &self.elisions);
+        let after = compact::estimate_tokens(&projected);
+        let stage = self.elisions.stage;
+        let dropped = self.elisions.dropped_prefix as u32;
+        self.recorder.append(&Record::Compacted {
+            stage,
+            dropped,
+            tokens_before: before,
+            tokens_after: after,
+        });
+        self.emit(
+            Some(turn),
+            EventKind::Compacted {
+                stage,
+                tokens_before: before,
+                tokens_after: after,
+            },
+        );
+    }
+
+    /// Elide more, because the provider refused the request as too large.
+    ///
+    /// Returns false when there is nothing left to give up, which is the
+    /// caller's cue to fail with an explicit message rather than retry forever.
+    fn force_compact(&mut self, turn: TurnId) -> bool {
+        let Some(next) = compact::force(self.session.transcript(), &self.elisions) else {
+            return false;
+        };
+        self.elisions = next;
+        self.notice(
+            turn,
+            NoticeLevel::Warn,
+            "the context window overflowed; compacting further and retrying".to_owned(),
+        );
+        true
+    }
+
     fn build_request(&self) -> ModelRequest {
         let mut req = ModelRequest::new(&self.cfg.model);
         req.system = self.system.clone();
-        req.messages = self.session.wire_messages(&self.cfg.model);
+        let projected = compact::apply(self.session.transcript(), &self.elisions);
+        req.messages = self.session.wire_messages_from(&projected, &self.cfg.model);
         req.tools = Arc::from(
             self.tools
                 .values()
@@ -355,6 +506,8 @@ impl Agent {
         cancel: &CancellationToken,
     ) -> Result<Sampled, TurnBreak> {
         let mut backoff = self.cfg.backoff.clone().into_iter();
+        let mut forced = false;
+        let mut req = req;
         loop {
             // A child token so cancelling the turn cancels the in-flight
             // request, while a per-request failure never poisons the turn's own
@@ -365,6 +518,17 @@ impl Agent {
                 Ok(sampled) => return Ok(sampled),
 
                 Err(ProviderError::Cancelled) => return Err(TurnBreak::Cancelled),
+
+                // Forced compaction plus exactly one retry. Without it the
+                // first long session dies on a hard 400 with the answer one
+                // elision away.
+                Err(ProviderError::ContextOverflow) if !forced => {
+                    forced = true;
+                    if !self.force_compact(turn) {
+                        return Err(TurnBreak::Overflow);
+                    }
+                    req = self.build_request();
+                }
                 Err(ProviderError::ContextOverflow) => return Err(TurnBreak::Overflow),
 
                 Err(e) if e.retryable() => {
@@ -730,6 +894,7 @@ impl Agent {
 
     fn set_status(&mut self, turn: TurnId, call_id: &str, status: ToolStatus) {
         if let Some(item) = self.session.set_tool_status(call_id, status) {
+            self.recorder.append_item(&item);
             self.emit(Some(turn), EventKind::ItemUpdated { item });
         }
     }
@@ -843,7 +1008,7 @@ mod tests {
     #[tokio::test]
     async fn a_plain_turn_completes_and_streams_its_text() {
         let (mut agent, mut rx) = harness(vec![text_turn("hello")]);
-        agent.announce(false);
+        agent.announce(false, Vec::new());
         let outcome = agent.run_turn("hi".into(), CancellationToken::new()).await;
         assert!(matches!(outcome, TurnOutcome::Completed));
 
@@ -873,7 +1038,7 @@ mod tests {
     #[tokio::test]
     async fn seq_is_monotonic_and_gap_free() {
         let (mut agent, mut rx) = harness(vec![text_turn("a"), text_turn("b")]);
-        agent.announce(false);
+        agent.announce(false, Vec::new());
         agent.run_turn("one".into(), CancellationToken::new()).await;
         agent.run_turn("two".into(), CancellationToken::new()).await;
 

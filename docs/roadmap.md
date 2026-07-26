@@ -28,13 +28,13 @@ Six tools, the plan/authorise/execute split, the ordered permission engine with
 its built-in deny list, process-group containment, output truncation with spill,
 and environment stripping.
 
-## Next
-
 ### M4 — session, config, compaction
 
-Append-only JSONL records with a versioned header line, resume by replay,
-`--list`, layered configuration with per-section salvage and `--explain`, both
-deterministic compaction stages, cost accounting and budget enforcement.
+Append-only JSONL records with a versioned header, resume by replay, `--list`,
+`--ephemeral`, layered configuration with per-section salvage and `--explain`,
+deterministic compaction, per-turn cost records and budget enforcement.
+
+## Next
 
 ### M5 — v0.1
 

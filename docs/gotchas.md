@@ -131,6 +131,44 @@ child, breaking anything that checks whether it is attached to a terminal.
 **Output truncation lives in the loop, not in the tools.** A tool that forgets
 puts ten megabytes into the next request and nothing errors.
 
+## Sessions, config and compaction
+
+**A context-elision marker must never be persisted.** It describes the
+in-memory projection, not the history. The file still holds every item it claims
+was removed, so writing one is a lie about that file — and because the file is
+append-only, every subsequent resume appends another.
+
+**`#[serde(default = "…")]` fires on a missing *field*, never on a missing
+*table*.** So a derived `Default` yields `false` for a bool documented as
+`true`, and the only symptom is a feature quietly switching itself off for
+everyone who never wrote that section. Any struct with a non-false default gets
+a hand-written `impl Default`. There is a named regression test.
+
+**A project config may only restrict.** `[permissions] allow` from a project
+file is dropped with a notice. Granting from a file that arrives with a `git
+clone` is remote code execution by `cd`.
+
+**A backup on every load is not salvage, it is litter.** The `.corrupt-<ts>`
+copy is written only when a section was actually lost.
+
+**Compaction must be pure.** If it depended on anything but the transcript, a
+resumed session would compact at a different point than the original and the
+request would diverge — silently, because both are valid.
+
+**A prefix drop clamped to the most recent user message will never fire when
+that message is index 0.** The clamp exists so the *current* prompt survives;
+when the only prompt is the opening one it is already protected separately, so
+clamping there blocks stage three exactly when a long single turn needs it.
+
+**Do not clamp a prefix drop to avoid orphaning tool results.** One `ToolCall`
+item carries both halves of the pairing, so dropping whole items cannot orphan
+anything — and a loop that skips forward over tool calls will, in a tool-heavy
+transcript, skip to the end and never cut at all.
+
+**Usage reports are cumulative, not incremental.** `message_start` and
+`message_delta` each carry the running total for the same message, so summing
+them double-counts the input tokens. The only symptom is the invoice.
+
 ## Dependencies
 
 **reqwest's default rustls provider needs a C toolchain on Windows.** The default

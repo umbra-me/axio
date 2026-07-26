@@ -38,6 +38,35 @@ impl Session {
         }
     }
 
+    /// Rebuild a session from records read off disk.
+    ///
+    /// The id, cwd and model come from the header rather than being minted, so
+    /// a resumed session is the same session.
+    pub fn from_parts(id: SessionId, cwd: PathBuf, model: String, transcript: Vec<Item>) -> Self {
+        Self {
+            id,
+            cwd,
+            model,
+            transcript,
+            files_changed: Vec::new(),
+        }
+    }
+
+    /// Adopt a different model for the rest of the session.
+    ///
+    /// The signatures of everything already in the transcript are cleared, so
+    /// `wire_messages` stops replaying reasoning the new model did not mint —
+    /// one boolean cannot describe a transcript with blocks from two models,
+    /// and replaying a foreign block is rejected.
+    pub fn adopt_model(&mut self, model: impl Into<String>) {
+        self.model = model.into();
+        for item in &mut self.transcript {
+            if let ItemBody::Reasoning { signature, .. } = &mut item.body {
+                signature.clear();
+            }
+        }
+    }
+
     pub fn id(&self) -> SessionId {
         self.id
     }
@@ -161,25 +190,31 @@ impl Session {
     ///   results are merged into **one** user message in call order. Splitting
     ///   them across messages teaches the model to stop calling in parallel.
     pub fn wire_messages(&self, model: &str) -> Vec<WireMessage> {
+        self.wire_messages_from(self.transcript(), model)
+    }
+
+    /// The same projection over an arbitrary item list, so compaction can shape
+    /// a request without mutating the durable transcript.
+    pub fn wire_messages_from(&self, transcript: &[Item], model: &str) -> Vec<WireMessage> {
         let same_model = model == self.model;
         let mut out: Vec<WireMessage> = Vec::new();
 
         let mut i = 0;
-        while i < self.transcript.len() {
+        while i < transcript.len() {
             // A run of consecutive tool calls is one step of the loop, and has
             // to become exactly two messages: one assistant message holding
             // every tool_use, then one user message holding every tool_result in
             // the same order. Emitting them interleaved — use, result, use,
             // result — is accepted by the API but teaches the model to stop
             // calling tools in parallel.
-            if matches!(self.transcript[i].body, ItemBody::ToolCall { .. }) {
+            if matches!(transcript[i].body, ItemBody::ToolCall { .. }) {
                 let start = i;
-                while i < self.transcript.len()
-                    && matches!(self.transcript[i].body, ItemBody::ToolCall { .. })
+                while i < transcript.len()
+                    && matches!(transcript[i].body, ItemBody::ToolCall { .. })
                 {
                     i += 1;
                 }
-                let run = &self.transcript[start..i];
+                let run = &transcript[start..i];
 
                 for item in run {
                     let ItemBody::ToolCall {
@@ -222,7 +257,7 @@ impl Session {
                 continue;
             }
 
-            let item = &self.transcript[i];
+            let item = &transcript[i];
             i += 1;
             match &item.body {
                 ItemBody::UserMessage { text } => push_content(

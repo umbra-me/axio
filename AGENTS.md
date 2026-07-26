@@ -25,7 +25,7 @@ Four crates and one binary. The dependency graph is a tree rooted at
 
 | Crate | Owns |
 | --- | --- |
-| `axio-core` | `protocol` (events, items, deltas, outcomes), the `Provider` / `Tool` / `Approver` traits, `ToolCx`, `Workspace`, `Redacted`, and from M2 the turn loop |
+| `axio-core` | `protocol`, the `Provider` / `Tool` / `Approver` traits, the turn loop, `Session` and its JSONL records, layered `config`, `compact`, `policy`, `Workspace`, `Redacted` |
 | `axio-provider` | The Messages transport: SSE decoder, request builder, block state machine, error classification. The only crate linking HTTP or TLS |
 | `axio-tools` | The six tools, subprocess helpers, output truncation. The only crate that walks a filesystem or spawns a process |
 | `axio` | clap, surface selection, renderers, the TUI, `Approver` implementations |
@@ -65,6 +65,16 @@ Three invariants everything else follows from:
 - **A trailing `\r` is undecidable mid-stream** — the next chunk may open with
   `\n` — so the decoder holds it. At EOF it resolves as a bare-CR terminator.
   This is the case the byte-split property test exists for.
+- **The session file records what happened, not what was sent.** Compaction
+  never writes to it; it is re-derived per step from the transcript, which is
+  what makes a resume reproducible instead of drifting.
+- **A context-elision marker is never persisted.** The file still contains every
+  item it names, so writing one is a lie — and append-only means every resume
+  would add another.
+- **`#[serde(default = "…")]` does not fire for an absent table.** Any struct
+  with a non-false bool default needs a hand-written `impl Default`.
+- **Usage reports are cumulative.** Summing `message_start` and `message_delta`
+  double-counts the input tokens.
 - **`cargo-deny` bans a second TLS stack.** If `openssl-sys` or `native-tls`
   appears, something pulled in a default feature set we turned off.
 
