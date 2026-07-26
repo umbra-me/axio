@@ -165,6 +165,19 @@ retry re-sends what was lost, so the surface says so rather than letting the
 text quietly appear twice, which is the same bargain the one-shot renderer
 makes when it streams to stdout.
 
+Drawing is **paced, not driven**. A change marks the viewport dirty and a frame
+is painted at most every 16ms, because a model streaming at speed produces
+changes far faster than a terminal can usefully show them and every wasted frame
+is bandwidth the text itself is not getting. Committed lines do not wait for a
+frame — they are written straight through, so pacing costs the answer nothing.
+
+Everything below the run loop is generic over the backend rather than tied to
+the terminal, which is what lets a test hold a fake one and assert the property
+the whole design rests on: that finished lines are in the terminal's history and
+only the unfinished ones are in the viewport. The line editor is further split
+out with no terminal in it at all, so where a word ends and what recalls history
+are ordinary functions with ordinary tests.
+
 The decision travels back through `Approver`, not through the event stream, and
 the turn awaits it inline on `&mut self`. So the loop and the interface cannot
 be the same task: the interactive approver hands the request across a channel

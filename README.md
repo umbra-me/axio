@@ -96,6 +96,19 @@ The answer arrives a line at a time with its markdown rendered: headings, lists,
 quotes, code and emphasis become styles rather than asterisks, and the sentence
 still being written waits dim in the viewport until it is finished.
 
+The composer is a line editor. A pasted paragraph stays one prompt rather than
+submitting its first line.
+
+| Key | Does |
+| --- | --- |
+| `enter` | send |
+| `shift-enter`, `ctrl-j` | another line |
+| `up`, `down` | move a line, or recall history when there is only one |
+| `ctrl-w`, `ctrl-u`, `ctrl-k` | delete a word, to the start, to the end |
+| `ctrl-left`, `ctrl-right` | move a word |
+| `esc`, `ctrl-c` | interrupt a turn; twice at an empty prompt to leave |
+| `ctrl-d`, `/exit` | leave |
+
 When an action needs approval the diff or the command lands in scrollback and
 the viewport asks:
 

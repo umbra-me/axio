@@ -262,6 +262,23 @@ line by line and rendering it whole must produce identical output or a resumed
 transcript would not match what was watched live; that equivalence is a test,
 and an open code fence is the only state allowed to cross a line boundary.
 
+**Without bracketed paste, a pasted paragraph is a series of keystrokes.** Its
+first newline submits it and the rest types itself into whatever the surface
+does next — an approval prompt, if the timing is unlucky. `EnableBracketedPaste`
+turns it into one event, and it has to be disabled again on the way out, panic
+included, or the sequence leaks into the user's shell.
+
+**Shift-enter is not a key every terminal reports.** Without the keyboard
+enhancement protocol many terminals send a plain `Enter` for it, so a surface
+that only binds the modified key has no way to enter a second line there.
+`Ctrl-J` is the fallback, and paste covers the case that actually matters.
+
+**An emulator is not a terminal.** Driving the binary through a pty and replaying
+its bytes catches a great deal, but the emulator has to implement what ratatui
+emits: `pyte` supports `DECSTBM` and not `CSI S`/`CSI T`, so scroll-region moves
+are silently dropped and the replay shows ghost rows that no real terminal
+shows. Rendering and input can be trusted from that harness; scrolling cannot.
+
 **A key event fires on release too, on Windows.** Filtering to
 `KeyEventKind::Press` is the difference between one character and two. It is one
 guard in the key reader, and nothing in the suite asserts it.

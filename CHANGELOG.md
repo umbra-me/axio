@@ -53,6 +53,15 @@ ordered permission engine, sessions on disk, and layered configuration.
   asks. The answer streams in a line at a time with its markdown rendered —
   headings, lists, quotes, rules, code and emphasis — while the unfinished tail
   waits in the viewport, wrapped rather than flattened onto one line.
+- **A composer that behaves like a line editor.** Multi-line entry with
+  shift-enter or ctrl-j, bracketed paste so a pasted paragraph stays one prompt,
+  word-wise movement and deletion, ctrl-u and ctrl-k, and history recall that
+  gives back the draft it was interrupted. It grows to three rows and then
+  scrolls, keeping what is being typed on screen.
+- **Paced drawing.** A fast stream marks the surface dirty far more often than a
+  terminal can usefully repaint; frames are coalesced to at most one every 16ms,
+  and the status carries a spinner and the turn's elapsed time so a quiet model
+  still looks different from a hung one.
 - **An optional sandbox**, Linux only: Landlock, applied before the runtime
   starts and inherited by every command axio spawns. `--sandbox`, or
   `[sandbox] enabled`.

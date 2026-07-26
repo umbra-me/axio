@@ -12,9 +12,12 @@
 //! contract.
 
 mod approver;
+mod composer;
+mod frame;
 mod markdown;
 
 use std::io::Write;
+use std::time::Instant;
 
 use axio_core::agent::Agent;
 use axio_core::protocol::{
@@ -23,15 +26,17 @@ use axio_core::protocol::{
 };
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures_core::Stream;
+use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget, Wrap};
+use ratatui::widgets::{Paragraph, Widget};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use approver::{Ask, TuiApprover};
+use composer::{Composer, Edit};
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
 /// set when it is created and ratatui offers no way to change it after;
@@ -42,6 +47,15 @@ use approver::{Ask, TuiApprover};
 /// tail of the sentence being streamed — one row would show a paragraph as a
 /// single scrolling line, which is unreadable, so the tail gets what is left.
 const VIEWPORT_ROWS: u16 = 6;
+
+/// Rows the composer may grow to before it scrolls instead. A multi-line prompt
+/// is common enough to deserve room and rare enough not to deserve the whole
+/// viewport, which the answer is still streaming into.
+const COMPOSER_ROWS: usize = 3;
+
+/// Turned while a turn runs, off the clock rather than off a counter, so it
+/// keeps time whether the model is flooding the surface or saying nothing.
+const SPINNER: [&str; 4] = ["·", "∙", "•", "∙"];
 
 /// What the interface is doing, and therefore what a keystroke means.
 enum Mode {
@@ -54,10 +68,7 @@ pub struct Tui {
     /// Call ids whose terminal status has been printed, so a status reached
     /// through both `ItemUpdated` and `ItemCompleted` prints one line.
     reported: std::collections::HashSet<String>,
-    composer: String,
-    cursor: usize,
-    history: Vec<String>,
-    history_index: Option<usize>,
+    composer: Composer,
     mode: Mode,
     /// The part of the streaming message that has no newline after it yet, so
     /// the tail can be shown live before it can be rendered and committed.
@@ -72,6 +83,10 @@ pub struct Tui {
     status: String,
     interrupt_armed: bool,
     model: String,
+    /// When the running turn started, which is what the status counts up from.
+    /// A turn that has produced nothing for thirty seconds looks identical to a
+    /// hung one unless something on screen is still moving.
+    started: Option<Instant>,
 }
 
 /// Restore the terminal even when the process is dying badly.
@@ -90,7 +105,11 @@ fn install_panic_hook() {
 fn restore_terminal() -> std::io::Result<()> {
     crossterm::terminal::disable_raw_mode()?;
     let mut out = std::io::stdout();
-    crossterm::execute!(out, crossterm::cursor::Show)?;
+    crossterm::execute!(
+        out,
+        crossterm::event::DisableBracketedPaste,
+        crossterm::cursor::Show
+    )?;
     out.flush()
 }
 
@@ -108,6 +127,10 @@ pub async fn run(
 ) -> std::io::Result<u8> {
     crossterm::terminal::enable_raw_mode()?;
     install_panic_hook();
+    // Without this a pasted paragraph arrives as keystrokes, and its first
+    // newline submits it — the rest of the paste then types itself into
+    // whatever the surface does next.
+    crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)?;
 
     let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::with_options(
@@ -119,10 +142,7 @@ pub async fn run(
 
     let mut app = Tui {
         reported: std::collections::HashSet::new(),
-        composer: String::new(),
-        cursor: 0,
-        history: Vec::new(),
-        history_index: None,
+        composer: Composer::default(),
         mode: Mode::Idle,
         live: String::new(),
         md: markdown::Renderer::default(),
@@ -130,6 +150,7 @@ pub async fn run(
         status: String::new(),
         interrupt_armed: false,
         model,
+        started: None,
     };
 
     app.banner(&mut terminal, resumed)?;
@@ -142,21 +163,39 @@ pub async fn run(
     let mut turn: Option<tokio::task::JoinHandle<(TurnOutcome, Agent)>> = None;
     let mut cancel = CancellationToken::new();
     let mut leaving = false;
+    let mut clock = frame::Clock::new(Instant::now());
 
     loop {
-        app.draw(&mut terminal)?;
+        // Painting is paced rather than driven: a fast stream marks the surface
+        // dirty far more often than a terminal can usefully repaint, and every
+        // wasted frame is bandwidth the streaming text is not getting.
+        if clock.due(Instant::now()) {
+            app.draw(&mut terminal)?;
+            clock.drew(Instant::now());
+        }
 
         tokio::select! {
             // Events first: a turn that is producing output should not be
             // starved by a user leaning on a key.
             biased;
 
+            // Whatever is pending, painted as soon as a frame has passed.
+            _ = tokio::time::sleep_until(clock.deadline().into()), if clock.pending() => {}
+
+            // While a turn runs the status keeps time, so a model that has gone
+            // quiet still looks different from one that has hung.
+            _ = tokio::time::sleep(frame::FRAME * 8), if app.started.is_some() => {
+                clock.mark();
+            }
+
             Some(event) = events.recv() => {
                 app.on_event(&mut terminal, &event)?;
+                clock.mark();
             }
 
             Some(ask) = asks.recv() => {
                 app.on_ask(&mut terminal, ask)?;
+                clock.mark();
             }
 
             finished = async { turn.as_mut().expect("guarded").await },
@@ -177,13 +216,30 @@ pub async fn run(
                 }
                 app.mode = Mode::Idle;
                 app.status.clear();
+                app.started = None;
+                clock.mark();
                 if leaving {
                     break;
                 }
             }
 
-            key = next_key(&mut keys) => {
-                let Some(key) = key else { break };
+            input = next_input(&mut keys) => {
+                let Some(input) = input else { break };
+                clock.mark();
+                let key = match input {
+                    // A resize is not something to handle so much as something
+                    // to notice: the next draw re-measures, and the rows that
+                    // already reached scrollback belong to the terminal now.
+                    TermEvent::Resize(..) => continue,
+                    TermEvent::Paste(text) => {
+                        if matches!(app.mode, Mode::Idle) {
+                            app.composer.paste(&text);
+                        }
+                        continue;
+                    }
+                    TermEvent::Key(key) => key,
+                    _ => continue,
+                };
                 match app.on_key(&mut terminal, key, &cancel)? {
                     Action::None => {}
                     Action::Quit => {
@@ -207,6 +263,7 @@ pub async fn run(
                         app.mode = Mode::Running;
                         app.live.clear();
                         app.status = "working".into();
+                        app.started = Some(Instant::now());
                         app.push_user(&mut terminal, &prompt)?;
 
                         let token = cancel.clone();
@@ -224,16 +281,20 @@ pub async fn run(
     Ok(0)
 }
 
-async fn next_key<S>(stream: &mut S) -> Option<KeyEvent>
+/// The next terminal event the surface has any use for.
+///
+/// Key releases are dropped here rather than downstream: on Windows every press
+/// is reported twice, and one character typed would become two everywhere that
+/// handles a key.
+async fn next_input<S>(stream: &mut S) -> Option<TermEvent>
 where
     S: Stream<Item = std::io::Result<TermEvent>> + Unpin,
 {
     loop {
         let next = std::future::poll_fn(|cx| std::pin::Pin::new(&mut *stream).poll_next(cx)).await;
         match next {
-            // A key release repeats the press on Windows; only presses count.
-            Some(Ok(TermEvent::Key(key))) if key.kind == KeyEventKind::Press => return Some(key),
-            Some(Ok(_)) => continue,
+            Some(Ok(TermEvent::Key(key))) if key.kind != KeyEventKind::Press => continue,
+            Some(Ok(event)) => return Some(event),
             Some(Err(_)) | None => return None,
         }
     }
@@ -248,12 +309,12 @@ enum Action {
 impl Tui {
     // ------------------------------------------------------------------ input
 
-    fn on_key<W: Write>(
+    fn on_key<B: Backend>(
         &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         key: KeyEvent,
         cancel: &CancellationToken,
-    ) -> std::io::Result<Action> {
+    ) -> Result<Action, B::Error> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
         if let Mode::Approving(..) = self.mode {
@@ -275,7 +336,6 @@ impl Tui {
                     self.status = "press ctrl-c again to exit".into();
                 } else {
                     self.composer.clear();
-                    self.cursor = 0;
                 }
                 return Ok(Action::None);
             }
@@ -295,54 +355,18 @@ impl Tui {
             return Ok(Action::None);
         }
 
-        match key.code {
-            KeyCode::Enter => {
-                let text = self.composer.trim().to_owned();
-                if text.is_empty() {
-                    return Ok(Action::None);
-                }
-                if text == "/exit" || text == "/quit" {
-                    return Ok(Action::Quit);
-                }
-                self.history.push(text.clone());
-                self.history_index = None;
-                self.composer.clear();
-                self.cursor = 0;
-                return Ok(Action::Submit(text));
-            }
-            KeyCode::Char(c) => {
-                self.composer.insert(self.byte_at(self.cursor), c);
-                self.cursor += 1;
-            }
-            KeyCode::Backspace => {
-                if self.cursor > 0 {
-                    let at = self.byte_at(self.cursor - 1);
-                    self.composer.remove(at);
-                    self.cursor -= 1;
-                }
-            }
-            KeyCode::Delete => {
-                let at = self.byte_at(self.cursor);
-                if at < self.composer.len() {
-                    self.composer.remove(at);
-                }
-            }
-            KeyCode::Left => self.cursor = self.cursor.saturating_sub(1),
-            KeyCode::Right => self.cursor = (self.cursor + 1).min(self.chars()),
-            KeyCode::Home => self.cursor = 0,
-            KeyCode::End => self.cursor = self.chars(),
-            KeyCode::Up => self.recall(-1),
-            KeyCode::Down => self.recall(1),
-            _ => {}
-        }
-        Ok(Action::None)
+        Ok(match self.composer.key(key) {
+            Edit::Submit(text) if text == "/exit" || text == "/quit" => Action::Quit,
+            Edit::Submit(text) => Action::Submit(text),
+            Edit::None => Action::None,
+        })
     }
 
-    fn on_approval_key<W: Write>(
+    fn on_approval_key<B: Backend>(
         &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         key: KeyEvent,
-    ) -> std::io::Result<Action> {
+    ) -> Result<Action, B::Error> {
         let decision = match key.code {
             KeyCode::Char('y') | KeyCode::Enter => Decision::Allow,
             KeyCode::Char('a') => Decision::AllowSession,
@@ -388,43 +412,13 @@ impl Tui {
         Ok(Action::None)
     }
 
-    fn recall(&mut self, direction: i32) {
-        if self.history.is_empty() {
-            return;
-        }
-        let next = match (self.history_index, direction) {
-            (None, -1) => Some(self.history.len() - 1),
-            (Some(0), -1) => Some(0),
-            (Some(i), -1) => Some(i - 1),
-            (Some(i), 1) if i + 1 < self.history.len() => Some(i + 1),
-            (Some(_), 1) => None,
-            (None, _) => None,
-            _ => self.history_index,
-        };
-        self.history_index = next;
-        self.composer = next.map(|i| self.history[i].clone()).unwrap_or_default();
-        self.cursor = self.chars();
-    }
-
-    fn chars(&self) -> usize {
-        self.composer.chars().count()
-    }
-
-    fn byte_at(&self, char_index: usize) -> usize {
-        self.composer
-            .char_indices()
-            .nth(char_index)
-            .map(|(i, _)| i)
-            .unwrap_or(self.composer.len())
-    }
-
     // ----------------------------------------------------------------- events
 
-    fn on_event<W: Write>(
+    fn on_event<B: Backend>(
         &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         event: &Event,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         match &event.kind {
             EventKind::ItemStarted { item } => {
                 if matches!(item.body, ItemBody::AgentMessage { .. }) {
@@ -500,10 +494,7 @@ impl Tui {
     /// rendered without seeing what follows. Holding the whole message back
     /// until it completes would mean watching a blank screen and then having
     /// a page appear at once.
-    fn flush_lines<W: Write>(
-        &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
-    ) -> std::io::Result<()> {
+    fn flush_lines<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
         let width = self.width(terminal) as usize;
         let mut lines = Vec::new();
         while let Some(at) = self.live.find('\n') {
@@ -517,11 +508,11 @@ impl Tui {
         self.push(terminal, lines)
     }
 
-    fn on_item<W: Write>(
+    fn on_item<B: Backend>(
         &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         item: &axio_core::protocol::Item,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         if let ItemBody::ToolCall {
             call_id, status, ..
         } = &item.body
@@ -595,11 +586,7 @@ impl Tui {
         Ok(())
     }
 
-    fn on_ask<W: Write>(
-        &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
-        ask: Ask,
-    ) -> std::io::Result<()> {
+    fn on_ask<B: Backend>(&mut self, terminal: &mut Terminal<B>, ask: Ask) -> Result<(), B::Error> {
         // The preview goes to scrollback rather than into the viewport: a diff
         // is the thing the answer depends on, and scrollback is where it can be
         // scrolled back to and copied out of.
@@ -624,11 +611,11 @@ impl Tui {
         Ok(())
     }
 
-    fn on_turn_end<W: Write>(
+    fn on_turn_end<B: Backend>(
         &mut self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         outcome: &TurnOutcome,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         self.begin_message();
         let line = match outcome {
             TurnOutcome::Completed => None,
@@ -669,16 +656,16 @@ impl Tui {
 
     // ---------------------------------------------------------------- drawing
 
-    fn width<W: Write>(&self, terminal: &Terminal<ratatui::backend::CrosstermBackend<W>>) -> u16 {
+    fn width<B: Backend>(&self, terminal: &Terminal<B>) -> u16 {
         terminal.size().map(|s| s.width).unwrap_or(80)
     }
 
     /// Print into the terminal's own scrollback, above the viewport.
-    fn push<W: Write>(
+    fn push<B: Backend>(
         &self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         lines: Vec<Line<'static>>,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         if lines.is_empty() {
             return Ok(());
         }
@@ -688,11 +675,11 @@ impl Tui {
         })
     }
 
-    fn push_user<W: Write>(
+    fn push_user<B: Backend>(
         &self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         text: &str,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         let width = self.width(terminal).saturating_sub(2) as usize;
         let mut lines: Vec<Line<'static>> = wrap(text, width)
             .into_iter()
@@ -711,11 +698,11 @@ impl Tui {
         self.push(terminal, lines)
     }
 
-    fn push_error<W: Write>(
+    fn push_error<B: Backend>(
         &self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         message: &str,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         self.push(
             terminal,
             vec![Line::styled(
@@ -725,11 +712,11 @@ impl Tui {
         )
     }
 
-    fn banner<W: Write>(
+    fn banner<B: Backend>(
         &self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
+        terminal: &mut Terminal<B>,
         resumed: bool,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         let what = if resumed { "resumed" } else { "new session" };
         self.push(
             terminal,
@@ -755,27 +742,37 @@ impl Tui {
         )
     }
 
-    fn draw<W: Write>(
-        &self,
-        terminal: &mut Terminal<ratatui::backend::CrosstermBackend<W>>,
-    ) -> std::io::Result<()> {
+    fn draw<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
         terminal.draw(|frame| {
+            let width = frame.area().width.saturating_sub(2) as usize;
+            let (rows_of_text, cursor) = self.composer.rows(width.max(1));
+            // The composer takes the rows it needs and no more; what it leaves
+            // goes to the answer, which is the thing being read.
+            let prompt_height = rows_of_text.len().clamp(1, COMPOSER_ROWS) as u16;
+
             let rows = Layout::vertical([
                 Constraint::Min(1),
                 Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Length(prompt_height),
                 Constraint::Length(1),
             ])
             .split(frame.area());
 
+            // Show the end of a prompt too long for the rows it has: the part
+            // being typed is the part that matters.
+            let first = rows_of_text.len().saturating_sub(prompt_height as usize);
             frame.render_widget(self.live_rows(rows[0]), rows[0]);
             frame.render_widget(self.status_row(), rows[1]);
-            frame.render_widget(self.prompt_row(), rows[2]);
+            frame.render_widget(self.prompt_row(&rows_of_text[first..]), rows[2]);
             frame.render_widget(self.hint_row(), rows[3]);
 
             if matches!(self.mode, Mode::Idle) {
-                let x = rows[2].x + 2 + self.cursor as u16;
-                frame.set_cursor_position((x.min(rows[2].right().saturating_sub(1)), rows[2].y));
+                let row = cursor.0.saturating_sub(first) as u16;
+                let x = rows[2].x + 2 + cursor.1 as u16;
+                frame.set_cursor_position((
+                    x.min(rows[2].right().saturating_sub(1)),
+                    rows[2].y + row.min(prompt_height.saturating_sub(1)),
+                ));
             }
         })?;
         Ok(())
@@ -814,7 +811,16 @@ impl Tui {
         let text = match &self.mode {
             Mode::Approving(request, _) => format!("  {}", request.subject),
             _ if self.status.is_empty() => String::new(),
-            _ => format!("  {}", self.status),
+            _ => match self.started {
+                // A spinner and a clock, because "working" alone is the same
+                // pixel whether the model is thinking or the connection died.
+                Some(at) => {
+                    let elapsed = at.elapsed();
+                    let turning = SPINNER[(elapsed.as_millis() / 120) as usize % SPINNER.len()];
+                    format!("  {turning} {} · {}s", self.status, elapsed.as_secs())
+                }
+                None => format!("  {}", self.status),
+            },
         };
         Paragraph::new(Line::styled(
             text,
@@ -822,7 +828,7 @@ impl Tui {
         ))
     }
 
-    fn prompt_row(&self) -> Paragraph<'_> {
+    fn prompt_row(&self, rows: &[String]) -> Paragraph<'static> {
         match &self.mode {
             Mode::Approving(..) => Paragraph::new(Line::from(vec![
                 Span::styled("  allow? ", Style::default().fg(Color::Cyan)),
@@ -840,11 +846,20 @@ impl Tui {
                 "  …",
                 Style::default().add_modifier(Modifier::DIM),
             )),
-            Mode::Idle => Paragraph::new(Line::from(vec![
-                Span::styled("› ", Style::default().fg(Color::Cyan)),
-                Span::raw(self.composer.clone()),
-            ]))
-            .wrap(Wrap { trim: false }),
+            Mode::Idle => Paragraph::new(
+                rows.iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        Line::from(vec![
+                            Span::styled(
+                                if i == 0 { "› " } else { "  " },
+                                Style::default().fg(Color::Cyan),
+                            ),
+                            Span::raw(row.clone()),
+                        ])
+                    })
+                    .collect::<Vec<_>>(),
+            ),
         }
     }
 
@@ -852,6 +867,9 @@ impl Tui {
         let text = match self.mode {
             Mode::Approving(..) => "  the change above is what runs",
             Mode::Running => "  ctrl-c or esc to interrupt",
+            Mode::Idle if self.composer.text().contains('\n') => {
+                "  enter sends · shift-enter or ctrl-j for another line"
+            }
             Mode::Idle => "",
         };
         Paragraph::new(Line::styled(
@@ -959,6 +977,216 @@ pub fn approver() -> (TuiApprover, mpsc::UnboundedReceiver<Ask>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axio_core::protocol::{Item, ItemId, SessionId};
+    use ratatui::backend::TestBackend;
+
+    /// A surface over a fake terminal, which is what makes any of this
+    /// assertable: everything below the run loop is generic over the backend
+    /// precisely so a test can hold one.
+    fn surface(width: u16, height: u16) -> (Tui, Terminal<TestBackend>) {
+        let mut backend = TestBackend::new(width, height);
+        // Anchored where a real one is: below whatever the shell already
+        // printed, with room above it for the transcript to land in.
+        backend
+            .set_cursor_position(ratatui::layout::Position::new(0, height - VIEWPORT_ROWS))
+            .expect("a cursor");
+        let terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .expect("a terminal");
+        let app = Tui {
+            reported: std::collections::HashSet::new(),
+            composer: Composer::default(),
+            mode: Mode::Idle,
+            live: String::new(),
+            md: markdown::Renderer::default(),
+            flushed: false,
+            status: String::new(),
+            interrupt_armed: false,
+            model: "test-model".into(),
+            started: None,
+        };
+        (app, terminal)
+    }
+
+    fn rows(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    /// Everything the terminal has been told, whether it is still on screen or
+    /// has scrolled off it.
+    fn everything(terminal: &Terminal<TestBackend>) -> String {
+        let mut lines = rows(terminal.backend().scrollback());
+        lines.extend(rows(terminal.backend().buffer()));
+        lines.join("\n")
+    }
+
+    fn event(kind: EventKind) -> Event {
+        Event {
+            seq: 1,
+            session: SessionId::nil(),
+            turn: None,
+            at_ms: 0,
+            kind,
+        }
+    }
+
+    fn delta(text: &str) -> Event {
+        event(EventKind::ItemDelta {
+            id: ItemId::nil(),
+            delta: Delta::Text { text: text.into() },
+        })
+    }
+
+    fn completed(text: &str) -> Event {
+        event(EventKind::ItemCompleted {
+            item: Item {
+                id: ItemId::nil(),
+                body: ItemBody::AgentMessage { text: text.into() },
+            },
+        })
+    }
+
+    #[test]
+    fn a_finished_line_leaves_the_viewport_and_the_tail_stays_in_it() {
+        // The shape the whole surface rests on: what is settled belongs to the
+        // terminal, and only what is still arriving is redrawn.
+        let (mut app, mut terminal) = surface(40, 12);
+        app.on_event(&mut terminal, &delta("**done** with this\nstill ty"))
+            .expect("handled");
+        app.draw(&mut terminal).expect("drawn");
+
+        let visible = everything(&terminal);
+        assert!(visible.contains("done with this"), "{visible}");
+        assert!(visible.contains("still ty"), "{visible}");
+
+        // The committed line is in the terminal's own history, not in the four
+        // rows the surface owns; the unfinished tail is the other way round.
+        let viewport = rows(terminal.backend().buffer())
+            .split_off((12 - VIEWPORT_ROWS) as usize)
+            .join("\n");
+        assert!(!viewport.contains("done with this"), "{viewport}");
+        assert!(viewport.contains("still ty"), "{viewport}");
+    }
+
+    #[test]
+    fn a_streamed_message_is_not_printed_again_when_it_completes() {
+        // Deltas commit line by line and the completed item carries the whole
+        // message: rendering both would print every finished line twice.
+        let (mut app, mut terminal) = surface(40, 12);
+        app.on_event(&mut terminal, &delta("alpha\nbeta"))
+            .expect("handled");
+        app.on_event(&mut terminal, &completed("alpha\nbeta"))
+            .expect("handled");
+        app.draw(&mut terminal).expect("drawn");
+
+        let visible = everything(&terminal);
+        assert_eq!(visible.matches("alpha").count(), 1, "{visible}");
+        assert_eq!(visible.matches("beta").count(), 1, "{visible}");
+    }
+
+    #[test]
+    fn a_message_that_never_streamed_is_rendered_whole() {
+        let (mut app, mut terminal) = surface(40, 12);
+        app.on_event(&mut terminal, &completed("# Heading\n\nplain words"))
+            .expect("handled");
+        let visible = everything(&terminal);
+        assert!(visible.contains("Heading"), "{visible}");
+        assert!(!visible.contains('#'), "{visible}");
+        assert!(visible.contains("plain words"), "{visible}");
+    }
+
+    #[test]
+    fn a_dropped_stream_admits_that_what_it_printed_may_come_back() {
+        let (mut app, mut terminal) = surface(60, 12);
+        app.on_event(&mut terminal, &delta("half an answer\n"))
+            .expect("handled");
+        app.on_event(
+            &mut terminal,
+            &event(EventKind::ItemDiscarded {
+                id: ItemId::nil(),
+                reason: "overloaded".into(),
+            }),
+        )
+        .expect("handled");
+        assert!(everything(&terminal).contains("may repeat"));
+    }
+
+    #[test]
+    fn nothing_is_said_about_a_repeat_that_cannot_have_happened() {
+        // Only the tail was dropped, so there is nothing on screen to repeat
+        // and no reason to worry the user about one.
+        let (mut app, mut terminal) = surface(60, 12);
+        app.on_event(&mut terminal, &delta("no newline yet"))
+            .expect("handled");
+        app.on_event(
+            &mut terminal,
+            &event(EventKind::ItemDiscarded {
+                id: ItemId::nil(),
+                reason: "overloaded".into(),
+            }),
+        )
+        .expect("handled");
+        assert!(!everything(&terminal).contains("may repeat"));
+    }
+
+    #[test]
+    fn the_composer_grows_for_a_multi_line_prompt_and_stops_growing() {
+        let (mut app, mut terminal) = surface(40, 12);
+        app.composer.paste("one\ntwo");
+        app.draw(&mut terminal).expect("drawn");
+        let visible = rows(terminal.backend().buffer()).join("\n");
+        assert!(visible.contains("› one"), "{visible}");
+        assert!(visible.contains("  two"), "{visible}");
+
+        // More lines than it has rows: the end is what is being typed, so the
+        // end is what stays on screen.
+        app.composer.paste("\nthree\nfour");
+        app.draw(&mut terminal).expect("drawn");
+        let visible = rows(terminal.backend().buffer()).join("\n");
+        assert!(visible.contains("four"), "{visible}");
+        assert!(!visible.contains("one"), "{visible}");
+    }
+
+    #[test]
+    fn a_tool_result_reports_once_however_many_events_carry_it() {
+        let (mut app, mut terminal) = surface(50, 12);
+        let ok = || ToolStatus::Ok {
+            output: "hi".into(),
+            truncated: false,
+            spill: None,
+            ms: 3,
+        };
+        let call = |status| {
+            event(EventKind::ItemUpdated {
+                item: Item {
+                    id: ItemId::nil(),
+                    body: ItemBody::ToolCall {
+                        call_id: "call_1".into(),
+                        name: "read".into(),
+                        input: serde_json::json!({}),
+                        subject: "read:notes.md".into(),
+                        preview: None,
+                        status,
+                    },
+                },
+            })
+        };
+        app.on_event(&mut terminal, &call(ok())).expect("handled");
+        app.on_event(&mut terminal, &call(ok())).expect("handled");
+        assert_eq!(everything(&terminal).matches("read:notes.md").count(), 1);
+    }
 
     #[test]
     fn wrapping_breaks_on_words_and_never_loses_text() {
