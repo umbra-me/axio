@@ -94,7 +94,9 @@ fn doctor_reports_what_axio_can_see() {
         "anthropic",
         "claude-opus-5",
         "xhigh",
-        "assumed prices",
+        "base_url",
+        "prices",
+        "permissions",
         "paths",
         "axio home",
     ] {

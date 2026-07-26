@@ -107,7 +107,11 @@ impl Bash {
                     ("command", schema::string("The shell command to run")),
                     (
                         "timeout_secs",
-                        schema::integer("How long to allow before killing it"),
+                        schema::integer(
+                            "How long to allow before killing it. Values above the \
+                             configured ceiling are clamped down to it, so asking for \
+                             more does not get you more.",
+                        ),
                     ),
                 ],
                 &["command"],
@@ -154,6 +158,7 @@ impl Tool for Bash {
             .with_preview(Preview::Command {
                 program,
                 argv,
+                raw: command.to_owned(),
                 cwd: cx.workspace.root().to_path_buf(),
             })
             .with_payload(BashPlan {
@@ -205,7 +210,8 @@ impl Tool for Bash {
             _ = tokio::time::sleep(p.timeout) => {
                 crate::proc::kill_tree(&mut child).await;
                 return Err(ToolError::Failed(format!(
-                    "`{}` did not finish within {}s and was stopped",
+                    "`{}` did not finish within {}s and was stopped (this is the \
+                     configured ceiling; a larger timeout_secs is clamped to it)",
                     p.command,
                     p.timeout.as_secs()
                 )));
@@ -307,6 +313,13 @@ mod tests {
         assert!(!words.contains(&"-rn".to_owned()));
         assert!(!words.contains(&"FOO=bar".to_owned()));
         assert!(words.contains(&"src".to_owned()));
+    }
+
+    #[test]
+    fn the_compound_subject_matches_the_one_policy_explains() {
+        // policy.rs names this string to explain the classification to the
+        // model; the two must not drift apart.
+        assert_eq!(COMPOUND, axio_core::policy::COMPOUND_SUBJECT);
     }
 
     #[test]

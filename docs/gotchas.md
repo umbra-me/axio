@@ -128,6 +128,52 @@ runtime unwind, on a deadline, rather than exiting where the signal is seen. The
 in-process cancellation test cannot catch this: it exercises the path that
 works. The signal tests spawn the real binary and send it a real signal.
 
+**A guarantee that matches lowercase patterns against the model's own spelling
+is off by one capital letter.** The built-in deny list is all lowercase and the
+subject is built from the argument as given, so `read .ENV` resolved to the real
+file on macOS and Windows and matched nothing. The built-in test is case-folded;
+user rules are not, because their author should be able to predict exactly what
+they cover.
+
+**A refusal that does not say what was wrong with the request gets retried.**
+Told `.env` was on the protected list, the model adapted on the first try. Told
+only that approval was needed, it re-sent `echo one; echo two` three times — the
+adaptation it needed (split the compound into two simple calls) was not
+discoverable from the message. Denials name the classification, and a subject
+already refused this turn is answered from the record rather than asked about
+again.
+
+**A declared contract nobody enforces cannot correct anything.** Every tool
+schema said `additionalProperties: false` and nothing checked it, so a model
+that invented `"yes": true` — a self-approval argument it hoped existed — was
+never contradicted and sent it for the rest of the session. Checked once in the
+loop, not in each tool.
+
+**"No matches" is a claim; an error is an answer.** `glob` and `grep` walk from
+the workspace root, so a pattern pointing outside it used to come back empty —
+which the model believes, so it keeps searching. They now refuse the pattern in
+the same words `read` uses.
+
+**A byte count cannot be turned into a line offset.** The truncation marker
+reported omitted *bytes* while `read` takes a *line* number, so the only safe
+move was `offset: 1` — re-injecting the head already in context, at exactly the
+moment the output was declared too big. The marker names the line to resume at.
+
+**`reqwest`'s `Display` prints only its outermost layer.** "builder error" with
+the cause dropped, retried three times on the full backoff schedule, for a base
+URL that could never parse. Causes are walked, and a builder or connect failure
+is a `Configuration` error, which is not retryable.
+
+**An error body goes to the terminal and, on a recorded run, to the session
+file.** Uncapped, an SSO login page or a corporate proxy error is hundreds of
+kilobytes of noise, and the one useful fact — that the response was not JSON, so
+the endpoint is probably not an API — was the thing it did not say.
+
+**A spend cap nothing can measure is not a cap.** The unpriced providers report
+zero for every token, so `max_usd_per_turn` compared against `0.0` forever. It
+is silently inert, which is the worst outcome for a guardrail: the user believes
+they set one. Announced as a warning at startup.
+
 **A denial the user never sees is worse than a failure.** Policy refuses, the
 session records it, `--json` carries it — and if the plain renderer drops the
 event, the model's confident summary is the only thing anyone reads. The

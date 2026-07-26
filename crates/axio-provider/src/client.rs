@@ -26,6 +26,26 @@ pub fn install_crypto_provider() {
     });
 }
 
+/// Turn a `reqwest` failure into the most specific error we can justify.
+///
+/// A builder failure is a bad URL, and a DNS or TLS failure is a bad host or a
+/// bad certificate — none of them get better by waiting, so classifying them as
+/// retryable `Transport` spent the whole backoff schedule on something that
+/// could never succeed. The cause chain is included because reqwest's `Display`
+/// shows only its outermost layer.
+pub(crate) fn transport_error(e: reqwest::Error, base_url: &str) -> ProviderError {
+    let detail = ProviderError::full_chain(&e);
+    if e.is_builder() {
+        return ProviderError::Configuration(format!(
+            "`{base_url}` is not a usable endpoint URL ({detail})"
+        ));
+    }
+    if e.is_connect() && !e.is_timeout() {
+        return ProviderError::Configuration(format!("cannot reach `{base_url}` ({detail})"));
+    }
+    ProviderError::Transport(Redacted::new(detail))
+}
+
 pub struct AnthropicProvider {
     http: reqwest::Client,
     api_key: Arc<str>,
@@ -68,17 +88,9 @@ impl Provider for AnthropicProvider {
         "anthropic"
     }
 
-    fn model_info(&self, _model: &str) -> ModelInfo {
-        // One hardcoded model, so the price table cannot drift far. `axio
-        // doctor` prints what it assumed.
-        ModelInfo {
-            context_window: 1_000_000,
-            max_output_tokens: 128_000,
-            input_price: 5.0,
-            output_price: 25.0,
-            cache_read_price: 0.5,
-            cache_write_price: 6.25,
-        }
+    fn model_info(&self, model: &str) -> ModelInfo {
+        // Delegated so `--doctor` and the loop read one table.
+        anthropic::model_info(model)
     }
 
     async fn stream(
@@ -101,7 +113,7 @@ impl Provider for AnthropicProvider {
                 .header("anthropic-version", API_VERSION)
                 .header("content-type", "application/json")
                 .json(&body)
-                .send() => r.map_err(|e| ProviderError::Transport(Redacted::new(e.to_string())))?,
+                .send() => r.map_err(|e| transport_error(e, &self.base_url))?,
         };
 
         let status = response.status().as_u16();

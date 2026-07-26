@@ -387,11 +387,19 @@ impl SessionStore {
     /// A 26-character identifier typed by hand is a usability failure, and
     /// resolving a prefix needs only the file names — no header is read.
     pub fn resolve(&self, needle: &str) -> Result<SessionId, String> {
-        let needle = needle.trim().to_ascii_uppercase();
+        let typed = needle.trim();
+        let needle = typed.to_ascii_uppercase();
         if needle.is_empty() {
             return Err("no session id given".into());
         }
-        if let Ok(id) = needle.parse::<SessionId>() {
+        // A well-formed id still has to exist. Returning it unchecked turns a
+        // mistyped or wrong-`AXIO_STATE` id — the likeliest miss, since a full
+        // id is what `--list` hands you to copy — into a bare "No such file or
+        // directory (os error 2)" from the loader, which reads as a fault in
+        // axio rather than an answer about the session.
+        if let Ok(id) = needle.parse::<SessionId>()
+            && self.path_for(id).is_file()
+        {
             return Ok(id);
         }
 
@@ -402,11 +410,13 @@ impl SessionStore {
             .filter(|id| id.to_string().starts_with(&needle))
             .collect();
 
+        // Quoted as typed: echoing the uppercased needle back tells the user
+        // they typed something they did not.
         match matches.len() {
-            0 => Err(format!("no session matches `{needle}`")),
+            0 => Err(format!("no session matches `{typed}`")),
             1 => Ok(matches[0]),
             n => Err(format!(
-                "`{needle}` matches {n} sessions; give more characters"
+                "`{typed}` matches {n} sessions; give more characters"
             )),
         }
     }

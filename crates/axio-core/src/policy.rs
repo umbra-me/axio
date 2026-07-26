@@ -250,7 +250,7 @@ impl Policy {
             Some(Unattended::Deny) => {
                 Verdict::Deny("no approver available and --yes was not given".into())
             }
-            None => Verdict::Ask(describe(plan.effects)),
+            None => Verdict::Ask(describe(plan.effects, subject)),
         }
     }
 
@@ -261,14 +261,33 @@ impl Policy {
 
     /// The same test against a path that is already a path — a declared
     /// argument rather than the tail of a subject.
+    ///
+    /// Case-folded, and only here. The built-in patterns are all lowercase and
+    /// the subject is built from the model's own spelling, so on macOS and
+    /// Windows — where `.ENV` and `.env` are the same file — reading `.ENV`
+    /// resolved fine and matched nothing. The strongest guarantee in the engine,
+    /// switched off by capitalisation. User rules stay case-sensitive: their
+    /// author should be able to predict exactly what they cover.
     fn builtin_path_denial(&self, path: &str, effects: Effects) -> Option<String> {
-        if effects.reads && self.builtin_read.iter().any(|m| matches(m, path)) {
+        let folded = path.to_ascii_lowercase();
+        let path_for_match = folded.as_str();
+        if effects.reads
+            && self
+                .builtin_read
+                .iter()
+                .any(|m| matches(&m.to_ascii_lowercase(), path_for_match))
+        {
             return Some(format!(
                 "`{path}` is on the built-in protected list; \
                  this cannot be overridden by an allow rule"
             ));
         }
-        if effects.writes && self.builtin_write.iter().any(|m| matches(m, path)) {
+        if effects.writes
+            && self
+                .builtin_write
+                .iter()
+                .any(|m| matches(&m.to_ascii_lowercase(), path_for_match))
+        {
             return Some(format!(
                 "writing `{path}` is refused by the built-in protected list; \
                  this cannot be overridden by an allow rule"
@@ -278,7 +297,7 @@ impl Policy {
     }
 }
 
-fn describe(effects: Effects) -> String {
+fn describe(effects: Effects, subject: &str) -> String {
     let mut what = Vec::new();
     if effects.writes {
         what.push("write files");
@@ -289,11 +308,33 @@ fn describe(effects: Effects) -> String {
     if effects.network {
         what.push("access the network");
     }
-    if what.is_empty() {
-        return "this action needs approval".into();
+    let base = if what.is_empty() {
+        "this action needs approval".to_owned()
+    } else {
+        format!("this will {}", what.join(" and "))
+    };
+
+    // Naming the classification is what lets the model adapt. Told only that
+    // approval was needed, it re-sent `echo one; echo two` three times; told
+    // that a `.env` read was on the protected list, it adapted on the first
+    // try. The difference was that one message said what was wrong with the
+    // request and the other only said what the situation was.
+    if subject == COMPOUND_SUBJECT {
+        return format!(
+            "{base}. This is not a single simple command — it contains a pipe, \
+             a redirect, a sequence or a substitution — so no allow rule can \
+             ever match it. Issuing each command separately may be permitted."
+        );
     }
-    format!("this will {}", what.join(" and "))
+    base
 }
+
+/// The subject `axio-tools` gives anything that is not one simple command.
+///
+/// Duplicated as a constant rather than depended on: the tool crate depends on
+/// this one, not the other way round. `axio-tools` has a test asserting the two
+/// agree.
+pub const COMPOUND_SUBJECT: &str = "bash:!compound";
 
 /// The decision the engine records when nobody is asked.
 pub fn implicit(verdict: &Verdict) -> Option<Decision> {
@@ -359,6 +400,49 @@ mod tests {
             .unattended_allow();
         let plan = plan("bash:cat", EXEC).with_paths(vec!["/home/u/.config/axio/auth.json".into()]);
         assert!(matches!(policy.evaluate(&plan), Verdict::Deny(_)));
+    }
+
+    /// Regression. The built-in patterns are lowercase and the subject is the
+    /// model's own spelling, so on macOS and Windows — where `.ENV` and `.env`
+    /// name the same file — the read resolved and matched nothing.
+    #[test]
+    fn the_built_in_list_is_not_defeated_by_capitalisation() {
+        let policy = Policy::new().unattended_allow();
+        for subject in ["read:.ENV", "read:deploy/ID_RSA", "read:Config/.Env"] {
+            assert!(
+                matches!(policy.evaluate(&plan(subject, WRITE)), Verdict::Deny(_)),
+                "{subject} slipped past the built-in list"
+            );
+        }
+    }
+
+    /// A user rule stays case-sensitive: its author should be able to predict
+    /// exactly what it covers.
+    #[test]
+    fn a_user_rule_is_still_matched_as_written() {
+        let policy = Policy::new()
+            .deny_rule("read:SECRET.txt")
+            .expect("a valid pattern");
+        assert!(matches!(
+            policy.evaluate(&plan("read:SECRET.txt", Effects::READ_ONLY)),
+            Verdict::Deny(_)
+        ));
+        assert_eq!(
+            policy.evaluate(&plan("read:secret.txt", Effects::READ_ONLY)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn a_compound_command_is_told_why_it_can_never_match() {
+        let policy = Policy::new();
+        match policy.evaluate(&plan(COMPOUND_SUBJECT, EXEC)) {
+            Verdict::Ask(reason) => {
+                assert!(reason.contains("not a single simple command"), "{reason}");
+                assert!(reason.contains("separately"), "{reason}");
+            }
+            other => panic!("expected an ask, got {other:?}"),
+        }
     }
 
     #[test]

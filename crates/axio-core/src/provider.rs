@@ -367,6 +367,14 @@ pub enum ProviderError {
     Truncated,
     #[error("transport: {0}")]
     Transport(Redacted),
+    /// A mistake in the configuration, not a bad moment on the network.
+    ///
+    /// Separate from `Transport` because retrying it is pure waste: a base URL
+    /// that will not parse produces the same failure on every attempt, and the
+    /// backoff schedule turned an instant, fixable error into eight silent
+    /// seconds followed by the same unhelpful message.
+    #[error("configuration: {0}")]
+    Configuration(String),
     /// `raw` is the verbatim SSE span. Keeping it is the difference between a
     /// debuggable bug report and a shrug.
     #[error("decode failed: {source}")]
@@ -389,6 +397,25 @@ impl ProviderError {
             Self::Http { status, .. } => *status >= 500,
             _ => false,
         }
+    }
+
+    /// Everything a `Display` chain would hide.
+    ///
+    /// `reqwest`'s `Display` prints only its outermost layer, so the cause —
+    /// `relative URL without a base`, `connection refused`, `dns error`,
+    /// `certificate verify failed` — is thrown away and the user is told
+    /// "builder error", which names neither the problem nor the setting.
+    pub fn full_chain(e: &(dyn std::error::Error + 'static)) -> String {
+        let mut parts = vec![e.to_string()];
+        let mut source = e.source();
+        while let Some(cause) = source {
+            let text = cause.to_string();
+            if !parts.iter().any(|p| p == &text) {
+                parts.push(text);
+            }
+            source = cause.source();
+        }
+        parts.join(": ")
     }
 
     pub fn backoff_hint(&self) -> Option<Duration> {

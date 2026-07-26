@@ -165,7 +165,15 @@ enum TurnBreak {
 /// One fully-buffered assistant message.
 #[derive(Debug, Default)]
 struct Sampled {
-    blocks: Vec<ItemBody>,
+    /// Paired with the id the streaming events already used.
+    ///
+    /// Generating a fresh one when the block lands in the transcript made every
+    /// tool call appear twice under `--json`: once reaching `item_completed`
+    /// still `pending` and never resolving, and once as an `item_updated` for
+    /// an item the consumer never saw start. `id` is the natural key — it is
+    /// all `item_delta` carries — so a surface built on it shows a permanently
+    /// spinning phantom call.
+    blocks: Vec<Item>,
     usage: Usage,
     stop: Option<StopReason>,
 }
@@ -174,7 +182,7 @@ impl Sampled {
     fn text(&self) -> String {
         self.blocks
             .iter()
-            .filter_map(|b| match b {
+            .filter_map(|b| match &b.body {
                 ItemBody::AgentMessage { text } => Some(text.as_str()),
                 _ => None,
             })
@@ -185,7 +193,7 @@ impl Sampled {
     fn tool_calls(&self) -> Vec<(String, String, serde_json::Value)> {
         self.blocks
             .iter()
-            .filter_map(|b| match b {
+            .filter_map(|b| match &b.body {
                 ItemBody::ToolCall {
                     call_id,
                     name,
@@ -222,6 +230,15 @@ pub struct Agent {
     /// against a surface that is slow to drain.
     events: mpsc::UnboundedSender<Event>,
     seq: u64,
+    /// Subjects already refused this turn.
+    ///
+    /// A model told only "this needs approval" reads the refusal as transient
+    /// and re-sends the identical call — observed eight times for one write,
+    /// and six for one `ls`. The second answer says so plainly instead of
+    /// repeating the first, and an interactive approver is not asked the same
+    /// question twice in one turn. Cleared when a session grant arrives, since
+    /// that is the one thing that can change the answer.
+    denied_this_turn: std::collections::HashSet<String>,
 }
 
 impl Agent {
@@ -258,6 +275,7 @@ impl Agent {
             session_usage: Usage::default(),
             events,
             seq: 0,
+            denied_this_turn: std::collections::HashSet::new(),
         }
     }
 
@@ -323,6 +341,22 @@ impl Agent {
             );
         }
 
+        if self.budget_is_inert() {
+            let limit = self.cfg.max_usd_per_turn.unwrap_or_default();
+            self.emit(
+                None,
+                EventKind::Notice {
+                    level: NoticeLevel::Warn,
+                    message: format!(
+                        "budget.max_usd_per_turn is set to {limit:.2}, but this provider \
+                         reports no prices for `{}` — nothing measures spend here, so the \
+                         cap cannot trip",
+                        self.cfg.model
+                    ),
+                },
+            );
+        }
+
         // The one silent data-loss path in the projection: a model that differs
         // from the one that minted the transcript drops every reasoning block.
         if self.cfg.model != self.session.model() {
@@ -343,6 +377,9 @@ impl Agent {
     /// One user turn. Every exit path emits exactly one `TurnEnded`.
     pub async fn run_turn(&mut self, input: String, cancel: CancellationToken) -> TurnOutcome {
         let turn = TurnId::generate();
+        // A refusal is a fact about this turn, not about the session: a new
+        // prompt may legitimately be about the file the last one was refused.
+        self.denied_this_turn.clear();
         let user_item = self.session.push_user(&input);
         self.recorder.append_item(&user_item);
         self.emit(Some(turn), EventKind::TurnStarted);
@@ -374,6 +411,10 @@ impl Agent {
                     Err(TurnBreak::Fatal(m)) => break 'turn TurnOutcome::Failed { message: m },
                 };
                 usage.add(&sampled.usage);
+                // Per step, cumulative. A caller could otherwise not notice a
+                // turn running away until the one event that reports it — the
+                // last one — and by then it has been paid for.
+                self.emit(Some(turn), EventKind::Usage(usage));
 
                 if let Some(outcome) = self.check_budget(&usage) {
                     break 'turn outcome;
@@ -389,9 +430,11 @@ impl Agent {
                 // Append the full assistant content — reasoning included,
                 // verbatim — before anything executes. It is wire state and must
                 // be echoed back unchanged on the next request.
-                for block in &sampled.blocks {
-                    let item = self.session.push(block.clone());
-                    self.recorder.append_item(&item);
+                for item in &sampled.blocks {
+                    // The same id the stream used, so one call has one identity
+                    // from `item_started` to its terminal status.
+                    self.session.push_item(item.clone());
+                    self.recorder.append_item(item);
                 }
 
                 let calls = sampled.tool_calls();
@@ -424,6 +467,7 @@ impl Agent {
             EventKind::TurnEnded {
                 outcome: outcome.clone(),
                 usage,
+                cost_usd,
                 files_changed,
             },
         );
@@ -500,6 +544,18 @@ impl Agent {
         req.effort = self.cfg.effort;
         req.reasoning = self.cfg.reasoning;
         req
+    }
+
+    /// A spend cap that nothing can measure is not a cap.
+    ///
+    /// The unpriced providers report zero for every token, so `cost_usd` is
+    /// always `0.0` and the comparison can never be true. Silently inert is the
+    /// worst outcome for a guardrail: the user believes they set one.
+    fn budget_is_inert(&self) -> bool {
+        self.cfg.max_usd_per_turn.is_some() && {
+            let info = self.provider.model_info(&self.cfg.model);
+            info.input_price == 0.0 && info.output_price == 0.0
+        }
     }
 
     fn check_budget(&self, usage: &Usage) -> Option<TurnOutcome> {
@@ -703,12 +759,9 @@ impl Agent {
                             }
                         }
                     };
-                    let item = Item {
-                        id,
-                        body: body.clone(),
-                    };
-                    self.emit(Some(turn), EventKind::ItemCompleted { item });
-                    sampled.blocks.push(body);
+                    let item = Item { id, body };
+                    self.emit(Some(turn), EventKind::ItemCompleted { item: item.clone() });
+                    sampled.blocks.push(item);
                 }
                 // Cumulative per message, so take the maximum rather than
                 // summing: message_start and message_delta both report the
@@ -753,6 +806,18 @@ impl Agent {
                 continue;
             };
 
+            if let Err(e) =
+                crate::tool::reject_unknown_arguments(&input, tool.schema(), tool.name())
+            {
+                planned.push(Planned::Resolved(
+                    call_id,
+                    ToolStatus::Failed {
+                        message: e.to_string(),
+                    },
+                ));
+                continue;
+            }
+
             let cx = self.tool_cx(cancel.child_token());
             let plan = match tool.plan(&input, &cx).await {
                 Ok(plan) => plan,
@@ -771,9 +836,29 @@ impl Agent {
 
             self.record_plan(turn, &call_id, &plan);
 
+            // Already refused this turn: answer from the record rather than
+            // asking again. Repeating the first message invites the model to
+            // read the refusal as transient and try once more, and an
+            // interactive approver should not be asked the same question twice.
+            if self.denied_this_turn.contains(&plan.subject) {
+                let subject = plan.subject.clone();
+                planned.push(Planned::Resolved(
+                    call_id,
+                    ToolStatus::Denied {
+                        message: format!(
+                            "`{subject}` was already refused earlier in this turn and the \
+                             answer has not changed. Stop retrying it and report what you \
+                             could not do."
+                        ),
+                    },
+                ));
+                continue;
+            }
+
             match self.policy.evaluate(&plan) {
                 Verdict::Allow => planned.push(Planned::Run(call_id, tool, plan)),
                 Verdict::Deny(reason) => {
+                    self.denied_this_turn.insert(plan.subject.clone());
                     planned.push(Planned::Resolved(
                         call_id,
                         ToolStatus::Denied { message: reason },
@@ -818,17 +903,24 @@ impl Agent {
                         Decision::Allow => planned.push(Planned::Run(call_id, tool, plan)),
                         Decision::AllowSession => {
                             self.policy.grant(&plan.subject);
+                            // A grant is the one thing that changes a previous
+                            // no, so the memo of refusals stops being valid.
+                            self.denied_this_turn.clear();
                             planned.push(Planned::Run(call_id, tool, plan));
                         }
-                        Decision::Deny { feedback } => planned.push(Planned::Resolved(
-                            call_id,
-                            ToolStatus::Denied {
-                                // The feedback becomes what the model reads, so
-                                // "no, use the existing helper" steers rather
-                                // than dead-ends.
-                                message: feedback.unwrap_or_else(|| "denied by the user".into()),
-                            },
-                        )),
+                        Decision::Deny { feedback } => {
+                            self.denied_this_turn.insert(plan.subject.clone());
+                            planned.push(Planned::Resolved(
+                                call_id,
+                                ToolStatus::Denied {
+                                    // The feedback becomes what the model reads,
+                                    // so "no, use the existing helper" steers
+                                    // rather than dead-ends.
+                                    message: feedback
+                                        .unwrap_or_else(|| "denied by the user".into()),
+                                },
+                            ));
+                        }
                     }
                 }
             }

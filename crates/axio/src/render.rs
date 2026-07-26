@@ -361,6 +361,7 @@ mod tests {
         event(EventKind::TurnEnded {
             outcome,
             usage: Usage::default(),
+            cost_usd: 0.0,
             files_changed: vec![],
         })
     }
@@ -559,6 +560,7 @@ mod tests {
             &[event(EventKind::TurnEnded {
                 outcome: TurnOutcome::Completed,
                 usage: Usage::default(),
+                cost_usd: 0.0,
                 files_changed: vec!["reorder.py".into()],
             })],
             Style::PLAIN,

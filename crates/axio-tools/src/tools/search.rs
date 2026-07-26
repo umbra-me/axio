@@ -18,6 +18,32 @@ const MAX_RESULTS: usize = 500;
 
 // ---------------------------------------------------------------- glob
 
+/// Refuse a pattern that points outside the workspace, the way `read` does.
+///
+/// The walker is always rooted at the workspace, so an escaping pattern used to
+/// come back as a clean "no matches" — a factual-sounding claim the model
+/// believes, so it keeps searching instead of changing approach. A false
+/// negative costs more than an error, and the two file tools disagreeing about
+/// how an out-of-workspace path is reported is its own bug.
+fn reject_escaping(pattern: &str) -> Result<(), ToolError> {
+    let looks_absolute = pattern.starts_with('/')
+        || pattern.starts_with('\\')
+        || (pattern.len() >= 2
+            && pattern.as_bytes()[1] == b':'
+            && pattern.as_bytes()[0].is_ascii_alphabetic());
+    if looks_absolute {
+        return Err(ToolError::BadInput(format!(
+            "pattern must be relative to the workspace root: {pattern}"
+        )));
+    }
+    if pattern.split(['/', '\\']).any(|c| c == "..") {
+        return Err(ToolError::BadInput(format!(
+            "pattern escapes the workspace root: {pattern}"
+        )));
+    }
+    Ok(())
+}
+
 pub struct GlobTool {
     schema: Value,
 }
@@ -64,6 +90,7 @@ impl Tool for GlobTool {
 
     async fn plan(&self, args: &Value, _cx: &ToolCx) -> Result<Plan, ToolError> {
         let pattern = schema::str_arg(args, "pattern")?;
+        reject_escaping(pattern)?;
         // Compile now so a bad pattern is a planning error rather than an empty
         // result the model reads as "no matches".
         GlobBuilder::new(pattern)
@@ -195,6 +222,9 @@ impl Tool for Grep {
     async fn plan(&self, args: &Value, _cx: &ToolCx) -> Result<Plan, ToolError> {
         let pattern = schema::str_arg(args, "pattern")?;
         let glob = schema::opt_str_arg(args, "glob").map(str::to_owned);
+        if let Some(g) = glob.as_deref() {
+            reject_escaping(g)?;
+        }
 
         Ok(Plan::new(format!("grep:{pattern}"), Effects::READ_ONLY)
             .with_preview(Preview::Text {

@@ -363,6 +363,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn explain(resolved: &Resolved, key: &str) -> u8 {
+    print_notices(resolved);
     match resolved.explain(key) {
         Some(layer) => {
             println!("{key} came from {}", layer.describe());
@@ -379,6 +380,28 @@ fn explain(resolved: &Resolved, key: &str) -> u8 {
     }
 }
 
+/// A readable age from a unix timestamp in seconds.
+///
+/// Nobody reads unix seconds, and this listing is the only way to find the id
+/// `--resume` wants — with several sessions from one project the label repeats
+/// and the timestamp is the sole disambiguator.
+fn age(started: &str) -> String {
+    let Ok(then) = started.parse::<u64>() else {
+        return started.to_owned();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(then);
+    let secs = now.saturating_sub(then);
+    match secs {
+        0..=59 => "just now".to_owned(),
+        60..=3_599 => format!("{}m ago", secs / 60),
+        3_600..=86_399 => format!("{}h ago", secs / 3_600),
+        _ => format!("{}d ago", secs / 86_400),
+    }
+}
+
 fn list_sessions() -> u8 {
     let store = SessionStore::new(state_dir().join("sessions"));
     let files = store.files();
@@ -392,11 +415,20 @@ fn list_sessions() -> u8 {
         match record::read_header(path) {
             Ok(h) => {
                 let label = h.label.as_deref().unwrap_or("");
+                // The directory too: with sessions from several projects in one
+                // state directory, the label is otherwise the only disambiguator
+                // and labels repeat.
+                let project = h
+                    .cwd
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 println!(
-                    "{}  {}  {}  {}",
+                    "{}  {:>9}  {:<14}  {:<16}  {}",
                     &h.id.to_string()[..8],
-                    h.started,
+                    age(&h.started),
                     h.model,
+                    project,
                     label
                 );
             }
@@ -712,8 +744,8 @@ fn auth_command(action: &AuthAction) -> u8 {
             let rows = auth::status(auth::PROVIDERS, &home, &env);
             for (provider, source) in rows {
                 match source {
-                    Some(source) => println!("{provider:<12} {}", source.describe()),
-                    None => println!("{provider:<12} not configured"),
+                    Some(source) => println!("{provider:<18}  {}", source.describe()),
+                    None => println!("{provider:<18}  not configured"),
                 }
             }
             println!();
@@ -788,16 +820,45 @@ fn system_prompt(cwd: &std::path::Path) -> String {
          Keep responses focused, brief, and concise. Lead with the outcome, then the detail.\n\
          Deliver what was asked at the scope intended: make routine judgement calls yourself, \
          and check in only when different readings would lead to materially different work.\n\
-         You are operating in a single turn; the user cannot answer questions mid-task.",
+         You are operating in a single turn; the user cannot answer questions mid-task.\n\n\
+         Some actions require approval. If one is refused, that decision is final for this \
+         run: do not retry it and do not invent an argument to bypass it. Never state that \
+         work was done when the call that would have done it was refused or failed — say \
+         plainly what you could not do and why.",
         cwd.display(),
         std::env::consts::OS,
     )
+}
+
+/// The prices the configured provider would actually charge against.
+///
+/// Read without constructing a provider, so `--doctor` still touches no
+/// credential and opens no socket.
+fn provider_prices(cfg: &axio_core::config::Config) -> Option<axio_core::provider::ModelInfo> {
+    match cfg.model.provider.as_str() {
+        "anthropic" => Some(axio_provider::anthropic::model_info(&cfg.model.name)),
+        "ollama" | "openai-compatible" => Some(axio_provider::openai::model_info(&cfg.model.name)),
+        _ => None,
+    }
+}
+
+/// Everything the config loader complained about, on stderr.
+///
+/// The local modes return before any event stream exists, so a notice replayed
+/// through `announce` never reaches them — which left `--doctor` and
+/// `--explain`, whose whole job is explaining the configuration, as the two
+/// surfaces that hid a rejected `[permissions] allow` or a discarded section.
+fn print_notices(resolved: &Resolved) {
+    for notice in resolved.notices() {
+        eprintln!("axio: {}", notice.message);
+    }
 }
 
 /// What axio can see, so a misconfiguration is one command away from obvious.
 fn doctor(resolved: &Resolved) -> u8 {
     let mut out = std::io::stdout();
     let cfg = resolved.config();
+    print_notices(resolved);
     let _ = writeln!(out, "axio {VERSION}");
     let _ = writeln!(out);
 
@@ -810,10 +871,10 @@ fn doctor(resolved: &Resolved) -> u8 {
     {
         match source {
             Some(source) => {
-                let _ = writeln!(out, "  {provider:<10}          {}", source.describe());
+                let _ = writeln!(out, "  {provider:<18}  {}", source.describe());
             }
             None => {
-                let _ = writeln!(out, "  {provider:<10}          not configured");
+                let _ = writeln!(out, "  {provider:<18}  not configured");
             }
         }
     }
@@ -830,14 +891,69 @@ fn doctor(resolved: &Resolved) -> u8 {
     let _ = writeln!(out, "  effort              {}", cfg.model.effort.as_wire());
     let _ = writeln!(out, "  max_tokens          {}", cfg.model.max_tokens);
     let _ = writeln!(out, "  max_steps           {}", cfg.budget.max_steps);
+    // The endpoint a stale shell export points at is exactly the misconfiguration
+    // this command exists to make obvious, and it was the one field not shown.
+    let _ = writeln!(
+        out,
+        "  base_url            {}",
+        cfg.model
+            .base_url
+            .as_deref()
+            .unwrap_or("(provider default)")
+    );
+    match cfg.budget.max_usd_per_turn {
+        Some(limit) => {
+            let _ = writeln!(out, "  max_usd_per_turn    {limit:.2}");
+        }
+        None => {
+            let _ = writeln!(out, "  max_usd_per_turn    (none)");
+        }
+    }
     let _ = writeln!(out);
 
-    // Printed because a stale price table is otherwise invisible until the bill.
-    let _ = writeln!(out, "assumed prices (USD per million tokens)");
-    let _ = writeln!(out, "  input               5.00");
-    let _ = writeln!(out, "  output              25.00");
-    let _ = writeln!(out, "  cache read          0.50");
-    let _ = writeln!(out, "  cache write         6.25");
+    // From the provider that will actually be used, never a literal. A table
+    // printed "because a stale price table is invisible until the bill" is worse
+    // than nothing when it is a different provider's table — which is what a
+    // hardcoded one becomes the moment a second provider exists.
+    let prices = provider_prices(cfg);
+    match prices {
+        Some(info) if info.input_price > 0.0 || info.output_price > 0.0 => {
+            let _ = writeln!(out, "prices (USD per million tokens)");
+            let _ = writeln!(out, "  input               {:.2}", info.input_price);
+            let _ = writeln!(out, "  output              {:.2}", info.output_price);
+            let _ = writeln!(out, "  cache read          {:.2}", info.cache_read_price);
+            let _ = writeln!(out, "  cache write         {:.2}", info.cache_write_price);
+        }
+        Some(_) => {
+            let _ = writeln!(out, "prices");
+            let _ = writeln!(
+                out,
+                "  this provider reports no prices, so recorded cost is always 0.00"
+            );
+            if cfg.budget.max_usd_per_turn.is_some() {
+                let _ = writeln!(
+                    out,
+                    "  max_usd_per_turn is set but cannot trip — nothing measures spend here"
+                );
+            }
+        }
+        None => {
+            let _ = writeln!(out, "prices");
+            let _ = writeln!(out, "  unknown: the provider could not be constructed");
+        }
+    }
+    let _ = writeln!(out);
+
+    let _ = writeln!(out, "permissions");
+    if cfg.permissions.allow.is_empty() && cfg.permissions.deny.is_empty() {
+        let _ = writeln!(out, "  (no rules; the built-in deny list still applies)");
+    }
+    for rule in &cfg.permissions.deny {
+        let _ = writeln!(out, "  deny                {rule}");
+    }
+    for rule in &cfg.permissions.allow {
+        let _ = writeln!(out, "  allow               {rule}");
+    }
     let _ = writeln!(out);
 
     let _ = writeln!(out, "paths");

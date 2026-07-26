@@ -155,19 +155,36 @@ pub fn finish(
         None => None,
     };
 
-    let marker = match &spill {
-        Some(path) => format!(
-            "\n\n[{} bytes omitted from the middle. The complete output is at {} — \
-             read it with an offset if you need the rest.]\n\n",
-            capped.dropped,
-            path.display()
-        ),
-        None => format!("\n\n[{} bytes omitted from the middle]\n\n", capped.dropped),
-    };
-
     // Re-split so the marker sits where the cut was, rather than at the end.
     let half = capped.text.len() / 2;
     let split = floor_char_boundary(&capped.text, half);
+
+    // In lines, because `read`'s offset is a line number. A byte count cannot
+    // be turned into one, so the model's only safe move was `offset: 1` — which
+    // re-injects the head it already had, doubling the transcript at exactly the
+    // moment the output was declared too big.
+    let head_lines = capped.text[..split].lines().count();
+    let tail_lines = capped.text[split..].lines().count();
+    let total_lines = clean.lines().count();
+    let resume_at = head_lines + 1;
+    let omitted_lines = total_lines.saturating_sub(head_lines + tail_lines);
+
+    let marker = match &spill {
+        Some(path) => format!(
+            "\n\n[{} lines ({} bytes) omitted from the middle. The complete output is \
+             {} lines and is at {} — read it with offset {} to continue from here.]\n\n",
+            omitted_lines,
+            capped.dropped,
+            total_lines,
+            path.display(),
+            resume_at
+        ),
+        None => format!(
+            "\n\n[{omitted_lines} lines ({} bytes) omitted from the middle]\n\n",
+            capped.dropped
+        ),
+    };
+
     let content = format!(
         "{}{}{}",
         &capped.text[..split],

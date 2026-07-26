@@ -263,6 +263,10 @@ pub fn find_project_config(start: &Path, boundary: Option<&Path>) -> Option<Path
     None
 }
 
+/// Keys whose type is `Option`, and which serde therefore omits from a
+/// serialised default. Listed so `--explain` knows they exist.
+const OPTIONAL_KEYS: &[&str] = &["model.base_url", "budget.max_usd_per_turn"];
+
 /// Resolve every layer into one configuration.
 pub fn resolve(paths: &Paths, env: &[(String, String)], flags: &Flags) -> Resolved {
     let mut notices = Vec::new();
@@ -275,6 +279,19 @@ pub fn resolve(paths: &Paths, env: &[(String, String)], flags: &Flags) -> Resolv
     let defaults = to_table(&Config::default());
     record(&mut provenance, &defaults, &Layer::Default, "");
     merge(&mut merged, &defaults);
+
+    // An `Option` field defaulting to `None` is omitted by serde, so seeding
+    // provenance from a serialised default left `model.base_url` and
+    // `budget.max_usd_per_turn` with no entry at all — and `--explain` then
+    // reported the two keys a confused user is most likely to ask about
+    // ("where is this endpoint coming from?", "did my spend cap take effect?")
+    // as not existing, with an authoritative-looking list of known keys that
+    // omitted them.
+    for key in OPTIONAL_KEYS {
+        provenance
+            .entry((*key).to_owned())
+            .or_insert(Layer::Default);
+    }
 
     let file_layers: Vec<(PathBuf, Layer)> = [
         paths
@@ -469,7 +486,32 @@ fn section_is_valid(name: &str, value: &toml::Value) -> bool {
 }
 
 /// Copy a file aside before its broken sections are ignored.
+///
+/// Once per *content*, not once per load. axio never repairs the file, so the
+/// "something was lost" condition stays true forever — and a time-stamped name
+/// meant every subsequent invocation, including the report-and-exit modes,
+/// dropped another identical copy into the user's `.axio/` directory.
 fn backup(path: &Path, notices: &mut Vec<Notice>) {
+    let Ok(current) = std::fs::read(path) else {
+        return;
+    };
+    if let Some(dir) = path.parent()
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let prefix = format!("{stem}.corrupt-");
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix)
+                && std::fs::read(entry.path()).is_ok_and(|prior| prior == current)
+            {
+                // This exact content is already preserved, which was the point.
+                return;
+            }
+        }
+    }
+
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

@@ -91,6 +91,11 @@ pub enum EventKind {
     TurnEnded {
         outcome: TurnOutcome,
         usage: Usage,
+        /// What the turn cost, matching the session record.
+        ///
+        /// A `--json` consumer could not see spend at all without parsing the
+        /// session file, which is not a contract it has.
+        cost_usd: f64,
         files_changed: Vec<PathBuf>,
     },
 }
@@ -303,9 +308,16 @@ pub enum Preview {
     },
     /// Structured, not a shell string — the permission engine matches on
     /// `program`, so a compound command cannot pass as a simple one.
+    ///
+    /// `raw` is what the shell is actually handed, and an approval surface must
+    /// show it. The word split is lossy in exactly the direction that matters:
+    /// `cat <<'EOF' > greet.py` lexes to a `cat` with some arguments, so the
+    /// redirect target reads as an operand and the heredoc disappears — a
+    /// reviewer sees something harmless and approves a write.
     Command {
         program: String,
         argv: Vec<String>,
+        raw: String,
         cwd: PathBuf,
     },
     Text {
@@ -513,6 +525,7 @@ mod tests {
             EventKind::TurnEnded {
                 outcome: TurnOutcome::Completed,
                 usage: Usage::default(),
+                cost_usd: 0.0,
                 files_changed: vec![],
             },
         ];

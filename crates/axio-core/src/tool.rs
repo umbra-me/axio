@@ -410,6 +410,54 @@ fn deepest_existing(path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Reject arguments a tool's schema does not declare.
+///
+/// Every schema says `additionalProperties: false`, and nothing enforced it. A
+/// model that invents a parameter — `{"command": "...", "yes": true}`, a
+/// self-approval argument it hoped existed — planned and ran without
+/// contradiction, and went on sending it for the rest of the session. A
+/// declared contract nobody checks cannot correct a misunderstanding; one
+/// error ends it.
+///
+/// Applied in the loop rather than in each tool, for the same reason output
+/// capping is: a new tool inherits it without knowing it exists.
+pub fn reject_unknown_arguments(
+    args: &serde_json::Value,
+    schema: &serde_json::Value,
+    tool: &str,
+) -> Result<(), ToolError> {
+    let (Some(given), Some(declared)) = (
+        args.as_object(),
+        schema.get("properties").and_then(|p| p.as_object()),
+    ) else {
+        return Ok(());
+    };
+
+    let unknown: Vec<&str> = given
+        .keys()
+        .filter(|k| !declared.contains_key(*k))
+        .map(String::as_str)
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+
+    Err(ToolError::BadInput(format!(
+        "unknown argument{} {} — `{tool}` takes {}",
+        if unknown.len() == 1 { "" } else { "s" },
+        unknown
+            .iter()
+            .map(|k| format!("`{k}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        declared
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
     #[error("invalid arguments: {0}")]
@@ -501,6 +549,34 @@ mod tests {
         assert!(ws.resolve_readable(&escape).is_err());
         // And a write, which does not go through this door, is refused too.
         assert!(ws.resolve(&named.display().to_string()).is_err());
+    }
+
+    /// Regression. Every schema says `additionalProperties: false` and nothing
+    /// checked it, so a model that invented `"yes": true` — hoping for a
+    /// self-approval argument — was never contradicted and kept sending it.
+    #[test]
+    fn an_argument_the_schema_does_not_declare_is_refused_by_name() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "command": {}, "timeout_secs": {} },
+        });
+        let err = reject_unknown_arguments(
+            &serde_json::json!({"command": "ls", "yes": true}),
+            &schema,
+            "bash",
+        )
+        .unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("`yes`"), "{text}");
+        assert!(
+            text.contains("command"),
+            "it must say what is allowed: {text}"
+        );
+
+        assert!(
+            reject_unknown_arguments(&serde_json::json!({"command": "ls"}), &schema, "bash")
+                .is_ok()
+        );
     }
 
     #[test]

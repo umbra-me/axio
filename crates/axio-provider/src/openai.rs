@@ -26,6 +26,7 @@ use axio_core::redact::{Redacted, register_secret};
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
+use crate::client::transport_error;
 use crate::sse::SseDecoder;
 
 /// Ollama's hosted endpoint. Any other host speaking the same dialect works
@@ -65,6 +66,20 @@ impl OpenAiProvider {
 
     pub fn ollama(api_key: impl Into<String>) -> Result<Self, ProviderError> {
         Self::new(api_key, OLLAMA_BASE, "ollama")
+    }
+}
+
+/// Unknown and unpriced. Reporting zero is honest: a made-up price would make
+/// the budget check silently wrong rather than visibly absent. `--doctor` says
+/// so out loud rather than printing another provider's table.
+pub fn model_info(_model: &str) -> ModelInfo {
+    ModelInfo {
+        context_window: 128_000,
+        max_output_tokens: 32_000,
+        input_price: 0.0,
+        output_price: 0.0,
+        cache_read_price: 0.0,
+        cache_write_price: 0.0,
     }
 }
 
@@ -357,17 +372,8 @@ impl Provider for OpenAiProvider {
         &self.id
     }
 
-    fn model_info(&self, _model: &str) -> ModelInfo {
-        // Unknown and unpriced. Reporting zero is honest: a made-up price would
-        // make the budget check silently wrong rather than visibly absent.
-        ModelInfo {
-            context_window: 128_000,
-            max_output_tokens: 32_000,
-            input_price: 0.0,
-            output_price: 0.0,
-            cache_read_price: 0.0,
-            cache_write_price: 0.0,
-        }
+    fn model_info(&self, model: &str) -> ModelInfo {
+        model_info(model)
     }
 
     async fn stream(
@@ -389,7 +395,7 @@ impl Provider for OpenAiProvider {
                 .bearer_auth(&self.api_key)
                 .header("content-type", "application/json")
                 .json(&body)
-                .send() => r.map_err(|e| ProviderError::Transport(Redacted::new(e.to_string())))?,
+                .send() => r.map_err(|e| transport_error(e, &self.base_url))?,
         };
 
         let status = response.status().as_u16();
