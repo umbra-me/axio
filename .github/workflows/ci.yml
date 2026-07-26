@@ -39,8 +39,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
-      - name: Headless build
-        run: cargo build -p axio --no-default-features
+      - name: Feature combinations
+        run: bash scripts/features.sh
       - name: Core dependency isolation
         if: runner.os == 'Linux'
         run: bash scripts/deps.sh

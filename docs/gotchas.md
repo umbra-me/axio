@@ -231,6 +231,12 @@ could not be read". Enabling `scrolling-regions` removes the query. The failure
 needs a real terminal to appear at all, which is why it was found by driving the
 binary through a pty rather than by any test in the suite.
 
+**A feature that is off is a different compilation.** A field only the
+interactive surface reads is dead code in the headless build — a warning, which
+CI turns into an error with `RUSTFLAGS: -D warnings` and a plain local build
+does not. `scripts/features.sh` builds both sets with CI's flag, because the gap
+was exactly one flag wide and it cost a red build.
+
 **A key event fires on release too, on Windows.** Filtering to
 `KeyEventKind::Press` is the difference between one character and two.
 

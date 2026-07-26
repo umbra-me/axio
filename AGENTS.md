@@ -7,7 +7,7 @@ cargo test --workspace                              # everything
 cargo test -p axio-core                             # the loop, against fakes; must stay under 2s
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
-cargo build -p axio --no-default-features           # the headless path must not rot
+bash scripts/features.sh                            # both feature sets, with CI's -D warnings
 
 bash scripts/firewall.sh                            # naming firewall (also a pre-commit hook)
 bash scripts/limits.sh                              # workspace members, ToolCx fields, LOC

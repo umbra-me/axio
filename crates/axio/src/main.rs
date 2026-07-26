@@ -172,6 +172,9 @@ struct Prepared {
     events: tokio::sync::mpsc::UnboundedReceiver<axio_core::protocol::Event>,
     notices: Vec<Notice>,
     resumed: bool,
+    /// Shown in the interactive banner. The headless build has no banner, and
+    /// CI compiles it with `-D warnings`.
+    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     model: String,
 }
 
