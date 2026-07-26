@@ -10,9 +10,10 @@ read-only.
 
 ## Status
 
-Early, but it works: the turn loop, the provider transport, the one-shot CLI,
-all six tools, sessions on disk, and layered configuration. It can read, search,
-edit and run commands in a workspace, and pick up where it left off.
+Early, but it works — and is verified end to end against a live model: the turn
+loop, the provider transport, the one-shot CLI, all six tools, sessions on disk,
+and layered configuration. It can read, search, edit and run commands in a
+workspace, and pick up where it left off.
 
 Writes and shell commands ask before they happen; reads do not.
 

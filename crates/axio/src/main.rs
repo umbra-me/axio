@@ -584,7 +584,20 @@ fn auth_command(action: &AuthAction) -> u8 {
             }
             let secret = Secret::new(input.trim());
             if secret.is_empty() {
-                eprintln!("axio: no credential given; nothing was stored");
+                // Distinguish "you pressed enter" from "there was never a way
+                // to type anything". The second happens whenever stdin is
+                // /dev/null — a CI step, a task runner, an editor's terminal —
+                // and the advice is completely different.
+                if input.is_empty() && !std::io::stdin().is_terminal() {
+                    eprintln!(
+                        "axio: stdin is empty, so there was nothing to read.\n\n\
+                         Pipe the credential in:\n    \
+                         axio auth login --provider {provider} < key.txt\n\n\
+                         Or run this from an interactive terminal to be prompted."
+                    );
+                } else {
+                    eprintln!("axio: no credential given; nothing was stored");
+                }
                 return 1;
             }
 

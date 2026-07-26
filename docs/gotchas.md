@@ -171,6 +171,11 @@ them double-counts the input tokens. The only symptom is the invoice.
 
 ## Credentials
 
+**An empty stdin and an empty answer are different failures.** A credential
+prompt reading from `/dev/null` — a CI step, a task runner, an editor's
+terminal — gets EOF, not a blank line, and the advice for each is completely
+different. Found by running the command, not by testing it.
+
 **A credential must never be a command-line argument.** argv is visible in `ps`
 to every user on the machine, and lands in shell history besides. `auth login`
 reads stdin.
