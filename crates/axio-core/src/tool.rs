@@ -239,12 +239,24 @@ impl Workspace {
 
     /// Let reads reach one directory outside the root. Reads only — `resolve`,
     /// which every write goes through, is untouched.
+    ///
+    /// Both spellings of the directory are kept. The path the model is given
+    /// comes from the truncation marker, which prints the directory as
+    /// configured, while `canonicalize` returns the real one — and on macOS
+    /// those differ (`/var` is a symlink to `/private/var`, and the state
+    /// directory lives under the temp directory), as they do on Windows, where
+    /// canonicalising adds a `\\?\` prefix. Matching only the canonical form
+    /// refuses the exact path axio itself just told the model to read.
     pub fn with_readable(mut self, dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
         // It may not exist yet; the lexical prefix check is what matters, and
         // opening a path that is not there fails on its own terms.
-        self.readable
-            .push(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        if let Ok(real) = dir.canonicalize()
+            && real != dir
+        {
+            self.readable.push(real);
+        }
+        self.readable.push(dir.to_path_buf());
         self
     }
 
@@ -468,11 +480,19 @@ mod tests {
         std::fs::write(spill.path().join("out.txt"), "the rest").unwrap();
         let ws = ws.with_readable(spill.path());
 
+        // Both spellings, because they differ on macOS and on Windows and the
+        // one the model is handed is the uncanonicalised one.
+        for base in [
+            spill.path().to_path_buf(),
+            spill.path().canonicalize().unwrap(),
+        ] {
+            let named = base.join("out.txt");
+            let resolved = ws
+                .resolve_readable(&named.display().to_string())
+                .unwrap_or_else(|e| panic!("{} is not reachable: {e}", named.display()));
+            assert_eq!(std::fs::read_to_string(resolved).unwrap(), "the rest");
+        }
         let named = spill.path().join("out.txt");
-        let resolved = ws
-            .resolve_readable(&named.display().to_string())
-            .expect("the spill file is reachable");
-        assert_eq!(std::fs::read_to_string(resolved).unwrap(), "the rest");
 
         // Everything else absolute is still refused, and the prefix cannot be
         // walked back out of.
