@@ -10,8 +10,11 @@ read-only.
 
 ## Status
 
-Early. The turn loop, the provider transport and the one-shot CLI work; the
-tools do not exist yet, so it can talk but not act.
+Early, but it works: the turn loop, the provider transport, the one-shot CLI and
+all six tools. It can read, search, edit and run commands in a workspace.
+
+Writes and shell commands ask before they happen; reads do not. There is no
+session persistence or configuration file yet.
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -19,6 +22,10 @@ cargo run -p axio -- -p "explain this repo"
 cat src/lib.rs | cargo run -p axio -- -p "review this"
 cargo run -p axio -- --doctor       # what axio can currently see
 ```
+
+Actions that change something ask first. `--yes` approves everything without
+asking — unattended and unsandboxed, so read [`SECURITY.md`](SECURITY.md) before
+reaching for it.
 
 `--json` emits the event stream as one object per line. It is unstable and
 carries a `protocol` version so a consumer can refuse a stream it does not

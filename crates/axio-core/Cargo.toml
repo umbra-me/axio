@@ -25,4 +25,5 @@ tracing.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

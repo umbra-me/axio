@@ -153,3 +153,39 @@ fn output_is_free_of_escape_bytes_when_stdout_is_not_a_terminal() {
     assert!(!out.stdout.contains(&0x1b), "stdout carried an escape byte");
     assert!(!out.stderr.contains(&0x1b), "stderr carried an escape byte");
 }
+
+/// Regression, and an M3 gate. With no terminal to ask and no `--yes`, an action
+/// needing approval must be refused *promptly*. The failure mode being guarded
+/// against is a hang: a process waiting forever for an answer nobody can give.
+/// Only a timed assertion catches that, which is why this is a wall-clock test.
+#[test]
+fn without_a_terminal_and_without_yes_it_refuses_rather_than_waiting() {
+    let started = Instant::now();
+    let out = axio()
+        .args(["-p", "write a file"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "axio waited {:?} for an approval nobody could give",
+        started.elapsed()
+    );
+    // It gets as far as the credential check, which is the point: it did not
+    // block before reaching it.
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn the_yes_flag_announces_itself() {
+    // An unattended, unsandboxed mode should never be silent about it.
+    let out = axio()
+        .args(["--yes", "-p", "hi"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--yes is on"), "{err}");
+    assert!(err.contains("no sandbox"), "{err}");
+}

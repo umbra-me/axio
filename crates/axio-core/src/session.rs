@@ -91,6 +91,54 @@ impl Session {
         None
     }
 
+    /// Record what planning produced, before anything runs.
+    ///
+    /// The subject is what the permission engine matched on and the preview is
+    /// what a human was shown, so both belong in the durable record: they are
+    /// the evidence for why a call was allowed.
+    pub fn set_tool_plan(
+        &mut self,
+        call_id: &str,
+        subject: &str,
+        preview: Option<crate::protocol::Preview>,
+    ) -> Option<Item> {
+        for item in self.transcript.iter_mut().rev() {
+            if let ItemBody::ToolCall {
+                call_id: id,
+                subject: s,
+                preview: p,
+                ..
+            } = &mut item.body
+                && id == call_id
+            {
+                *s = subject.to_owned();
+                *p = preview;
+                return Some(item.clone());
+            }
+        }
+        None
+    }
+
+    /// Calls with no terminal status.
+    ///
+    /// A call left pending would be sent with a synthesised "interrupted"
+    /// result, which is correct but uninformative; the loop uses this to give
+    /// anything it lost track of an explicit answer instead.
+    pub fn unfinished_calls(&self) -> Vec<String> {
+        self.transcript
+            .iter()
+            .filter_map(|item| match &item.body {
+                ItemBody::ToolCall {
+                    call_id,
+                    status:
+                        ToolStatus::Pending | ToolStatus::AwaitingApproval | ToolStatus::Running,
+                    ..
+                } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn record_file_changed(&mut self, path: PathBuf) {
         if !self.files_changed.contains(&path) {
             self.files_changed.push(path);

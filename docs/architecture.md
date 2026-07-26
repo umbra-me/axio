@@ -26,8 +26,8 @@ Four crates and one binary, in a tree rooted at a dependency-free core.
                    │ impl Provider             │ impl Tool
         ┌──────────┴───────────┐   ┌───────────┴──────────────────┐
         │ axio-provider        │   │ axio-tools                   │
-        │  Messages transport  │   │  the six tools (not yet built)│
-        │  SSE decoder         │   │  subprocess · truncation      │
+        │  Messages transport  │   │  read write edit             │
+        │  SSE decoder         │   │  glob grep bash · subprocess  │
         └──────────────────────┘   └───────────────────────────────┘
 ```
 
@@ -126,9 +126,44 @@ Exit codes follow the shell convention: `130` for an interrupt, `143` for
 termination, `129` for a hangup. A signal's code outranks the turn's outcome —
 the caller asked the process to stop, and the shell reports how.
 
+## Permission and execution
+
+Every decision is made against a plan's **subject** — a canonical string like
+`read:src/lib.rs` or `bash:git` — never against a tool's name or its raw
+arguments. That indirection is what makes `deny read:*.env` expressible, and
+what stops a shell command being classified by a string its own arguments can
+shape.
+
+Evaluation is ordered, and the order is the design:
+
+1. **Built-in deny.** Credentials, keys, `.ssh`, git hooks. Not overridable by a
+   user rule and not by `--yes`, because it protects things no preference should
+   be able to expose by accident.
+2. **User deny rules.**
+3. **Read-only effects** — auto-approved. This only works *after* the denies
+   have had their say; put it first and no rule can protect a secret file.
+4. **User allow rules.**
+5. **Session grants** from an earlier approval. Memory only: an approval is a
+   decision about a moment, not a configuration change.
+6. **Ask**, or the unattended answer.
+
+The rule language is `*` and `?` and nothing else. A richer one is a rule
+language nobody can predict, and the point of a deny rule is that its author is
+certain what it covers.
+
+Dispatch runs in two phases. Everything is planned and authorised first, in call
+order, before anything executes — so a batch containing one refused call does
+not half-run. Then read-only calls execute concurrently while everything else
+runs serially in call order, because `write(a.rs)` and `edit(a.rs)` in one batch
+must not race.
+
+Output is capped and spilled at one choke point in the loop rather than in each
+tool. A tool that forgot would put ten megabytes in the next request and nothing
+would error; doing it once means a new tool inherits the behaviour without
+knowing it exists.
+
 ## What is not built yet
 
-`axio-tools` is a stub and the interactive surface prints a pointer to the
-one-shot form. Session persistence, layered configuration, compaction and the
-permission engine have their shapes reserved in the types but no implementation.
-See `docs/roadmap.md`.
+The interactive surface prints a pointer to the one-shot form. Session
+persistence, layered configuration and compaction have their shapes reserved in
+the types but no implementation. See `docs/roadmap.md`.

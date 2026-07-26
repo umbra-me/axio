@@ -22,21 +22,13 @@ decoder, the request builder, the block state machine and error classification.
 projection, surface selection, both renderers, signal handling and exit codes,
 `--doctor`.
 
-## Next
-
 ### M3 — tools, approval, cancellation
 
-Six tools (`read`, `write`, `edit`, `bash`, `glob`, `grep`), `ToolCx`, the
-`Plan`/`Effects` pre-flight, the permission engine with its built-in deny list,
-subprocess helpers with process-group containment, output truncation with spill
-to a file, and environment stripping.
+Six tools, the plan/authorise/execute split, the ordered permission engine with
+its built-in deny list, process-group containment, output truncation with spill,
+and environment stripping.
 
-The acceptance criteria that matter most: read-only calls observably run
-concurrently while writes run serially in call order; every `tool_result` of a
-step lands in one user message; a denied call continues the turn rather than
-ending it; no TTY and no `--yes` denies and exits within seconds rather than
-hanging; and an interrupt during a long shell command leaves no orphan process
-on any of the three platforms.
+## Next
 
 ### M4 — session, config, compaction
 

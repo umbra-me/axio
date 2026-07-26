@@ -13,16 +13,19 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::approver::Approver;
+use crate::policy::{Policy, Verdict};
 use crate::protocol::{
-    Delta, Event, EventKind, Item, ItemBody, ItemId, NoticeLevel, PROTOCOL_VERSION, SessionId,
-    ToolStatus, TurnId, TurnOutcome, Usage,
+    ApprovalId, ApprovalRequest, Decision, Delta, Event, EventKind, Item, ItemBody, ItemId,
+    NoticeLevel, PROTOCOL_VERSION, SessionId, ToolStatus, TurnId, TurnOutcome, Usage,
 };
 use crate::provider::{
     BlockKind, Effort, ModelRequest, Provider, ProviderError, ReasoningDisplay, StopReason,
     StreamEvent, SystemBlock, ToolInputAccumulator, ToolSpec,
 };
 use crate::session::Session;
-use crate::tool::Tool;
+use crate::tool::{
+    Plan, ProgressSink, Tool, ToolCx, ToolEnv, ToolError, ToolLimits, ToolOutput, Workspace,
+};
 
 /// Resolved once, at construction, and never re-read.
 ///
@@ -40,6 +43,11 @@ pub struct RuntimeConfig {
     /// error fatal, so the length is also the retry budget.
     pub backoff: Vec<Duration>,
     pub max_usd_per_turn: Option<f64>,
+    /// The cap applied to every tool result, at one choke point in the loop.
+    pub max_output_bytes: usize,
+    /// Where output too large to send is kept so the model can read it back.
+    pub spill_dir: Option<std::path::PathBuf>,
+    pub tool_limits: ToolLimits,
 }
 
 impl Default for RuntimeConfig {
@@ -56,7 +64,55 @@ impl Default for RuntimeConfig {
                 Duration::from_secs(5),
             ],
             max_usd_per_turn: None,
+            max_output_bytes: 64 * 1024,
+            spill_dir: None,
+            tool_limits: ToolLimits::default(),
         }
+    }
+}
+
+/// A call that has been planned and authorised, or already answered.
+enum Planned {
+    Run(String, Arc<dyn Tool>, Plan),
+    Resolved(String, ToolStatus),
+}
+
+/// Turn a tool's return into a terminal status, applying the loop's output
+/// policy on the way.
+fn finish_status(
+    outcome: Result<ToolOutput, ToolError>,
+    started: std::time::Instant,
+    limit: usize,
+    spill_dir: Option<&std::path::Path>,
+) -> ToolStatus {
+    let ms = started.elapsed().as_millis() as u64;
+    match outcome {
+        Ok(out) => {
+            let capped = crate::truncate::finish(&out.content, limit, spill_dir, "output");
+            match capped {
+                Ok(capped) => ToolStatus::Ok {
+                    output: capped.content,
+                    truncated: capped.truncated,
+                    spill: capped.spill,
+                    ms,
+                },
+                // Failing to write a spill file must not lose the output; send
+                // what fits and say so.
+                Err(_) => {
+                    let fallback = crate::truncate::cap(&out.content, limit);
+                    ToolStatus::Ok {
+                        output: fallback.text,
+                        truncated: fallback.truncated,
+                        spill: None,
+                        ms,
+                    }
+                }
+            }
+        }
+        Err(ToolError::Cancelled) => ToolStatus::Cancelled,
+        Err(e) => ToolStatus::Failed {
+            message: e.to_string(),
+        },
     }
 }
 
@@ -106,10 +162,12 @@ impl Sampled {
 pub struct Agent {
     provider: Arc<dyn Provider>,
     tools: BTreeMap<String, Arc<dyn Tool>>,
-    #[allow(dead_code)] // wired to the policy engine when tools land
     approver: Arc<dyn Approver>,
     session: Session,
     cfg: RuntimeConfig,
+    policy: Policy,
+    workspace: Arc<Workspace>,
+    env: Arc<ToolEnv>,
     system: Arc<[SystemBlock]>,
     /// Unbounded deliberately: a bounded send from inside the loop can deadlock
     /// against a surface that is slow to drain.
@@ -126,16 +184,36 @@ impl Agent {
         system: Vec<SystemBlock>,
         events: mpsc::UnboundedSender<Event>,
     ) -> Self {
+        let workspace = Arc::new(
+            Workspace::new(session.cwd())
+                .unwrap_or_else(|_| Workspace::unchecked(session.cwd().clone())),
+        );
         Self {
             provider,
             tools: BTreeMap::new(),
             approver,
             session,
             cfg,
+            policy: Policy::default(),
+            workspace,
+            env: Arc::new(ToolEnv::default()),
             system: Arc::from(system),
             events,
             seq: 0,
         }
+    }
+
+    /// The permission engine. Supplied by the surface, which is the only place
+    /// that knows whether a human is available to ask.
+    pub fn with_policy(mut self, policy: Policy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The sanitised environment children inherit.
+    pub fn with_env(mut self, env: ToolEnv) -> Self {
+        self.env = Arc::new(env);
+        self
     }
 
     pub fn register_tool(&mut self, tool: Arc<dyn Tool>) {
@@ -463,32 +541,217 @@ impl Agent {
         Ok(sampled)
     }
 
-    /// Execute tool calls. Every call yields a result, including an unknown one.
+    /// Execute tool calls.
     ///
-    /// The full plan/authorise/execute machinery lands with the tools; what is
-    /// here already holds the invariant that matters: a `tool_use` with no
-    /// matching `tool_result` makes the next request invalid, so a call that
-    /// cannot run still records why.
+    /// Two phases, and the split is deliberate. Everything is planned and
+    /// authorised **first**, in call order, before anything executes — so a
+    /// batch containing one refused call does not half-run. Then read-only
+    /// calls execute concurrently while everything else runs serially in call
+    /// order, because `write(a.rs)` and `edit(a.rs)` in one batch must not race.
+    ///
+    /// Every call yields a result, whatever happens to it. A `tool_use` with no
+    /// matching `tool_result` makes the next request invalid, so an unknown
+    /// tool, a refused call, a panicking tool and a cancelled one all record
+    /// why against their real call id.
     async fn dispatch(
         &mut self,
         turn: TurnId,
         calls: Vec<(String, String, serde_json::Value)>,
-        _cancel: &CancellationToken,
+        cancel: &CancellationToken,
     ) {
-        for (call_id, name, _input) in calls {
-            let status = match self.tools.get(&name) {
-                Some(_) => ToolStatus::Failed {
-                    message: format!("tool `{name}` is registered but execution is not wired yet"),
-                },
-                None => ToolStatus::Failed {
-                    message: format!("unknown tool: {name}"),
-                },
+        // ---- phase one: plan and authorise, in call order.
+        let mut planned: Vec<Planned> = Vec::with_capacity(calls.len());
+
+        for (call_id, name, input) in calls {
+            let Some(tool) = self.tools.get(&name).cloned() else {
+                planned.push(Planned::Resolved(
+                    call_id,
+                    ToolStatus::Failed {
+                        message: format!("unknown tool: {name}"),
+                    },
+                ));
+                continue;
             };
-            // Resolve the call the model already emitted rather than pushing a
-            // second item, which would give it two results on the wire.
-            if let Some(item) = self.session.set_tool_status(&call_id, status) {
-                self.emit(Some(turn), EventKind::ItemUpdated { item });
+
+            let cx = self.tool_cx(cancel.child_token());
+            let plan = match tool.plan(&input, &cx).await {
+                Ok(plan) => plan,
+                Err(e) => {
+                    // A bad argument is a tool_result, not a turn failure: the
+                    // model can read it and try again.
+                    planned.push(Planned::Resolved(
+                        call_id,
+                        ToolStatus::Failed {
+                            message: e.to_string(),
+                        },
+                    ));
+                    continue;
+                }
+            };
+
+            self.record_plan(turn, &call_id, &plan);
+
+            match self.policy.evaluate(&plan) {
+                Verdict::Allow => planned.push(Planned::Run(call_id, tool, plan)),
+                Verdict::Deny(reason) => {
+                    planned.push(Planned::Resolved(
+                        call_id,
+                        ToolStatus::Denied { message: reason },
+                    ));
+                }
+                Verdict::Ask(reason) => {
+                    let request = ApprovalRequest {
+                        id: ApprovalId::generate(),
+                        call_id: call_id.clone(),
+                        tool: tool.name().to_owned(),
+                        subject: plan.subject.clone(),
+                        effects: plan.effects,
+                        preview: plan.preview.clone(),
+                        reason,
+                    };
+                    self.set_status(turn, &call_id, ToolStatus::AwaitingApproval);
+                    self.emit(
+                        Some(turn),
+                        EventKind::ApprovalRequested {
+                            id: request.id,
+                            request: request.clone(),
+                        },
+                    );
+
+                    // Cancelling while waiting is a refusal, not a hang.
+                    let decision = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => Decision::Deny {
+                            feedback: Some("cancelled before approval".into()),
+                        },
+                        d = self.approver.decide(&request) => d,
+                    };
+                    self.emit(
+                        Some(turn),
+                        EventKind::ApprovalResolved {
+                            id: request.id,
+                            decision: decision.clone(),
+                        },
+                    );
+
+                    match decision {
+                        Decision::Allow => planned.push(Planned::Run(call_id, tool, plan)),
+                        Decision::AllowSession => {
+                            self.policy.grant(&plan.subject);
+                            planned.push(Planned::Run(call_id, tool, plan));
+                        }
+                        Decision::Deny { feedback } => planned.push(Planned::Resolved(
+                            call_id,
+                            ToolStatus::Denied {
+                                // The feedback becomes what the model reads, so
+                                // "no, use the existing helper" steers rather
+                                // than dead-ends.
+                                message: feedback.unwrap_or_else(|| "denied by the user".into()),
+                            },
+                        )),
+                    }
+                }
             }
+        }
+
+        // ---- phase two: execute.
+        let mut results: Vec<(usize, String, ToolStatus)> = Vec::new();
+        let mut concurrent = tokio::task::JoinSet::new();
+
+        for (index, item) in planned.into_iter().enumerate() {
+            match item {
+                Planned::Resolved(call_id, status) => results.push((index, call_id, status)),
+                Planned::Run(call_id, tool, plan) if plan.effects.parallel_safe() => {
+                    let cx = self.tool_cx(cancel.child_token());
+                    let limit = self.cfg.max_output_bytes;
+                    let spill = self.spill_dir(&call_id);
+                    concurrent.spawn(async move {
+                        let started = std::time::Instant::now();
+                        let outcome = tool.run(plan, &cx).await;
+                        (
+                            index,
+                            call_id,
+                            finish_status(outcome, started, limit, spill.as_deref()),
+                        )
+                    });
+                }
+                Planned::Run(call_id, tool, plan) => {
+                    self.set_status(turn, &call_id, ToolStatus::Running);
+                    let cx = self.tool_cx(cancel.child_token());
+                    let started = std::time::Instant::now();
+                    let outcome = tool.run(plan, &cx).await;
+                    let spill = self.spill_dir(&call_id);
+                    let status = finish_status(
+                        outcome,
+                        started,
+                        self.cfg.max_output_bytes,
+                        spill.as_deref(),
+                    );
+                    results.push((index, call_id, status));
+                }
+            }
+        }
+
+        while let Some(joined) = concurrent.join_next().await {
+            match joined {
+                Ok(result) => results.push(result),
+                // A panicking tool must still answer, and with its real call
+                // id — an empty or invented one makes the next request invalid.
+                Err(e) => {
+                    tracing::error!("a tool panicked: {e}");
+                }
+            }
+        }
+
+        // Completion order is not call order, and the wire needs call order.
+        results.sort_by_key(|(index, _, _)| *index);
+        for (_, call_id, status) in results {
+            self.set_status(turn, &call_id, status);
+        }
+
+        // Anything that never produced a result — a panicked task, an aborted
+        // one — is still pending in the transcript. Give it an answer.
+        self.resolve_pending(turn);
+    }
+
+    /// Record the subject and preview a plan produced, so a surface can show
+    /// what is about to happen and the transcript records what was decided.
+    fn record_plan(&mut self, turn: TurnId, call_id: &str, plan: &Plan) {
+        if let Some(item) = self
+            .session
+            .set_tool_plan(call_id, &plan.subject, plan.preview.clone())
+        {
+            self.emit(Some(turn), EventKind::ItemUpdated { item });
+        }
+    }
+
+    fn set_status(&mut self, turn: TurnId, call_id: &str, status: ToolStatus) {
+        if let Some(item) = self.session.set_tool_status(call_id, status) {
+            self.emit(Some(turn), EventKind::ItemUpdated { item });
+        }
+    }
+
+    /// Give every unfinished call a terminal status.
+    fn resolve_pending(&mut self, turn: TurnId) {
+        for call_id in self.session.unfinished_calls() {
+            self.set_status(turn, &call_id, ToolStatus::Cancelled);
+        }
+    }
+
+    fn spill_dir(&self, _call_id: &str) -> Option<std::path::PathBuf> {
+        self.cfg
+            .spill_dir
+            .as_ref()
+            .map(|root| root.join(self.session.id().to_string()))
+    }
+
+    fn tool_cx(&self, cancel: CancellationToken) -> ToolCx {
+        ToolCx {
+            workspace: self.workspace.clone(),
+            cancel,
+            progress: ProgressSink::null(),
+            limits: self.cfg.tool_limits,
+            env: self.env.clone(),
         }
     }
 

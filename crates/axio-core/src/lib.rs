@@ -18,11 +18,13 @@
 
 pub mod agent;
 pub mod approver;
+pub mod policy;
 pub mod protocol;
 pub mod provider;
 pub mod redact;
 pub mod session;
 pub mod tool;
+pub mod truncate;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod scripted;

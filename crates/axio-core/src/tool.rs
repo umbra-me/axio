@@ -212,6 +212,17 @@ impl Workspace {
         })
     }
 
+    /// A root that could not be canonicalised — a deleted or unreadable
+    /// directory.
+    ///
+    /// The lexical half of `resolve` still applies, so `..` and absolute paths
+    /// are still refused; only the symlink check degrades, because there is
+    /// nothing to resolve against. Callers should prefer [`Workspace::new`] and
+    /// treat this as the last resort it is.
+    pub fn unchecked(root: PathBuf) -> Self {
+        Self { root }
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
