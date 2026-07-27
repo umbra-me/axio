@@ -65,8 +65,9 @@ the belief that the dialect had no equivalent; asking the endpoint settled it,
 and the same asymmetry that settled it is now written down in the gotchas.
 
 In the surface: a slash command menu over one `const` list, `/status`,
-`/model` for changing model mid-session, and `/login` — a credential typed into
-the viewport, never echoed and never in scrollback. Plus one line at startup
+`/model` for changing model mid-session — bare, it offers what the provider
+says it serves, which is why the seam grew a second method — and `/login`, a
+credential typed into the viewport, never echoed and never in scrollback. Plus one line at startup
 when the launch directory holds several repositories, because the workspace
 being a whole shelf of projects is invisible until a search is slow and its
 results are almost right.

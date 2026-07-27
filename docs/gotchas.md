@@ -521,6 +521,14 @@ than to the session.
 
 ## Providers
 
+**A model catalogue in the binary is wrong the first time either side ships a
+model, and wrong invisibly.** A name missing from a compiled-in list is
+indistinguishable from a name the provider refuses. Both dialects publish
+`/models`, so the list is asked for. The Messages dialect is configured with
+the full path to `/v1/messages`, so its listing is the *sibling* of that path —
+appending asks for `/v1/messages/models` and gets a 404 that reads as "this
+provider has no listing".
+
 **`WireMessage` is Messages-API-shaped.** One user message carrying N
 `tool_result`s is correct there and invalid in the chat-completions dialect,
 where each result is a separate `role: "tool"` message. The split belongs in the

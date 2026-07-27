@@ -22,6 +22,7 @@ mod login;
 mod markdown;
 mod overlay;
 mod paint;
+mod picker;
 mod scrollback;
 
 use std::io::Write;
@@ -47,6 +48,7 @@ use approver::{Ask, TuiApprover};
 use commands::{Command, Menu};
 use composer::{Composer, Edit};
 use login::{Login, Outcome as LoginOutcome, Stage as LoginStage};
+use picker::Picker;
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
 /// set when it is created and ratatui offers no way to change it after;
@@ -83,6 +85,20 @@ enum Mode {
     /// is on every keystroke belongs to it — a character typed here must not
     /// also reach the composer, where it would be drawn.
     LoggingIn(Login),
+    /// Choosing a model from what the provider listed.
+    PickingModel(Picker),
+}
+
+/// What the surface should do once a command has run.
+///
+/// A bool said "leave or do not", which left no room for the one command that
+/// finishes somewhere else: listing models is a network round trip, and the
+/// loop owns both the spawning and the channel it comes back on.
+pub(super) enum After {
+    Stay,
+    Leave,
+    /// Ask the provider what it serves, then open the picker.
+    ListModels,
 }
 
 pub struct Tui {
@@ -184,6 +200,11 @@ pub async fn run(
         },
     )?;
 
+    // Listing models is a round trip, so it happens off the loop and arrives
+    // here. The sender is kept alive by this binding, so the receiver never
+    // closes and the select arm cannot spin on `None`.
+    let (models_tx, mut models_rx) = mpsc::unbounded_channel::<Result<Vec<String>, String>>();
+
     let mut app = Tui {
         facts,
         reported: std::collections::HashSet::new(),
@@ -272,6 +293,25 @@ pub async fn run(
                 }
             }
 
+            listed = models_rx.recv() => {
+                clock.mark();
+                app.status.clear();
+                match listed {
+                    Some(Ok(models)) if models.is_empty() => {
+                        app.status = "the provider listed no models".into();
+                    }
+                    Some(Ok(models)) => {
+                        let current = agent
+                            .as_ref()
+                            .map(|a| a.model().to_owned())
+                            .unwrap_or_else(|| app.model.clone());
+                        app.mode = Mode::PickingModel(Picker::new(models, current));
+                    }
+                    Some(Err(why)) => app.status = format!("could not list models: {why}"),
+                    None => {}
+                }
+            }
+
             input = next_input(&mut keys) => {
                 let Some(input) = input else { break };
                 clock.mark();
@@ -312,17 +352,34 @@ pub async fn run(
                         }
                     }
                     Action::Run(command, argument) => {
-                        if app.run_command(
+                        match app.run_command(
                             &mut terminal,
                             command,
                             &argument,
                             agent.as_mut(),
                         )? {
-                            if turn.is_some() {
-                                leaving = true;
-                                cancel.cancel();
-                            } else {
-                                break;
+                            After::Stay => {}
+                            After::Leave => {
+                                if turn.is_some() {
+                                    leaving = true;
+                                    cancel.cancel();
+                                } else {
+                                    break;
+                                }
+                            }
+                            After::ListModels => {
+                                if let Some(running) = agent.as_ref() {
+                                    let provider = running.provider();
+                                    let tx = models_tx.clone();
+                                    let token = CancellationToken::new();
+                                    tokio::spawn(async move {
+                                        let listed = provider
+                                            .models(token)
+                                            .await
+                                            .map_err(|e| e.to_string());
+                                        let _ = tx.send(listed);
+                                    });
+                                }
                             }
                         }
                     }

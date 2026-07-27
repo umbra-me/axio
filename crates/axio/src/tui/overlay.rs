@@ -64,6 +64,58 @@ impl Tui {
         Paragraph::new(lines)
     }
 
+    /// The model list, numbered as the digit keys expect.
+    ///
+    /// The one in use carries a tick. Without it the list answers "what could I
+    /// pick" and not "what am I on", and those are the same question at the
+    /// moment someone opens it.
+    pub(super) fn picker_rows(&self, picker: &Picker, area: Rect) -> Paragraph<'static> {
+        if picker.is_empty() {
+            return Paragraph::new(Line::styled(
+                "  the provider listed no models",
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        let rows = area.height as usize;
+        let (first, shown) = picker.window(rows);
+
+        let selected = picker.index();
+        let lines = shown
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let at = first + i;
+                let here = at == selected;
+                let running = *name == picker.current();
+                Line::from(vec![
+                    Span::styled(
+                        if here { "› " } else { "  " },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        format!("{:>2}. ", at + 1),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                    Span::styled(
+                        name.clone(),
+                        if here {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                    Span::styled(
+                        if running { "  ✓" } else { "" },
+                        Style::default().fg(Color::Green),
+                    ),
+                ])
+            })
+            .collect::<Vec<_>>();
+        Paragraph::new(lines)
+    }
+
     /// The credential form.
     ///
     /// What is typed is never drawn — only how much of it there is. The

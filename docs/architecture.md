@@ -203,6 +203,22 @@ that proves it, being the only one that touches the agent at all — and because
 the agent is moved into a running turn and handed back at its end, `/model` is
 refused while one is in flight rather than arranging to mutate it underneath.
 
+Bare `/model` offers a list, and the list is **asked of the provider** rather
+than compiled in — the second method on the seam exists for this. A catalogue
+in the binary is wrong the first time either side ships a model, and wrong
+where nobody looks: a name missing from a picker is indistinguishable from a
+name the provider refuses. Both dialects publish the same `{"data":[{"id"}]}`
+shape, so one parser reads either.
+
+The fetch is a round trip, so it does not happen on the loop. The command
+returns an intention, the loop spawns the request with a clone of the
+provider's `Arc`, and the answer arrives on a channel the loop already selects
+over — the same shape the approver uses, for the same reason. Choosing from
+the picker then emits exactly the action a typed `/model NAME` emits, so one
+path applies a model, warns about the same reasoning loss and is refused in the
+same circumstances. A picker with its own application path is how the typed
+form's warning quietly stops being given.
+
 An unrecognised single word beginning `/` is refused rather than sent. A
 mistyped command that becomes a prompt spends a turn answering a typo, and the
 answer looks like the model being unhelpful. A *multi*-word line is left alone,

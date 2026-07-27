@@ -178,10 +178,22 @@ answering a typo.
 | --- | --- |
 | `/help` | list the commands |
 | `/status` | model, provider, endpoint, credential source, permissions, workspace |
-| `/model` | show the model; `/model NAME` changes it for the next request |
+| `/model` | pick from what the provider serves; `/model NAME` sets one directly |
 | `/login` | store a credential, without echoing it |
 | `/clear` | discard what is in the composer |
 | `/quit` | leave |
+
+Bare `/model` asks the provider what it serves and offers the answer:
+`↑` `↓` move, `1`–`9` jump, `enter` uses the highlighted one, `esc` leaves it
+alone. The list is fetched, never compiled in — a name missing from a built-in
+catalogue looks exactly like a name the provider refuses. The one in use is
+ticked, and the highlight opens on it, so the reflex Enter changes nothing.
+
+```
+› 3. kimi-k2.7-code  ✓
+  4. minimax-m3
+  5. qwen3.5:397b
+```
 
 `/model` changes the name in the request body and nothing else, so it reaches
 only models the configured provider already serves. Moving away from the model

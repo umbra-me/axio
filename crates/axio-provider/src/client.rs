@@ -93,6 +93,27 @@ impl Provider for AnthropicProvider {
         anthropic::model_info(model)
     }
 
+    async fn models(&self, cancel: CancellationToken) -> Result<Vec<String>, ProviderError> {
+        let url = crate::catalog::listing_url(&self.base_url);
+        let response = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
+            r = self
+                .http
+                .get(&url)
+                .header("x-api-key", &*self.api_key)
+                .header("anthropic-version", API_VERSION)
+                .send() => r.map_err(|e| transport_error(e, &url))?,
+        };
+
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(anthropic::classify(status, None, &body));
+        }
+        crate::catalog::model_ids(&body)
+    }
+
     async fn stream(
         &self,
         req: ModelRequest,

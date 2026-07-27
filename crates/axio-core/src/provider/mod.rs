@@ -1,4 +1,6 @@
-//! The provider seam. One method, always streaming.
+//! The provider seam. Completion is one method and always streaming; the
+//! second asks the endpoint what it serves, because a catalogue compiled into
+//! axio is wrong the first time either side ships a model.
 
 mod stream;
 mod wire;
@@ -32,6 +34,16 @@ pub trait Provider: Send + Sync + 'static {
         req: ModelRequest,
         cancel: CancellationToken,
     ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError>;
+
+    /// What this endpoint will answer to, asked of the endpoint.
+    ///
+    /// A list compiled into axio would be wrong the first time either side
+    /// shipped a model, and wrong silently: a name missing from a picker is
+    /// indistinguishable from a name the provider does not serve. Both
+    /// dialects publish this, so neither has to be guessed at.
+    ///
+    /// Unordered as it arrives; the caller sorts if it cares.
+    async fn models(&self, cancel: CancellationToken) -> Result<Vec<String>, ProviderError>;
 }
 
 /// The single one-shot helper. Lives here so no caller is tempted to construct

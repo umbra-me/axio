@@ -20,6 +20,9 @@ impl Tui {
         if let Mode::LoggingIn(..) = self.mode {
             return self.on_login_key(terminal, key);
         }
+        if let Mode::PickingModel(..) = self.mode {
+            return Ok(self.on_picker_key(key));
+        }
 
         match key.code {
             KeyCode::Char('c') if ctrl => {
@@ -117,6 +120,49 @@ impl Tui {
             },
             Edit::None => Action::None,
         })
+    }
+
+    /// Keys while a model is being chosen.
+    ///
+    /// Choosing produces the same action a typed `/model NAME` produces, so the
+    /// picker never changes a model itself — one path applies it, warns about
+    /// the same things and is refused in the same circumstances. A second
+    /// application path is how a picker ends up quietly skipping the warning
+    /// the typed form gives.
+    fn on_picker_key(&mut self, key: KeyEvent) -> Action {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let Mode::PickingModel(picker) = &mut self.mode else {
+            return Action::None;
+        };
+
+        match key.code {
+            KeyCode::Up => picker.step(-1),
+            KeyCode::Down => picker.step(1),
+            KeyCode::Char(c) if c.is_ascii_digit() && !ctrl => {
+                // A digit only moves the highlight. Selecting and applying on
+                // one keystroke means a mistyped digit changes the model with
+                // nothing in between to catch it.
+                picker.choose_digit(c.to_digit(10).unwrap_or(0));
+            }
+            KeyCode::Enter => {
+                let chosen = picker.selection().map(str::to_owned);
+                self.mode = Mode::Idle;
+                return match chosen {
+                    Some(name) => Action::Run(Command::Model, name),
+                    None => Action::None,
+                };
+            }
+            KeyCode::Esc => {
+                self.mode = Mode::Idle;
+                self.status = "model unchanged".into();
+            }
+            KeyCode::Char('c') if ctrl => {
+                self.mode = Mode::Idle;
+                self.status = "model unchanged".into();
+            }
+            _ => {}
+        }
+        Action::None
     }
 
     /// Keys while a credential is being stored.

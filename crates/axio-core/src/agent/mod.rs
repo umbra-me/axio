@@ -193,6 +193,17 @@ impl Agent {
         &self.cfg.model
     }
 
+    /// The provider this session is talking to.
+    ///
+    /// Handed out so a surface can ask it what it serves without the loop
+    /// having to grow a request type for the question. Cloning the `Arc` is
+    /// what lets that happen off the loop's thread: listing models is a network
+    /// round trip, and doing it inline would stop the interface for its
+    /// duration.
+    pub fn provider(&self) -> Arc<dyn Provider> {
+        Arc::clone(&self.provider)
+    }
+
     /// The model that minted this transcript.
     ///
     /// Exposed beside [`Agent::model`] so a caller can tell whether the two

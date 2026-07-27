@@ -82,6 +82,14 @@ impl Provider for ScriptedProvider {
         "scripted"
     }
 
+    /// A fixed pair, so a test about a picker is about the picker.
+    ///
+    /// Not empty: an empty listing is a state the surface has to handle, and a
+    /// double that only ever produces it would make that the only state tested.
+    async fn models(&self, _cancel: CancellationToken) -> Result<Vec<String>, ProviderError> {
+        Ok(vec!["scripted-one".to_owned(), "scripted-two".to_owned()])
+    }
+
     fn model_info(&self, _model: &str) -> ModelInfo {
         if self.unpriced {
             // What the OpenAI-compatible provider reports, so a test can reach

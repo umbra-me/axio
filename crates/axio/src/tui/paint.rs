@@ -34,6 +34,9 @@ impl Tui {
                 Mode::LoggingIn(login) => {
                     frame.render_widget(self.login_rows(login, rows[0]), rows[0])
                 }
+                Mode::PickingModel(picker) => {
+                    frame.render_widget(self.picker_rows(picker, rows[0]), rows[0])
+                }
                 _ if commands::choosing(self.composer.text()) => {
                     frame.render_widget(self.menu_rows(rows[0]), rows[0])
                 }
@@ -57,7 +60,9 @@ impl Tui {
             let frame_style = match self.mode {
                 // Both of these are the surface wanting something from the
                 // person, which is one state as far as the border is concerned.
-                Mode::Approving(..) | Mode::LoggingIn(..) => Style::default().fg(Color::Yellow),
+                Mode::Approving(..) | Mode::LoggingIn(..) | Mode::PickingModel(..) => {
+                    Style::default().fg(Color::Yellow)
+                }
                 Mode::Running => Style::default().fg(Color::Cyan),
                 Mode::Idle => Style::default().fg(Color::DarkGray),
             };
@@ -164,6 +169,7 @@ impl Tui {
             Mode::Approving(..) => "the change above is what runs",
             Mode::Running => "ctrl-c or esc to interrupt",
             Mode::LoggingIn(..) => "esc to leave without storing",
+            Mode::PickingModel(..) => "enter chooses · esc leaves it unchanged",
             Mode::Idle if commands::choosing(self.composer.text()) => {
                 "↑↓ choose · tab completes · enter runs"
             }
@@ -213,6 +219,16 @@ impl Tui {
                 "…",
                 Style::default().add_modifier(Modifier::DIM),
             )),
+            Mode::PickingModel(picker) => {
+                let mut spans = vec![Span::styled(
+                    format!("model  {} listed  ", picker.len()),
+                    Style::default().fg(Color::Yellow),
+                )];
+                spans.extend(key("↑↓", "move"));
+                spans.extend(key("1-9", "jump"));
+                spans.extend(key("enter", "use"));
+                Paragraph::new(Line::from(spans))
+            }
             // The form is drawn above; this row carries the keys for it, the
             // same way the approval row does.
             Mode::LoggingIn(login) => {
