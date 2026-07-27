@@ -122,7 +122,7 @@ impl Login {
         // quotes it is exactly the path least likely to have been rehearsed.
         axio_core::redact::register_secret(secret.expose().to_owned());
 
-        match auth::save(home, provider, secret) {
+        match auth::save(home, provider, auth::Credential::Key(secret)) {
             Ok(path) => {
                 let mut said = vec![
                     format!("stored the credential for `{provider}`"),
@@ -191,6 +191,7 @@ mod tests {
             auth::resolve(&provider, dir.path(), &[])
                 .expect("a credential")
                 .0
+                .bearer()
                 .expose(),
             "sk-typed-in-the-surface"
         );
@@ -213,6 +214,7 @@ mod tests {
             auth::resolve(&provider, dir.path(), &[])
                 .expect("a credential")
                 .0
+                .bearer()
                 .expose(),
             "sk-from-a-file"
         );

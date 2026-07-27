@@ -6,7 +6,7 @@
 use super::*;
 
 /// Find a credential, environment first, then the store.
-pub(crate) fn credential(provider: &str) -> Result<(Secret, auth::Source), String> {
+pub(crate) fn credential(provider: &str) -> Result<(auth::Credential, auth::Source), String> {
     // Before anything about credentials: does this provider exist? Otherwise a
     // typo is diagnosed as a missing credential, the advice is to store one,
     // storing it succeeds, and only the next run says the name was never valid.
@@ -112,7 +112,7 @@ pub(crate) fn auth_command(action: &AuthAction) -> u8 {
                 return 1;
             }
 
-            match auth::save(&home, provider, secret) {
+            match auth::save(&home, provider, auth::Credential::Key(secret)) {
                 Ok(path) => {
                     println!(
                         "stored the credential for `{provider}` at {}",

@@ -303,10 +303,10 @@ pub(crate) fn build_provider(
     let model = &resolved.config().model;
     // One lookup for every provider: the environment, then the store. A second
     // resolution path is how the two disagree about which key is in use.
-    let (secret, _source) = credential(&model.provider)?;
+    let (found, _source) = credential(&model.provider)?;
 
     match model.provider.as_str() {
-        "anthropic" => AnthropicProvider::new(secret.expose())
+        "anthropic" => AnthropicProvider::new(found.bearer().expose())
             .map(|p| match &model.base_url {
                 // `model.base_url` was accepted, reported by `--explain`, and
                 // ignored here — so a gateway or proxy endpoint silently went
@@ -321,7 +321,7 @@ pub(crate) fn build_provider(
                 .base_url
                 .clone()
                 .unwrap_or_else(|| OLLAMA_BASE.to_owned());
-            OpenAiProvider::new(secret.expose(), base, model.provider.clone())
+            OpenAiProvider::new(found.bearer().expose(), base, model.provider.clone())
                 .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
                 .map_err(|e| format!("could not start the http client: {e}"))
         }
