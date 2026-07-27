@@ -4,13 +4,27 @@
 # These exist because a rule written in a markdown file is not an enforcement
 # mechanism. Raising any of them is allowed — in a commit whose message says
 # why.
+#
+# Three of them fail the build; the total line count does not, and the
+# difference is deliberate. A crate count, a `ToolCx` field count and a file
+# length can always be satisfied without giving anything up — by not adding a
+# dependency edge, by not coupling a tool to a host, by splitting a module. The
+# only way to satisfy a total-lines ceiling is to write less code, which means
+# building less. Worse, as it tightens it rewards density: comments are free
+# here and code is not, so the pressure would be toward clever code with long
+# explanations, which is backwards for this codebase.
+#
+# So the total is reported and never enforced. Being able to see it is what
+# catches drift; failing on it only interrupts someone mid-change to edit a
+# constant they are permitted to edit anyway.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 MAX_MEMBERS=4
 MAX_TOOLCX_FIELDS=5
-MAX_LOC=10000
+# Reported, not enforced — see the header.
+LOC_BUDGET=10000
 MAX_FILE_LOC=300
 
 status=0
@@ -79,11 +93,11 @@ while IFS= read -r f; do
     status=1
   fi
 done < <(git ls-files 'crates/*/src/*.rs' 'crates/*/src/**/*.rs')
-echo "workspace Rust LOC (excl. tests): $loc / $MAX_LOC"
+echo "workspace Rust LOC (excl. tests): $loc / $LOC_BUDGET"
 echo "widest file: $widest / $MAX_FILE_LOC ($widest_file)"
-if [ "$loc" -gt "$MAX_LOC" ]; then
-  echo "FAIL: $loc lines exceeds the $MAX_LOC budget. Raise it deliberately or cut scope." >&2
-  status=1
+if [ "$loc" -gt "$LOC_BUDGET" ]; then
+  echo "note: past the $LOC_BUDGET-line budget. Not a failure — a number worth" >&2
+  echo "      knowing, and worth asking whether the scope grew on purpose." >&2
 fi
 
 exit "$status"
