@@ -57,15 +57,29 @@ for it.
 ### v0.1 — the release itself
 
 Everything M5 needs is built and green. What remains is the decision to tag it,
-and one thing no amount of code can supply: `scripts/live-check.sh` has never
-been run against the Anthropic provider, because there has never been a key.
+and three things no amount of code can supply:
+
+- **A real turn against a real model.** `scripts/live-check.sh` has never been
+  run. Every test in the suite answers from a stub, and a stub that is wrong the
+  same way the code is wrong passes. A credential for `ollama` is configured, so
+  that half can be checked whenever someone spends the credits; `anthropic` has
+  no credential and its wire format remains unproven against the real endpoint.
+- **An install on a machine that has never built Rust.** No `aws-lc-sys`,
+  `onig_sys`, `openssl-sys` or `cmake` appears in the graph for any target, and
+  `ring` ships pre-assembled objects for its NASM paths — so the toolchain
+  rustup already requires should be enough. Should be, and nobody has tried.
+- **A dogfooding session with a human watching every approval**, written up
+  here. Done means someone ran it.
 
 ## After v0.1
 
-- **v0.2 — interactive ergonomics.** A coalescing frame requester, multi-line
-  composer entry, and per-hunk approval if it earns its place.
-- **v0.3 — durability and ergonomics.** Syntax highlighting, session search,
-  better diffs.
+The interactive ergonomics that were v0.2 arrived early — frame coalescing,
+multi-line entry with bracketed paste, word-wise editing — as did v0.3's syntax
+highlighting. What is left of each:
+
+- **v0.2 — per-hunk approval**, if three occasions of wanting to accept part of
+  a diff ever turn up.
+- **v0.3 — durability.** Session search, and diffs worth looking at.
 - **v0.4 — extension surface.** Gated on demand, not on schedule.
 
 ## Deliberately not building
