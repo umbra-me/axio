@@ -188,6 +188,36 @@ impl Agent {
         &self.session
     }
 
+    /// The model the next request will name.
+    pub fn model(&self) -> &str {
+        &self.cfg.model
+    }
+
+    /// The model that minted this transcript.
+    ///
+    /// Exposed beside [`Agent::model`] so a caller can tell whether the two
+    /// have parted, which is the condition the warning in `announce` is about.
+    pub fn session_model(&self) -> &str {
+        self.session.model()
+    }
+
+    /// Point the next request at a different model.
+    ///
+    /// The provider is untouched. This is the name in the request body, so it
+    /// reaches only models the configured provider already serves — a name
+    /// from somewhere else is a request that fails, not a provider that
+    /// changes.
+    ///
+    /// Leaving the transcript's own model behind costs its reasoning: the
+    /// projection drops blocks minted by a different one, which is the silent
+    /// loss `announce` warns about on a resume. Nothing here warns, because
+    /// nothing here knows whether a person is watching — the caller compares
+    /// [`Agent::model`] with [`Agent::session_model`] and says so in whatever
+    /// way its surface says things.
+    pub fn set_model(&mut self, model: impl Into<String>) {
+        self.cfg.model = model.into();
+    }
+
     /// Emitted once, before any turn, so a consumer can refuse a stream it does
     /// not understand before it has to interpret one.
     pub fn announce(&mut self, resumed: bool, notices: Vec<crate::protocol::Notice>) {

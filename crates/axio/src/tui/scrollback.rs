@@ -63,6 +63,32 @@ impl Tui {
         )
     }
 
+    /// What a slash command had to say.
+    ///
+    /// Dim and indented, so it reads as the surface answering rather than the
+    /// model — the transcript is otherwise entirely a conversation, and a line
+    /// that looks like the model said it is a line someone will quote back.
+    pub(super) fn push_command_output<B: Backend>(
+        &self,
+        terminal: &mut Terminal<B>,
+        said: &[String],
+    ) -> Result<(), B::Error> {
+        if said.is_empty() {
+            return Ok(());
+        }
+        let mut lines: Vec<Line<'static>> = said
+            .iter()
+            .map(|line| {
+                Line::styled(
+                    format!("  {line}"),
+                    Style::default().add_modifier(Modifier::DIM),
+                )
+            })
+            .collect();
+        lines.push(Line::raw(""));
+        self.push(terminal, lines)
+    }
+
     pub(super) fn banner<B: Backend>(
         &self,
         terminal: &mut Terminal<B>,

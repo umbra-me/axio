@@ -192,6 +192,28 @@ only the unfinished ones are in the viewport. The line editor is further split
 out with no terminal in it at all, so where a word ends and what recalls history
 are ordinary functions with ordinary tests.
 
+A line beginning `/` is the surface's own, not the model's. The commands sit in
+one `const` list that the menu, `/help` and the dispatch all read, so an entry
+nothing runs cannot exist — the failure that list prevents is a command offered
+in a menu and unimplemented behind it, which reads as a broken feature rather
+than an absent one. None of them reach the model, spend a token or append to
+the transcript, and that is what makes them safe to run mid-turn: a command is
+not a turn, so it needs no agent and races nothing. `/model` is the exception
+that proves it, being the only one that touches the agent at all — and because
+the agent is moved into a running turn and handed back at its end, `/model` is
+refused while one is in flight rather than arranging to mutate it underneath.
+
+An unrecognised single word beginning `/` is refused rather than sent. A
+mistyped command that becomes a prompt spends a turn answering a typo, and the
+answer looks like the model being unhelpful. A *multi*-word line is left alone,
+so prose opening with a path stays prose; the cost is that a misspelling with an
+argument gets through, which is the cheaper of the two mistakes.
+
+The menu draws in the rows the streaming tail uses. An inline viewport's height
+is fixed when it is created and ratatui offers no way to change it after, so
+there is nowhere to float a popup — but nothing streams while a command name is
+being typed, so the space is free exactly when it is wanted.
+
 The decision travels back through `Approver`, not through the event stream, and
 the turn awaits it inline on `&mut self`. So the loop and the interface cannot
 be the same task: the interactive approver hands the request across a channel
@@ -352,8 +374,12 @@ trait? Mostly the former. One real seam turned up, and it is instructive.
 `tool_result`s. In the chat-completions dialect each result is its own message
 with `role: "tool"`, so the projection has to be split. That conversion lives in
 the provider, which is exactly where a dialect difference belongs — nothing
-above the trait changed. Two features have no equivalent at all and are dropped
-rather than mistranslated: effort, and reasoning blocks.
+above the trait changed. Reasoning blocks have no equivalent at all and are
+dropped rather than mistranslated. Effort was assumed to be in the same
+category and was not: the dialect calls it `reasoning_effort`, and the endpoint
+proved the point by rejecting an invalid value while accepting a field it had
+never heard of. Five efforts map onto four accepted values, so the top two
+collapse upward.
 
 What the second provider cannot do is price itself. `ModelInfo` reports zeros,
 so cost is reported as zero rather than invented — a made-up price would make

@@ -12,12 +12,15 @@
 //! contract.
 
 mod approver;
+mod commands;
 mod composer;
 mod events;
 mod frame;
 mod highlight;
 mod input;
+mod login;
 mod markdown;
+mod overlay;
 mod paint;
 mod scrollback;
 
@@ -41,7 +44,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use approver::{Ask, TuiApprover};
+use commands::{Command, Menu};
 use composer::{Composer, Edit};
+use login::{Login, Outcome as LoginOutcome, Stage as LoginStage};
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
 /// set when it is created and ratatui offers no way to change it after;
@@ -74,6 +79,10 @@ enum Mode {
     Idle,
     Running,
     Approving(Box<ApprovalRequest>, tokio::sync::oneshot::Sender<Decision>),
+    /// Storing a credential. Its own mode rather than a flag, because while it
+    /// is on every keystroke belongs to it — a character typed here must not
+    /// also reach the composer, where it would be drawn.
+    LoggingIn(Login),
 }
 
 pub struct Tui {
@@ -81,6 +90,10 @@ pub struct Tui {
     /// through both `ItemUpdated` and `ItemCompleted` prints one line.
     reported: std::collections::HashSet<String>,
     composer: Composer,
+    /// Where the highlight is in the slash menu. Kept across openings so the
+    /// menu is not the only widget on screen with amnesia; the filter clamps
+    /// it, so a stale index can never select something that is not shown.
+    menu: Menu,
     mode: Mode,
     /// The part of the streaming message that has no newline after it yet, so
     /// the tail can be shown live before it can be rendered and committed.
@@ -106,6 +119,13 @@ pub struct Tui {
     tokens: Option<(u64, u64)>,
     interrupt_armed: bool,
     model: String,
+    /// What `/status` reports besides the model: provider, endpoint, where the
+    /// credential came from, the permission rules, the workspace root.
+    ///
+    /// Rendered once, before the surface starts, because none of it can change
+    /// while a session runs — the model is the one part that can, and it is
+    /// read live from the field above rather than kept here.
+    facts: Vec<String>,
     /// When the running turn started, which is what the status counts up from.
     /// A turn that has produced nothing for thirty seconds looks identical to a
     /// hung one unless something on screen is still moving.
@@ -147,6 +167,7 @@ pub async fn run(
     resumed: bool,
     notices: Vec<axio_core::protocol::Notice>,
     model: String,
+    facts: Vec<String>,
 ) -> std::io::Result<u8> {
     crossterm::terminal::enable_raw_mode()?;
     install_panic_hook();
@@ -164,8 +185,10 @@ pub async fn run(
     )?;
 
     let mut app = Tui {
+        facts,
         reported: std::collections::HashSet::new(),
         composer: Composer::default(),
+        menu: Menu::default(),
         mode: Mode::Idle,
         live: String::new(),
         md: markdown::Renderer::default(),
@@ -258,8 +281,18 @@ pub async fn run(
                     // already reached scrollback belong to the terminal now.
                     TermEvent::Resize(..) => continue,
                     TermEvent::Paste(text) => {
-                        if matches!(app.mode, Mode::Idle) {
-                            app.composer.paste(&text);
+                        match &mut app.mode {
+                            Mode::Idle => app.composer.paste(&text),
+                            // Pasting is how a credential normally arrives, so
+                            // routing it to the composer here would print the
+                            // key on screen — the one thing this flow exists
+                            // to prevent.
+                            Mode::LoggingIn(login)
+                                if login.stage() == LoginStage::Secret =>
+                            {
+                                login.paste(&text)
+                            }
+                            _ => {}
                         }
                         continue;
                     }
@@ -276,6 +309,21 @@ pub async fn run(
                             cancel.cancel();
                         } else {
                             break;
+                        }
+                    }
+                    Action::Run(command, argument) => {
+                        if app.run_command(
+                            &mut terminal,
+                            command,
+                            &argument,
+                            agent.as_mut(),
+                        )? {
+                            if turn.is_some() {
+                                leaving = true;
+                                cancel.cancel();
+                            } else {
+                                break;
+                            }
                         }
                     }
                     Action::Submit(prompt) => {
@@ -330,6 +378,10 @@ enum Action {
     None,
     Quit,
     Submit(String),
+    /// A slash command. Separate from `Submit` because it never becomes a
+    /// turn: no prompt is sent, nothing is recorded, and the agent is not
+    /// taken — so a command works during a turn as readily as between them.
+    Run(Command, String),
 }
 
 pub fn approver() -> (TuiApprover, mpsc::UnboundedReceiver<Ask>) {
@@ -360,8 +412,10 @@ mod tests {
         )
         .expect("a terminal");
         let app = Tui {
+            facts: Vec::new(),
             reported: std::collections::HashSet::new(),
             composer: Composer::default(),
+            menu: Menu::default(),
             mode: Mode::Idle,
             live: String::new(),
             md: markdown::Renderer::default(),

@@ -10,12 +10,14 @@ mod cli;
 mod credentials;
 mod doctor;
 mod paths;
+mod probe;
 mod render;
 mod sandbox;
 mod sessions;
 mod surface;
 #[cfg(feature = "tui")]
 mod tui;
+mod workspace;
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
@@ -41,6 +43,7 @@ use input::read_stdin;
 use paths::{
     axio_home, config_file_path, explain, home_dir, print_notices, resolve_config, state_dir,
 };
+use probe::probe;
 use render::{JsonlRenderer, PlainRenderer, Refusals, Renderer, Style};
 use sessions::{list_sessions, new_recorder, now_ms, open_resumed};
 use surface::Surface;
@@ -71,7 +74,8 @@ fn main() -> std::process::ExitCode {
 /// confining the first would break it.
 fn confine(cli: &Cli) -> Option<Notice> {
     let resolved = resolve_config(cli);
-    let runs_a_turn = cli.command.is_none() && !cli.doctor && cli.explain.is_none() && !cli.list;
+    let runs_a_turn =
+        cli.command.is_none() && !cli.doctor && !cli.probe && cli.explain.is_none() && !cli.list;
     if !runs_a_turn || !sandbox_requested(cli, &resolved) {
         return None;
     }
@@ -115,6 +119,14 @@ async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
     }
     if cli.list {
         return list_sessions();
+    }
+
+    // Deliberately below that block and not inside it. `--probe` resolves a
+    // credential and opens a socket, which is exactly what the modes above
+    // promise not to do — and is why it is its own flag rather than another
+    // section of `--doctor`.
+    if cli.probe {
+        return probe(&resolved).await;
     }
 
     // Announced before anything else, including the credential check. An

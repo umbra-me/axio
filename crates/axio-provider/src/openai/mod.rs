@@ -7,11 +7,12 @@
 //! tool results has to become N separate messages. That conversion belongs in
 //! the provider, which is the point of having the seam at all.
 //!
-//! Two things this dialect does not have, and what happens to them:
-//!
-//! * **Effort.** There is no equivalent, so it is dropped. A request that would
-//!   have asked for deep reasoning simply does not.
-//! * **Reasoning blocks.** No equivalent either, so they are not replayed. That
+//! * **Effort** is sent as `reasoning_effort`. It was dropped here for a while
+//!   on the belief that the dialect had no equivalent; the endpoint settled it
+//!   by rejecting an invalid value with a 400 that named the five it accepts,
+//!   while ignoring a field it had genuinely never heard of. Only four survive
+//!   the crossing — see `reasoning_effort` for which two collapse and why.
+//! * **Reasoning blocks** have no equivalent, so they are not replayed. That
 //!   is safe rather than lossy: the transcript keeps them, and the projection
 //!   already drops blocks minted by a different model.
 
@@ -25,8 +26,8 @@ use std::pin::Pin;
 
 use axio_core::protocol::Usage;
 use axio_core::provider::{
-    BlockKind, BoxStream, ModelInfo, ModelRequest, Provider, ProviderError, Role, StopReason,
-    StreamEvent, WireContent,
+    BlockKind, BoxStream, Effort, ModelInfo, ModelRequest, Provider, ProviderError, Role,
+    StopReason, StreamEvent, WireContent,
 };
 use axio_core::redact::{Redacted, register_secret};
 use serde_json::{Map, Value, json};

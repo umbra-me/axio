@@ -61,9 +61,14 @@ export ANTHROPIC_API_KEY=sk-ant-... # or just use the environment
 
 axio -p "explain this repo"
 cat src/lib.rs | axio -p "review this"
-axio --doctor                       # what axio can currently see
+axio --doctor                       # what axio can currently see, offline
+axio --probe                        # ask the model whether it accepts tools
 
 axio                                # interactive, if stdin is a terminal
+                                    #   `/` opens the command menu
+                                    #   `/status` what this session is set to do
+                                    #   `/model NAME` change model mid-session
+                                    #   `/login` stores a credential, unechoed
 axio --list                         # recent sessions
 axio --resume 01K3F               # continue one; a unique prefix is enough
 axio --explain model.effort         # where a setting came from
@@ -71,6 +76,13 @@ axio --ephemeral -p "..."           # record nothing
 axio --model NAME -p "..."          # override the model for this run
 axio --sandbox -p "..."             # confine commands to the workspace (Linux)
 ```
+
+`--doctor` answers from configuration alone: no credential, no socket, safe
+anywhere. `--probe` is the opposite by design — it sends two short requests to
+the configured model, one of them carrying a tool, and reports whether the tool
+was accepted. A model can serve chat perfectly and reject every request that
+offers it a tool; nothing in the configuration is wrong when that happens, so
+only asking the model finds it.
 
 Configuration is layered — defaults, then `~/.config/axio/config.toml`, then the
 nearest `.axio/config.toml`, then `AXIO_*` variables, then flags:
@@ -138,11 +150,50 @@ submitting its first line.
 | --- | --- |
 | `enter` | send |
 | `shift-enter`, `ctrl-j` | another line |
-| `up`, `down` | move a line, or recall history when there is only one |
+| `up`, `down` | move a line, recall history when there is only one, or move the slash menu when one is open |
 | `ctrl-w`, `ctrl-u`, `ctrl-k` | delete a word, to the start, to the end |
 | `ctrl-left`, `ctrl-right` | move a word |
 | `esc`, `ctrl-c` | interrupt a turn; twice at an empty prompt to leave |
 | `ctrl-d`, `/exit` | leave |
+
+### Slash commands
+
+Typing `/` opens a menu of things the surface answers itself. None of them
+reach the model, spend a token or touch the transcript, which is why the menu
+can open on a keystroke.
+
+```
+› /help    list these commands
+  /status  what this session is configured to do
+  /model   show the model, or `/model NAME` to change it
+```
+
+`↑` `↓` move, `tab` completes the name into the line, `enter` runs the
+highlighted one, `esc` dismisses. The menu closes at the first space — from
+there the words are an argument. A name that matches nothing is refused rather
+than sent: a mistyped command should not become a prompt and spend a turn
+answering a typo.
+
+| Command | Does |
+| --- | --- |
+| `/help` | list the commands |
+| `/status` | model, provider, endpoint, credential source, permissions, workspace |
+| `/model` | show the model; `/model NAME` changes it for the next request |
+| `/login` | store a credential, without echoing it |
+| `/clear` | discard what is in the composer |
+| `/quit` | leave |
+
+`/model` changes the name in the request body and nothing else, so it reaches
+only models the configured provider already serves. Moving away from the model
+that minted the transcript drops that model's reasoning from every later
+request; it says so when it happens. The name is not checked until the next
+request, so a typo surfaces then rather than at the prompt.
+
+`/login` runs in the viewport rather than the shell. What is typed is never
+drawn — only how many characters there are — and never reaches scrollback,
+which outlives the process. A pasted key loses its trailing newline, because a
+credential with one in it is rejected as simply wrong. The session keeps the
+credential it started with; the stored one is for the next.
 
 When an action needs approval the diff or the command lands in scrollback and
 the viewport asks:

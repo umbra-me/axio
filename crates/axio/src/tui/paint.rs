@@ -27,7 +27,18 @@ impl Tui {
             ])
             .split(frame.area());
 
-            frame.render_widget(self.live_rows(rows[0]), rows[0]);
+            // The menu and the login form both take the area the streaming
+            // tail uses. Neither can appear while a turn is streaming, so the
+            // two never want it at once.
+            match &self.mode {
+                Mode::LoggingIn(login) => {
+                    frame.render_widget(self.login_rows(login, rows[0]), rows[0])
+                }
+                _ if commands::choosing(self.composer.text()) => {
+                    frame.render_widget(self.menu_rows(rows[0]), rows[0])
+                }
+                _ => frame.render_widget(self.live_rows(rows[0]), rows[0]),
+            }
 
             let first = rows_of_text.len().saturating_sub(prompt_height as usize);
             if !framed {
@@ -44,7 +55,9 @@ impl Tui {
             }
 
             let frame_style = match self.mode {
-                Mode::Approving(..) => Style::default().fg(Color::Yellow),
+                // Both of these are the surface wanting something from the
+                // person, which is one state as far as the border is concerned.
+                Mode::Approving(..) | Mode::LoggingIn(..) => Style::default().fg(Color::Yellow),
                 Mode::Running => Style::default().fg(Color::Cyan),
                 Mode::Idle => Style::default().fg(Color::DarkGray),
             };
@@ -150,6 +163,10 @@ impl Tui {
         let right = match self.mode {
             Mode::Approving(..) => "the change above is what runs",
             Mode::Running => "ctrl-c or esc to interrupt",
+            Mode::LoggingIn(..) => "esc to leave without storing",
+            Mode::Idle if commands::choosing(self.composer.text()) => {
+                "↑↓ choose · tab completes · enter runs"
+            }
             Mode::Idle if self.composer.text().contains('\n') => "shift-enter for another line",
             Mode::Idle => "",
         };
@@ -196,6 +213,30 @@ impl Tui {
                 "…",
                 Style::default().add_modifier(Modifier::DIM),
             )),
+            // The form is drawn above; this row carries the keys for it, the
+            // same way the approval row does.
+            Mode::LoggingIn(login) => {
+                let mut spans = Vec::new();
+                match login.stage() {
+                    LoginStage::Provider => {
+                        spans.push(Span::styled(
+                            "provider  ",
+                            Style::default().fg(Color::Yellow),
+                        ));
+                        spans.extend(key("↑↓", "choose"));
+                        spans.extend(key("enter", "continue"));
+                    }
+                    LoginStage::Secret => {
+                        spans.push(Span::styled("paste  ", Style::default().fg(Color::Yellow)));
+                        spans.extend(key("enter", "store"));
+                        spans.push(Span::styled(
+                            "not shown as you type",
+                            Style::default().add_modifier(Modifier::DIM),
+                        ));
+                    }
+                }
+                Paragraph::new(Line::from(spans))
+            }
             Mode::Idle => Paragraph::new(
                 rows.iter()
                     .enumerate()

@@ -156,6 +156,48 @@ pub(crate) fn doctor(resolved: &Resolved) -> u8 {
     0
 }
 
+/// The settled facts about a session, in the order they answer "why did it do
+/// that": what is being talked to, as whom, and what it is allowed to touch.
+pub(crate) fn session_facts(resolved: &Resolved, cwd: &std::path::Path) -> Vec<String> {
+    let cfg = resolved.config();
+    let mut said = vec![
+        format!("{:<11}{}", "provider", cfg.model.provider),
+        format!("{:<11}{}", "endpoint", probe::endpoint(cfg)),
+    ];
+
+    // Asked of the function built to report rather than the one built to
+    // fetch: this needs to name where a credential came from, and has no
+    // business holding one to do it.
+    let env: Vec<(String, String)> = std::env::vars().collect();
+    let source = axio_core::auth::status(&[cfg.model.provider.as_str()], &axio_home(), &env)
+        .into_iter()
+        .next()
+        .and_then(|(_, source)| source);
+    said.push(format!(
+        "{:<11}{}",
+        "credential",
+        match source {
+            Some(source) => source.describe(),
+            None => "not configured".to_owned(),
+        }
+    ));
+
+    said.push(format!("{:<11}{}", "workspace", cwd.display()));
+    if cfg.permissions.allow.is_empty() && cfg.permissions.deny.is_empty() {
+        said.push(format!(
+            "{:<11}{}",
+            "permissions", "no rules; the built-in deny list still applies"
+        ));
+    }
+    for rule in &cfg.permissions.deny {
+        said.push(format!("{:<11}deny {rule}", "permissions"));
+    }
+    for rule in &cfg.permissions.allow {
+        said.push(format!("{:<11}allow {rule}", "permissions"));
+    }
+    said
+}
+
 /// The prices the configured provider would actually charge against.
 ///
 /// Read without constructing a provider, so `--doctor` still touches no

@@ -78,6 +78,15 @@ follows the link out of the workspace. A dangling link is still a real directory
 entry. `Workspace::resolve` walks every component and refuses any symlink
 resolving outside the root, dangling or not.
 
+**The workspace is wherever it was launched, and that is sometimes a shelf.**
+Started in a directory that merely *contains* projects, the root is the whole
+tree: a glob walks every repository, takes seconds and returns matches from
+unrelated projects, all of which looks like the search working. Nothing is
+broken, so nothing would otherwise report anything — hence one line at startup
+when the launch directory holds several repositories, and silence when it is
+itself one, since a repository with submodules is exactly where someone means
+to be.
+
 **A CLI must never block forever on stdin.** With `-p`, stdin is supplementary,
 and an inherited-but-idle pipe — a supervisor, a background job, a test harness
 that holds it open and never writes — made the process hang with no output at
@@ -494,6 +503,22 @@ past it.
 **Claiming file protection on a platform that has none is worse than claiming
 nothing.** Windows gets an honest note instead of a false guarantee.
 
+**A credential typed into the surface must not reach scrollback.** Scrollback
+is the terminal's, not the process's: it survives the exit, scrolls and copies.
+Everything else the surface prints is meant to end up there, which makes it the
+one destination a credential flow has to opt out of rather than into. Only the
+character count is drawn.
+
+**A pasted credential arrives with the newline it was copied with.** Keeping it
+produces an authentication failure that looks like a wrong key and is really a
+wrong paste — control characters are stripped on the way in.
+
+**Storing a credential does not change the session that stored it.** The
+provider was constructed with whatever existed when the session opened, and
+says so on saving. Silence there invites the reasonable conclusion that the new
+key is now in use, and the next failure is then attributed to the key rather
+than to the session.
+
 ## Providers
 
 **`WireMessage` is Messages-API-shaped.** One user message carrying N
@@ -505,8 +530,19 @@ provider; anything above the trait must not learn about it.
 an object is silently wrong rather than an error.
 
 **A dialect with no equivalent for a feature should drop it, not approximate
-it.** Effort and reasoning blocks have no counterpart, so they are omitted. An
-invented mapping would be worse than an absent one.
+it.** Reasoning blocks have no counterpart, so they are omitted. An invented
+mapping would be worse than an absent one.
+
+**"No equivalent" is a claim about the endpoint, and the endpoint can be
+asked.** Effort was dropped here for a while on the belief that the
+chat-completions dialect had nothing to map it onto. It has
+`reasoning_effort`, and the way to find out cost one request: an invalid value
+returns a 400 naming every value it accepts, while a field the endpoint has
+genuinely never heard of is accepted in silence. That asymmetry distinguishes
+"ignored" from "unsupported" for any field, and neither can be told from the
+other by reading documentation. A dropped setting fails silently in the
+direction nobody checks — the request still succeeds, and only the depth is
+missing.
 
 **A provider that cannot price itself must report zero, not a guess.** A
 made-up price makes the budget check silently wrong; a zero makes it visibly

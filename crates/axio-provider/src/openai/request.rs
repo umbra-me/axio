@@ -30,6 +30,10 @@ pub fn build_body(req: &ModelRequest) -> Value {
     // report what it cost cannot enforce a budget either.
     body.insert("stream_options".into(), json!({ "include_usage": true }));
     body.insert("max_tokens".into(), json!(req.max_tokens));
+    body.insert(
+        "reasoning_effort".into(),
+        json!(reasoning_effort(req.effort)),
+    );
 
     if !req.tools.is_empty() {
         let tools: Vec<Value> = req
@@ -59,6 +63,27 @@ pub fn build_body(req: &ModelRequest) -> Value {
 /// each result is its own message with `role: "tool"`. Splitting is mechanical,
 /// which is the useful finding: the shape difference is real but local to the
 /// provider, and nothing above it had to change.
+/// This dialect's spelling of depth.
+///
+/// The field is validated rather than ignored — an unrecognised value is a 400,
+/// while a field the endpoint has never heard of is accepted in silence. That
+/// asymmetry is the evidence the setting is real, and it is also why
+/// [`Effort::as_wire`] cannot be sent directly: it spells the default `xhigh`,
+/// which is not one of the five values this dialect accepts.
+///
+/// Four map across unchanged. The top two collapse, because there is no fifth
+/// level to land on, and they collapse *upward*: mapping the default down to
+/// `high` would quietly make every request shallower than its configuration
+/// says, which is the failure this function exists to end rather than repeat.
+fn reasoning_effort(effort: Effort) -> &'static str {
+    match effort {
+        Effort::Low => "low",
+        Effort::Medium => "medium",
+        Effort::High => "high",
+        Effort::XHigh | Effort::Max => "max",
+    }
+}
+
 pub(super) fn wire_to_openai(messages: &[axio_core::provider::WireMessage]) -> Vec<Value> {
     let mut out = Vec::new();
 
@@ -206,5 +231,48 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["content"], "the answer");
         assert!(out[0].get("thinking").is_none());
+    }
+
+    /// The regression: this field was omitted entirely on the belief that the
+    /// dialect had no equivalent, so a configuration asking for maximum depth
+    /// produced a request that asked for none — and nothing anywhere said so,
+    /// because a missing field is not an error.
+    #[test]
+    fn depth_reaches_the_request_rather_than_being_dropped() {
+        let mut req = ModelRequest::new("a-model");
+        req.effort = Effort::Medium;
+        assert_eq!(build_body(&req)["reasoning_effort"], "medium");
+    }
+
+    /// Every value must be one the endpoint accepts. It validates this field
+    /// and 400s on anything else, so a spelling only axio uses would turn a
+    /// depth setting into a failed request.
+    #[test]
+    fn every_effort_maps_onto_a_value_the_dialect_accepts() {
+        const ACCEPTED: [&str; 5] = ["high", "medium", "low", "max", "none"];
+        for effort in [
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+        ] {
+            let sent = reasoning_effort(effort);
+            assert!(ACCEPTED.contains(&sent), "{effort:?} sent {sent:?}");
+        }
+        // `xhigh` is the one spelling that would be rejected, and it is the
+        // default — so sending `as_wire()` straight through would 400 for
+        // anyone who never touched the setting.
+        assert_ne!(reasoning_effort(Effort::XHigh), Effort::XHigh.as_wire());
+    }
+
+    /// The collapse goes upward. Mapping the default down to `high` would make
+    /// it indistinguishable from the level below and quietly shallower than
+    /// configured, which is the same class of bug as dropping it outright.
+    #[test]
+    fn the_top_two_efforts_collapse_upward() {
+        assert_eq!(reasoning_effort(Effort::XHigh), "max");
+        assert_eq!(reasoning_effort(Effort::Max), "max");
+        assert_eq!(reasoning_effort(Effort::High), "high");
     }
 }

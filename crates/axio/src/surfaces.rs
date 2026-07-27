@@ -21,6 +21,11 @@ pub(crate) struct Prepared {
     /// CI compiles it with `-D warnings`.
     #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     model: String,
+    /// What `/status` shows besides the model. Built here rather than in the
+    /// surface so it is read off the same resolved configuration the agent was
+    /// built from, and cannot describe a session that is not the one running.
+    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
+    facts: Vec<String>,
 }
 
 pub(crate) fn prepare(
@@ -36,6 +41,11 @@ pub(crate) fn prepare(
     cfg.spill_dir = Some(state_dir().join("outputs"));
 
     let mut notices: Vec<Notice> = resolved.notices().to_vec();
+    // Before anything else notices-worthy, because it explains the shape of
+    // every search the session is about to run.
+    if let Some(crowded) = workspace::crowded_notice(&cwd) {
+        notices.push(Notice::info(crowded));
+    }
     let (policy, mut policy_notices) = resolved.policy(cli.yes);
     // axio's own directory holds the credential file. Without this, running
     // from a parent of it puts auth.json inside the workspace, where the read
@@ -109,6 +119,7 @@ pub(crate) fn prepare(
         notices,
         resumed,
         model: cfg.model.clone(),
+        facts: doctor::session_facts(resolved, &cwd),
     })
 }
 
@@ -143,6 +154,7 @@ pub(crate) async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
         prepared.resumed,
         prepared.notices,
         prepared.model,
+        prepared.facts,
     )
     .await
     {

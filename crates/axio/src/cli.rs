@@ -57,6 +57,12 @@ pub(crate) struct Cli {
     #[arg(long)]
     pub(crate) doctor: bool,
 
+    /// Ask the configured model whether it accepts tools, then exit. Unlike
+    /// every other report-and-exit mode this one opens a socket and spends a
+    /// few tokens.
+    #[arg(long)]
+    pub(crate) probe: bool,
+
     /// Continue a previous session. A unique prefix of its id is enough.
     #[arg(long, value_name = "ID", conflicts_with = "ephemeral")]
     pub(crate) resume: Option<String>,

@@ -52,6 +52,25 @@ before the runtime starts, so every command axio spawns inherits it. Filesystem
 only, and a second wall behind the permission engine rather than a replacement
 for it.
 
+### M7 — asking the endpoint, and commands in the surface
+
+`--probe`: two requests, one carrying a tool, reporting whether the provider
+accepts it. `--doctor` stays offline and answers from configuration alone, so
+the one question it cannot answer — a model that serves chat perfectly and
+rejects every request with a tool in it — got its own flag rather than a
+socket in the local modes.
+
+Effort reaches the chat-completions dialect after all. It was dropped there on
+the belief that the dialect had no equivalent; asking the endpoint settled it,
+and the same asymmetry that settled it is now written down in the gotchas.
+
+In the surface: a slash command menu over one `const` list, `/status`,
+`/model` for changing model mid-session, and `/login` — a credential typed into
+the viewport, never echoed and never in scrollback. Plus one line at startup
+when the launch directory holds several repositories, because the workspace
+being a whole shelf of projects is invisible until a search is slow and its
+results are almost right.
+
 ## Next
 
 ### v0.1 — the release itself

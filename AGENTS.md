@@ -29,7 +29,7 @@ Four crates and one binary. The dependency graph is a tree rooted at
 | `axio-core` | `protocol`, the `Provider` / `Tool` / `Approver` traits, the turn loop, `Session` and its JSONL records, layered `config`, `compact`, `policy`, output `truncate`, credential storage, `Workspace`, `Redacted` |
 | `axio-provider` | Both transports — the Messages dialect and the chat-completions one: SSE decoder, request builders, block state machines, error classification. The only crate linking HTTP or TLS |
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
-| `axio` | clap, surface selection, renderers, the inline TUI, the optional Landlock sandbox, `Approver` implementations |
+| `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations |
 
 **Four crates, and a long file is not evidence for a fifth.** A file past 300
 lines becomes child modules — `tui/`, `agent/`, `config/`, `markdown/` — never
@@ -97,6 +97,11 @@ Three invariants everything else follows from:
   timestamp so a resume never scans. Anything counting or finding sessions goes
   through `SessionStore`; a `read_dir` of `sessions/` sees only day directories
   and reports nothing, convincingly.
+- **`scripts/firewall.sh` and `scripts/limits.sh` cannot see an untracked
+  file.** Both work through `git grep` and `git ls-files`, so a new module is
+  invisible to them until it is at least `git add -N`'d — and they pass by not
+  looking, which reads exactly like passing. Stage new files before believing
+  either one.
 - **A call can end before it has a subject.** No such tool, arguments the schema
   rejects, or a `plan` that fails — all three label the call with the tool's
   name first, or the surface shows a failure with no way to tell what failed.
