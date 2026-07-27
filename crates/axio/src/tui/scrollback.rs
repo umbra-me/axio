@@ -115,17 +115,27 @@ pub(super) fn tool_line(subject: &str, status: &ToolStatus, width: usize) -> Opt
     };
 
     // The name column is wide enough for the longest tool there is, so the
-    // detail always starts in the same place.
-    let left = format!("{name:<6}  {detail}");
+    // detail always starts in the same place — and it is never given up. A
+    // failure's message is long, and truncating from the left to make room for
+    // it used to eat the name, leaving `⏺ … invalid arguments: …` with nothing
+    // to say which of six tools had failed. Found by watching a real session.
     let room = width.saturating_sub(4);
-    let (left, note) = if markdown::text_width(&left) + markdown::text_width(&note) + 2 > room {
-        // No room for both: the outcome wins, since the detail is recoverable
-        // from the transcript above and the outcome is not.
-        let keep = room.saturating_sub(markdown::text_width(&note) + 2);
-        (markdown::truncate(&left, keep), note)
+    let name_col = format!("{name:<6}");
+    let after_name = room.saturating_sub(markdown::text_width(&name_col) + 2);
+
+    // The outcome next, since it is what the detail cannot be recovered from,
+    // then whatever is left goes to the detail.
+    let note = markdown::truncate(&note, after_name);
+    let detail_room = after_name
+        .saturating_sub(markdown::text_width(&note))
+        .saturating_sub(2);
+    let detail = if detail_room > 0 {
+        markdown::truncate(&detail, detail_room)
     } else {
-        (left, note)
+        String::new()
     };
+
+    let left = format!("{name_col}  {detail}");
     let gap = room
         .saturating_sub(markdown::text_width(&left))
         .saturating_sub(markdown::text_width(&note));
@@ -274,5 +284,25 @@ mod tests {
         assert!(text.contains("-old"));
         assert!(text.contains("+new"));
         assert!(text.contains("@@"));
+    }
+    #[test]
+    fn a_long_failure_message_never_costs_the_tool_name() {
+        let line = tool_line(
+            "grep:fn state_dir",
+            &ToolStatus::Failed {
+                message: "invalid arguments: unknown arguments `path`, `query`, `max_results` — `grep` takes pattern, glob, hidden".into(),
+            },
+            110,
+        )
+        .expect("a line");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // Which tool failed is the first thing a reader needs, and a message
+        // long enough to fill the row used to take it away.
+        assert!(
+            text.starts_with("  ⏺ grep"),
+            "the tool name vanished: {text:?}"
+        );
+        assert!(text.contains("invalid arguments"), "{text:?}");
+        assert!(line.width() <= 110, "{}", line.width());
     }
 }
