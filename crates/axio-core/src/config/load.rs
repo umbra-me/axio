@@ -43,8 +43,15 @@ pub(super) fn load_file(path: &Path, project: bool) -> (Option<toml::Table>, Vec
 
     let mut kept = toml::Table::new();
     let mut lost = false;
+    let mut foreign: Vec<String> = Vec::new();
 
     for (name, value) in parsed {
+        // Not ours: leave it alone. It belongs to another tool, or to a newer
+        // axio, or it is a typo — and none of those is this file being damaged.
+        if !is_known_section(&name) {
+            foreign.push(name);
+            continue;
+        }
         if !section_is_valid(&name, &value) {
             notices.push(Notice {
                 level: NoticeLevel::Warn,
@@ -57,6 +64,34 @@ pub(super) fn load_file(path: &Path, project: bool) -> (Option<toml::Table>, Vec
             continue;
         }
         kept.insert(name, value);
+    }
+
+    // One line, not one per section. A typo is still findable in it; thirty
+    // warnings before the first useful word are not a diagnostic, they are a
+    // wall someone has to read past every single run.
+    if !foreign.is_empty() {
+        const SHOWN: usize = 6;
+        let shown = foreign
+            .iter()
+            .take(SHOWN)
+            .map(|n| format!("[{n}]"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let rest = foreign.len().saturating_sub(SHOWN);
+        let tail = if rest > 0 {
+            format!(" and {rest} more")
+        } else {
+            String::new()
+        };
+        notices.push(Notice {
+            level: NoticeLevel::Info,
+            message: format!(
+                "ignoring {} section{} in {} that axio does not use: {shown}{tail}",
+                foreign.len(),
+                if foreign.len() == 1 { "" } else { "s" },
+                path.display(),
+            ),
+        });
     }
 
     if project {
@@ -83,7 +118,23 @@ pub(super) fn load_file(path: &Path, project: bool) -> (Option<toml::Table>, Vec
     (Some(kept), notices)
 }
 
-/// Does this section deserialise into its typed shape?
+/// The sections this build knows about.
+///
+/// A section outside this list is not axio's, and the difference from a section
+/// that is axio's and will not parse is the whole point. Both used to return
+/// `false` from one function, and the caller treated every `false` as damage:
+/// running axio against a `.axio/config.toml` belonging to some other tool
+/// printed a warning per section — thirty-three of them, ahead of anything
+/// useful — and then wrote a `.corrupt-<ts>` copy of a file that was in perfect
+/// health. Reported by someone who simply ran it.
+pub(super) fn is_known_section(name: &str) -> bool {
+    matches!(
+        name,
+        "model" | "budget" | "tools" | "permissions" | "output" | "sandbox"
+    )
+}
+
+/// Whether one of *our* sections parses. Only meaningful for a known name.
 pub(super) fn section_is_valid(name: &str, value: &toml::Value) -> bool {
     let v = value.clone();
     match name {
@@ -93,8 +144,6 @@ pub(super) fn section_is_valid(name: &str, value: &toml::Value) -> bool {
         "permissions" => v.try_into::<PermissionsSection>().is_ok(),
         "output" => v.try_into::<OutputSection>().is_ok(),
         "sandbox" => v.try_into::<SandboxSection>().is_ok(),
-        // An unknown section is a typo or a newer axio; either way it is not
-        // ours to reset, and dropping it silently is the friendlier failure.
         _ => false,
     }
 }
@@ -193,4 +242,119 @@ pub(super) fn validate(mut config: Config, notices: &mut Vec<Notice>) -> Config 
         config.tools.max_output_bytes = 1024;
     }
     config
+}
+
+#[cfg(test)]
+mod foreign_config_tests {
+    use super::*;
+
+    /// Reported from a Windows machine: `axio.exe` against a `.axio/config.toml`
+    /// belonging to another tool printed thirty-three warnings before anything
+    /// useful, and wrote a `.corrupt-<ts>` copy of a file that was fine.
+    #[test]
+    fn another_tools_config_is_ignored_quietly_and_left_alone() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("config.toml");
+        let sections = [
+            "agents",
+            "appearance",
+            "approval",
+            "artifacts",
+            "checkpoints",
+            "code_mode",
+            "connectors",
+            "diagnostics",
+            "git",
+            "interface",
+            "keybindings",
+            "lsp",
+            "mcp",
+            "memory",
+            "multi_agent",
+            "network",
+            "notifications",
+            "plugins",
+            "reasoning",
+            "rendering",
+            "routing",
+            "rules",
+            "skills",
+            "terminal",
+            "updates",
+            "voice",
+            "worktrees",
+        ];
+        let text: String = sections
+            .iter()
+            .map(|s| format!("[{s}]\nsomething = true\n\n"))
+            .collect();
+        std::fs::write(&path, &text).expect("the file");
+
+        let (kept, notices) = load_file(&path, false);
+        assert!(
+            kept.expect("a table").is_empty(),
+            "nothing of ours was in it"
+        );
+
+        let warnings: Vec<&Notice> = notices
+            .iter()
+            .filter(|n| matches!(n.level, NoticeLevel::Warn))
+            .collect();
+        assert!(
+            warnings.is_empty(),
+            "a foreign config is not damage: {warnings:?}"
+        );
+        assert_eq!(
+            notices.len(),
+            1,
+            "one line, not one per section: {notices:?}"
+        );
+        assert!(
+            notices[0].message.contains("27 sections"),
+            "{:?}",
+            notices[0]
+        );
+
+        let stray: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("the dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("corrupt"))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "it copied a file that was never corrupt: {stray:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).expect("still there"), text);
+    }
+
+    /// The other half: a section that *is* ours and will not parse is damage,
+    /// and still says so and still preserves what it replaced.
+    #[test]
+    fn one_of_our_sections_failing_to_parse_is_still_reported_and_backed_up() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[model]\neffort = 12345\n\n[budget]\nmax_steps = 7\n",
+        )
+        .expect("the file");
+
+        let (kept, notices) = load_file(&path, false);
+        let kept = kept.expect("a table");
+        assert!(kept.contains_key("budget"), "the good section survives");
+        assert!(!kept.contains_key("model"), "the bad one is reset");
+        assert!(
+            notices
+                .iter()
+                .any(|n| matches!(n.level, NoticeLevel::Warn) && n.message.contains("[model]")),
+            "{notices:?}"
+        );
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("the dir")
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
+            .collect();
+        assert_eq!(backups.len(), 1, "the replaced file is preserved");
+    }
 }
