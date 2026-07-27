@@ -23,9 +23,11 @@ The Anthropic transport has not had that run against it: there has been no
 credential to run it with. It is built from the documented wire format and
 snapshot-tested against it, which is not the same as having met the endpoint.
 
-It has also been pointed at its own repository and asked to add a feature, twice
-— which is where its own remaining bugs have come from lately. Both sessions are
-written up in the changelog, the code it got wrong along with them.
+It has also been pointed at its own repository and asked to add a feature, four
+times across two models — which is where its own remaining bugs have come from
+lately. All four are written up in the changelog, the code it got wrong along
+with them, including the run that proved the ceiling was axio's context and not
+the model's ability.
 
 **There is no release yet.** Nothing is tagged; `cargo install --git` builds
 whatever `main` is. The version will be cut when a few days have passed without
@@ -35,10 +37,6 @@ Writes and shell commands need approval; reads do not. Interactively you are
 asked. In a one-shot run there is nobody to ask, so they are refused unless
 `--yes` was given — and a turn that completed with something refused exits `5`,
 so `&&` sees it.
-
-One caveat worth stating plainly: while the OpenAI-compatible provider is
-exercised against a live endpoint on every check, the Anthropic path has only
-ever been run against the documented wire format, never the real API.
 
 ## Install
 
@@ -97,6 +95,13 @@ write = ["/home/me/.cache/go-build"]
 A project's own `.axio/config.toml` may only add restrictions, never remove
 them.
 
+If the workspace root has an `AGENTS.md` — or a `CLAUDE.md`, when there is no
+`AGENTS.md` — axio reads it and tells the model those instructions describe this
+codebase specifically and outrank its general habits. It is capped, since it is
+prepended to every request in the session. This is worth writing: three models
+asked to touch this repository made the same wrong assumption until the file that
+corrects it was actually shown to them.
+
 ## The interactive interface
 
 Run `axio` with nothing piped in and no `-p`, and you get a composer instead of
@@ -151,10 +156,6 @@ the viewport asks:
 
   allow? y once  a this session  n no
 ```
-
-`enter` sends · `ctrl-c` or `esc` interrupts a running turn · a second `ctrl-c`
-at an empty prompt exits, as does `ctrl-d` · `up`/`down` walk what you have
-already asked.
 
 A shell command is shown as the string the shell actually receives, never a
 word-split of it: the split reads as a simpler command than the one that runs.

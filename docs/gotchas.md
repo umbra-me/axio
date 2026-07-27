@@ -105,6 +105,14 @@ tool nor anything else it takes. A model that has guessed wrong is in the same
 position either way. Both are checked in the loop, beside output capping, so a
 new tool inherits them without knowing they exist.
 
+**A model cannot follow a convention nobody showed it.** Three models, one of
+them a strong coding model that made no other mistake, were asked to count
+session files and all three read `sessions/` directly — a directory that holds
+day directories. The fact they needed is written down here and axio was showing
+them none of it, because it read no project instructions. It reads `AGENTS.md`
+now, and the same model then reached for `SessionStore::files()` unprompted. When
+an agent keeps getting something wrong, the first question is what it was given.
+
 **A tool's description is read more carefully than its schema.** The schemas
 always declared their parameters and a mid-sized model still invented `query`,
 `path` and `max_results` for `grep` and sent `cmd` to `bash`. The prose now

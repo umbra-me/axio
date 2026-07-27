@@ -67,6 +67,10 @@ ordered permission engine, sessions on disk, and layered configuration.
   for, narrowed to fit the terminal rather than overflowing it.
 - **A session count in `--doctor`**, under paths, and a note beside any provider
   whose transport has never been run against its real endpoint.
+- **The project's own instructions are read.** `AGENTS.md`, or `CLAUDE.md` when
+  there is no `AGENTS.md`, from the workspace root — capped, and marked as
+  outranking the model's general habits. A codebase that has written down how it
+  works should not have to watch every model rediscover it.
 - **Argument errors that are enough to fix the call.** Both halves name the tool
   and everything it takes, whether an argument was invented or left out, and a
   call that fails before it has a plan is still labelled with the tool it was —
@@ -131,6 +135,21 @@ as weak. The system prompt now asks for the project's own formatter and checks
 to be run on what was changed, and **the model ignored it**: unformatted code
 again, and the same non-recursive read of a directory that contains directories.
 Prompt wording moved neither. What catches both is CI and review.
+
+A third and fourth session settled what the first two could not tell apart:
+whether the wrong code was the model's fault or axio's. A stronger cloud model
+was given the identical task from the identical commit. Its tool calls were
+flawless — no malformed arguments at all, where the first session made four —
+and its formatting was clean without being asked. It then made **the same
+mistake as both weaker models**, counting session files with a non-recursive
+read of a directory that contains directories.
+
+Three models, three identical wrong answers, is not three weak models. The fact
+they needed is written down in this repository and axio never showed it to any
+of them: it read no project instructions at all. It does now, and the fourth
+session — same model, same task, one file visible — reached for
+`SessionStore::files()` and got it right. That is the whole finding: the ceiling
+was not the model.
 
 **A human did not watch the approvals.** The criterion asks for one, and both
 sessions were driven programmatically with each approval captured and answered

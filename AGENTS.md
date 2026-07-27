@@ -91,6 +91,11 @@ Three invariants everything else follows from:
   `openssl-sys`, `native-tls` or `aws-lc-*` appears, something pulled in a
   default feature set we turned off — and `aws-lc-sys` wants CMake everywhere
   and NASM on Windows, which a clean install is promised not to need.
+- **A session file lives in a directory named for its day**, not directly under
+  `sessions/` — `sessions/<yyyy-mm-dd>/<id>.jsonl`, derived from the id's own
+  timestamp so a resume never scans. Anything counting or finding sessions goes
+  through `SessionStore`; a `read_dir` of `sessions/` sees only day directories
+  and reports nothing, convincingly.
 - **A call can end before it has a subject.** No such tool, arguments the schema
   rejects, or a `plan` that fails — all three label the call with the tool's
   name first, or the surface shows a failure with no way to tell what failed.
