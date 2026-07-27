@@ -11,7 +11,7 @@ cd "$(git rev-parse --show-toplevel)"
 MAX_MEMBERS=4
 MAX_TOOLCX_FIELDS=5
 MAX_LOC=10000
-MAX_FILE_LOC=800
+MAX_FILE_LOC=300
 
 status=0
 
@@ -30,14 +30,28 @@ fi
 # --- ToolCx field count ------------------------------------------------------
 # The archive accumulated twelve Option<Arc<dyn ...>> host bridges and 13 of 41
 # tools became desktop-only by construction. This is the gate against that.
-toolcx=$(awk '/^pub struct ToolCx \{/{f=1;next} /^\}/{f=0} f' crates/axio-core/src/tool.rs \
+#
+# The struct is located rather than named by path. Hard-coding the file meant
+# that moving it — `tool.rs` becoming `tool/mod.rs` — left the gate reading a
+# file that no longer existed, reporting zero fields, and passing. A gate that
+# cannot find what it guards must fail, not congratulate itself.
+toolcx_file=$(git grep -l '^pub struct ToolCx {' -- '*.rs' | head -1 || true)
+if [ -z "$toolcx_file" ]; then
+  echo 'FAIL: cannot find "pub struct ToolCx" anywhere in the workspace' >&2
+  exit 1
+fi
+toolcx=$(awk '/^pub struct ToolCx \{/{f=1;next} /^\}/{f=0} f' "$toolcx_file" \
   | grep -cE '^\s*pub [a-z_]+:' || true)
-echo "ToolCx fields: $toolcx / $MAX_TOOLCX_FIELDS"
+echo "ToolCx fields: $toolcx / $MAX_TOOLCX_FIELDS ($toolcx_file)"
+if [ "$toolcx" -lt 1 ]; then
+  echo "FAIL: ToolCx was found but has no fields — the gate is not reading it" >&2
+  status=1
+fi
 if [ "$toolcx" -gt "$MAX_TOOLCX_FIELDS" ]; then
   echo "FAIL: ToolCx has $toolcx fields (max $MAX_TOOLCX_FIELDS)" >&2
   status=1
 fi
-if awk '/^pub struct ToolCx \{/{f=1;next} /^\}/{f=0} f' crates/axio-core/src/tool.rs \
+if awk '/^pub struct ToolCx \{/{f=1;next} /^\}/{f=0} f' "$toolcx_file" \
   | grep -qE 'Option<Arc<dyn'; then
   echo "FAIL: ToolCx gained an Option<Arc<dyn ...>> host bridge" >&2
   status=1

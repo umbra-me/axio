@@ -13,6 +13,20 @@
 //! loop. A rule in a document is not an enforcement mechanism; a type that
 //! cannot be constructed any other way is.
 
+mod layers;
+mod load;
+mod sections;
+
+pub use layers::Layer;
+pub use load::find_project_config;
+pub use sections::{
+    BudgetSection, Config, ModelSection, OutputSection, PermissionsSection, SandboxSection,
+    ToolsSection,
+};
+
+use layers::{OPTIONAL_KEYS, env_layer, merge, record, set, to_table};
+use load::{load_file, validate};
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -24,73 +38,7 @@ use crate::protocol::{Notice, NoticeLevel};
 use crate::provider::{Effort, ReasoningDisplay};
 use crate::tool::ToolLimits;
 
-/// Which layer supplied a value. Ordered weakest to strongest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Layer {
-    Default,
-    UserFile(PathBuf),
-    ProjectFile(PathBuf),
-    Env(String),
-    Flag,
-}
-
-impl Layer {
-    pub fn describe(&self) -> String {
-        match self {
-            Layer::Default => "built-in default".to_owned(),
-            Layer::UserFile(p) => format!("user config ({})", p.display()),
-            Layer::ProjectFile(p) => format!("project config ({})", p.display()),
-            Layer::Env(k) => format!("environment ({k})"),
-            Layer::Flag => "command-line flag".to_owned(),
-        }
-    }
-}
-
 // ---------------------------------------------------------------- the schema
-
-/// The resolved configuration. Every field concrete.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Config {
-    pub model: ModelSection,
-    pub budget: BudgetSection,
-    pub tools: ToolsSection,
-    pub permissions: PermissionsSection,
-    pub output: OutputSection,
-    pub sandbox: SandboxSection,
-}
-
-/// Kernel-enforced filesystem confinement. Off by default and Linux-only.
-///
-/// Off by default because it is a real restriction with real failure modes: a
-/// toolchain that reads something outside the allow-list stops working, and a
-/// sandbox that silently breaks the build is worse than none. On means a shell
-/// command cannot reach `~/.ssh` or axio's own credential file whatever else
-/// goes wrong.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct SandboxSection {
-    pub enabled: bool,
-    /// Extra paths a command may read, for whatever the toolchain needs that
-    /// the defaults do not cover.
-    pub read: Vec<String>,
-    /// Extra paths a command may write.
-    pub write: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ModelSection {
-    pub name: String,
-    pub effort: Effort,
-    pub max_tokens: u32,
-    /// Which dialect to speak. Two impls, chosen by name — deliberately not a
-    /// registry: a second provider is a second implementation, not an
-    /// extension point, until something needs it to be.
-    pub provider: String,
-    /// Override the endpoint. Mostly for talking to a compatible host.
-    pub base_url: Option<String>,
-}
 
 impl Default for ModelSection {
     fn default() -> Self {
@@ -104,14 +52,6 @@ impl Default for ModelSection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BudgetSection {
-    /// Stops a turn once the spend so far exceeds this. `None` is no ceiling.
-    pub max_usd_per_turn: Option<f64>,
-    pub max_steps: u32,
-}
-
 impl Default for BudgetSection {
     fn default() -> Self {
         Self {
@@ -119,14 +59,6 @@ impl Default for BudgetSection {
             max_steps: 50,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ToolsSection {
-    pub max_output_bytes: usize,
-    pub timeout_secs: u64,
-    pub max_file_bytes: u64,
 }
 
 impl Default for ToolsSection {
@@ -137,30 +69,6 @@ impl Default for ToolsSection {
             max_file_bytes: 8 * 1024 * 1024,
         }
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct PermissionsSection {
-    pub allow: Vec<String>,
-    pub deny: Vec<String>,
-}
-
-/// Hand-written `Default`, not derived.
-///
-/// This is the trap decision #22 exists for: `#[serde(default = "…")]` fires
-/// when a *field* is absent from a table that is present, and never when the
-/// whole table is absent. A derived `Default` then yields `false` for a bool
-/// whose documented default is `true`, and the only symptom is a feature
-/// quietly switching itself off for anyone who never wrote the section.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct OutputSection {
-    /// Ask the provider for a readable summary of its reasoning.
-    pub show_reasoning: bool,
-    /// Print what the turn cost. Defaults **on**: an agent that spends money
-    /// without saying so is a week-one complaint.
-    pub show_cost: bool,
 }
 
 impl Default for OutputSection {
@@ -267,31 +175,6 @@ pub struct Flags {
     pub effort: Option<Effort>,
 }
 
-/// Find the nearest project config at or above `start`, without escaping into
-/// a parent of `boundary`.
-///
-/// The boundary matters: walking to the filesystem root would pick up a
-/// `.axio/config.toml` in a home directory or in `/tmp` and apply it to an
-/// unrelated project.
-pub fn find_project_config(start: &Path, boundary: Option<&Path>) -> Option<PathBuf> {
-    let mut dir = Some(start);
-    while let Some(current) = dir {
-        let candidate = current.join(".axio").join("config.toml");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if boundary == Some(current) {
-            return None;
-        }
-        dir = current.parent();
-    }
-    None
-}
-
-/// Keys whose type is `Option`, and which serde therefore omits from a
-/// serialised default. Listed so `--explain` knows they exist.
-const OPTIONAL_KEYS: &[&str] = &["model.base_url", "budget.max_usd_per_turn"];
-
 /// Resolve every layer into one configuration.
 pub fn resolve(paths: &Paths, env: &[(String, String)], flags: &Flags) -> Resolved {
     let mut notices = Vec::new();
@@ -389,323 +272,7 @@ pub fn resolve(paths: &Paths, env: &[(String, String)], flags: &Flags) -> Resolv
     }
 }
 
-/// Clamp values that would make the agent misbehave rather than fail.
-fn validate(mut config: Config, notices: &mut Vec<Notice>) -> Config {
-    if config.budget.max_steps == 0 {
-        notices.push(Notice {
-            level: NoticeLevel::Warn,
-            message: "[budget] max_steps = 0 would end every turn before it began; using 1".into(),
-        });
-        config.budget.max_steps = 1;
-    }
-    if let Some(limit) = config.budget.max_usd_per_turn
-        && (!limit.is_finite() || limit <= 0.0)
-    {
-        notices.push(Notice {
-            level: NoticeLevel::Warn,
-            message: format!(
-                "[budget] max_usd_per_turn = {limit} is not a spendable amount; ignoring"
-            ),
-        });
-        config.budget.max_usd_per_turn = None;
-    }
-    if config.tools.max_output_bytes < 1024 {
-        notices.push(Notice {
-            level: NoticeLevel::Warn,
-            message: "[tools] max_output_bytes below 1024 leaves no room for a marker; using 1024"
-                .into(),
-        });
-        config.tools.max_output_bytes = 1024;
-    }
-    config
-}
-
-/// Read one file, validating section by section.
-///
-/// Returns the sections that survived. A section that fails to deserialise is
-/// dropped and reported; the rest of the file is kept. A backup is written only
-/// when something was actually lost.
-fn load_file(path: &Path, project: bool) -> (Option<toml::Table>, Vec<Notice>) {
-    let mut notices = Vec::new();
-
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, notices),
-        Err(e) => {
-            notices.push(Notice {
-                level: NoticeLevel::Warn,
-                message: format!("cannot read {}: {e}", path.display()),
-            });
-            return (None, notices);
-        }
-    };
-
-    let parsed: toml::Table = match text.parse() {
-        Ok(table) => table,
-        Err(e) => {
-            // Not valid TOML at all: nothing to salvage section by section.
-            notices.push(Notice {
-                level: NoticeLevel::Error,
-                message: format!("{} is not valid TOML ({e}); ignoring it", path.display()),
-            });
-            backup(path, &mut notices);
-            return (None, notices);
-        }
-    };
-
-    let mut kept = toml::Table::new();
-    let mut lost = false;
-
-    for (name, value) in parsed {
-        if !section_is_valid(&name, &value) {
-            notices.push(Notice {
-                level: NoticeLevel::Warn,
-                message: format!(
-                    "[{name}] in {} could not be understood; that section is using defaults",
-                    path.display()
-                ),
-            });
-            lost = true;
-            continue;
-        }
-        kept.insert(name, value);
-    }
-
-    if project {
-        // A project config may only make axio ask more, never less. A cloned
-        // repository that can grant itself shell access is remote code
-        // execution by `cd`, on a tool that ships no sandbox.
-        if let Some(toml::Value::Table(perms)) = kept.get_mut("permissions")
-            && perms.remove("allow").is_some()
-        {
-            notices.push(Notice {
-                level: NoticeLevel::Warn,
-                message: format!(
-                    "ignoring [permissions] allow in {}: a project config may only \
-                     add restrictions, never remove them",
-                    path.display()
-                ),
-            });
-        }
-    }
-
-    if lost {
-        backup(path, &mut notices);
-    }
-    (Some(kept), notices)
-}
-
-/// Does this section deserialise into its typed shape?
-fn section_is_valid(name: &str, value: &toml::Value) -> bool {
-    let v = value.clone();
-    match name {
-        "model" => v.try_into::<ModelSection>().is_ok(),
-        "budget" => v.try_into::<BudgetSection>().is_ok(),
-        "tools" => v.try_into::<ToolsSection>().is_ok(),
-        "permissions" => v.try_into::<PermissionsSection>().is_ok(),
-        "output" => v.try_into::<OutputSection>().is_ok(),
-        "sandbox" => v.try_into::<SandboxSection>().is_ok(),
-        // An unknown section is a typo or a newer axio; either way it is not
-        // ours to reset, and dropping it silently is the friendlier failure.
-        _ => false,
-    }
-}
-
-/// Copy a file aside before its broken sections are ignored.
-///
-/// Once per *content*, not once per load. axio never repairs the file, so the
-/// "something was lost" condition stays true forever — and a time-stamped name
-/// meant every subsequent invocation, including the report-and-exit modes,
-/// dropped another identical copy into the user's `.axio/` directory.
-fn backup(path: &Path, notices: &mut Vec<Notice>) {
-    let Ok(current) = std::fs::read(path) else {
-        return;
-    };
-    if let Some(dir) = path.parent()
-        && let Ok(entries) = std::fs::read_dir(dir)
-    {
-        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-        let prefix = format!("{stem}.corrupt-");
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with(&prefix)
-                && std::fs::read(entry.path()).is_ok_and(|prior| prior == current)
-            {
-                // This exact content is already preserved, which was the point.
-                return;
-            }
-        }
-    }
-
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let backup = path.with_extension(format!("corrupt-{stamp}"));
-    match std::fs::copy(path, &backup) {
-        Ok(_) => notices.push(Notice {
-            level: NoticeLevel::Info,
-            message: format!("a copy of the previous file is at {}", backup.display()),
-        }),
-        Err(e) => notices.push(Notice {
-            level: NoticeLevel::Warn,
-            message: format!("could not back up {}: {e}", path.display()),
-        }),
-    }
-}
-
-/// The environment layer.
-///
-/// Deliberately a short explicit list rather than a generic `AXIO_<SECTION>_<KEY>`
-/// scheme: an environment variable is the layer most likely to be set by
-/// accident in a shell profile and forgotten, so every one of them should be a
-/// deliberate decision by someone reading this list.
-///
-/// `below` is everything merged so far, and every value is validated against
-/// the section it would land in before it goes anywhere near the whole-config
-/// deserialise. A file gets that protection from `section_is_valid`; without
-/// the same check here, one typo in one variable fails the final `try_into`,
-/// falls back to `Config::default()`, and silently discards the entire
-/// configuration — including budget limits from a section the typo never
-/// touched.
-fn env_layer(
-    env: &[(String, String)],
-    below: &toml::Table,
-    notices: &mut Vec<Notice>,
-) -> (toml::Table, Vec<(String, String)>) {
-    let mut table = toml::Table::new();
-    let mut keys = Vec::new();
-
-    for (var, key) in [
-        ("AXIO_MODEL", "model.name"),
-        ("AXIO_EFFORT", "model.effort"),
-        ("AXIO_MAX_STEPS", "budget.max_steps"),
-        ("AXIO_MAX_USD_PER_TURN", "budget.max_usd_per_turn"),
-        ("AXIO_PROVIDER", "model.provider"),
-        ("AXIO_BASE_URL", "model.base_url"),
-    ] {
-        let Some((_, raw)) = env.iter().find(|(k, _)| k == var) else {
-            continue;
-        };
-        if raw.trim().is_empty() {
-            continue;
-        }
-        let value = match key {
-            "budget.max_steps" => raw.parse::<i64>().ok().map(toml::Value::Integer),
-            "budget.max_usd_per_turn" => raw.parse::<f64>().ok().map(toml::Value::Float),
-            _ => Some(toml::Value::String(raw.clone())),
-        };
-        let value = value.filter(|value| {
-            let (section, _) = key.split_once('.').expect("every key names a section");
-            let mut candidate = below
-                .get(section)
-                .and_then(toml::Value::as_table)
-                .cloned()
-                .unwrap_or_default();
-            let mut probe = toml::Table::new();
-            set(&mut probe, key, value.clone());
-            if let Some(toml::Value::Table(over)) = probe.get(section) {
-                merge(&mut candidate, over);
-            }
-            section_is_valid(section, &toml::Value::Table(candidate))
-        });
-
-        match value {
-            Some(value) => {
-                set(&mut table, key, value);
-                keys.push((key.to_owned(), var.to_owned()));
-            }
-            None => notices.push(Notice {
-                level: NoticeLevel::Warn,
-                message: format!("{var}={raw} is not a valid value; ignoring it"),
-            }),
-        }
-    }
-    (table, keys)
-}
-
 // ---------------------------------------------------------------- table utils
-
-fn to_table<T: Serialize>(value: &T) -> toml::Table {
-    match toml::Value::try_from(value) {
-        Ok(toml::Value::Table(t)) => t,
-        _ => toml::Table::new(),
-    }
-}
-
-/// Deep merge, where `over` wins leaf by leaf.
-fn merge(base: &mut toml::Table, over: &toml::Table) {
-    for (key, value) in over {
-        match (base.get_mut(key), value) {
-            (Some(toml::Value::Table(existing)), toml::Value::Table(incoming)) => {
-                merge(existing, incoming)
-            }
-            _ => {
-                base.insert(key.clone(), value.clone());
-            }
-        }
-    }
-}
-
-/// Record which layer supplied each leaf key, as a dotted path.
-fn record(into: &mut BTreeMap<String, Layer>, table: &toml::Table, layer: &Layer, prefix: &str) {
-    for (key, value) in table {
-        let path = if prefix.is_empty() {
-            key.clone()
-        } else {
-            format!("{prefix}.{key}")
-        };
-        match value {
-            toml::Value::Table(inner) => record(into, inner, layer, &path),
-            _ => {
-                into.insert(path, layer.clone());
-            }
-        }
-    }
-}
-
-fn set(table: &mut toml::Table, dotted: &str, value: toml::Value) {
-    let mut parts = dotted.split('.').peekable();
-    let mut current = table;
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            current.insert(part.to_owned(), value);
-            return;
-        }
-        current = match current
-            .entry(part.to_owned())
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-        {
-            toml::Value::Table(t) => t,
-            other => {
-                *other = toml::Value::Table(toml::Table::new());
-                match other {
-                    toml::Value::Table(t) => t,
-                    _ => unreachable!("just assigned a table"),
-                }
-            }
-        };
-    }
-}
-
-impl Config {
-    pub fn tool_limits(&self) -> ToolLimits {
-        ToolLimits {
-            max_output_bytes: self.tools.max_output_bytes,
-            timeout: std::time::Duration::from_secs(self.tools.timeout_secs),
-            max_file_bytes: self.tools.max_file_bytes,
-        }
-    }
-
-    pub fn reasoning(&self) -> ReasoningDisplay {
-        if self.output.show_reasoning {
-            ReasoningDisplay::Summarized
-        } else {
-            ReasoningDisplay::Omitted
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
