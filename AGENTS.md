@@ -31,6 +31,12 @@ Four crates and one binary. The dependency graph is a tree rooted at
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
 | `axio` | clap, surface selection, renderers, the inline TUI, the optional Landlock sandbox, `Approver` implementations |
 
+**Four crates, and a long file is not evidence for a fifth.** A file past 800
+lines becomes child modules — `tui/`, `agent/` — never another crate. Crates are
+how the dependency graph is kept honest (`axio-core` links no transport, no
+terminal, no filesystem walker), and a module that has grown is not a statement
+about dependencies. `scripts/limits.sh` enforces both counts.
+
 Three invariants everything else follows from:
 
 1. **`Tool::run` is the only execution path.** `plan()` is pure and returns the

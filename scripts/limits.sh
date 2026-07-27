@@ -11,6 +11,7 @@ cd "$(git rev-parse --show-toplevel)"
 MAX_MEMBERS=4
 MAX_TOOLCX_FIELDS=5
 MAX_LOC=10000
+MAX_FILE_LOC=800
 
 status=0
 
@@ -47,11 +48,25 @@ fi
 # module, which is where they live by convention here. Files under tests/ are
 # excluded outright.
 loc=0
+widest=0
+widest_file=""
 while IFS= read -r f; do
   n=$(awk '/#\[cfg\(test\)\]/{exit} {print}' "$f" | grep -cvE '^\s*(//|$)' || true)
   loc=$((loc + n))
+  if [ "$n" -gt "$widest" ]; then
+    widest=$n
+    widest_file=$f
+  fi
+  # A file past this is a module that has stopped being one thing. The answer
+  # is child modules, never another crate: the dependency graph is the reason
+  # the crate count is capped, and it is not what a long file is evidence of.
+  if [ "$n" -gt "$MAX_FILE_LOC" ]; then
+    echo "FAIL: $f is $n lines (max $MAX_FILE_LOC). Split it into modules." >&2
+    status=1
+  fi
 done < <(git ls-files 'crates/*/src/*.rs' 'crates/*/src/**/*.rs')
 echo "workspace Rust LOC (excl. tests): $loc / $MAX_LOC"
+echo "widest file: $widest / $MAX_FILE_LOC ($widest_file)"
 if [ "$loc" -gt "$MAX_LOC" ]; then
   echo "FAIL: $loc lines exceeds the $MAX_LOC budget. Raise it deliberately or cut scope." >&2
   status=1
