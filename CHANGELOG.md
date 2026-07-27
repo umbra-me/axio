@@ -65,6 +65,12 @@ ordered permission engine, sessions on disk, and layered configuration.
   and its token usage, so a quiet model looks different from a hung one.
 - **Tables.** Rendered as aligned columns with the alignment the markdown asked
   for, narrowed to fit the terminal rather than overflowing it.
+- **A session count in `--doctor`**, under paths, and a note beside any provider
+  whose transport has never been run against its real endpoint.
+- **Argument errors that are enough to fix the call.** Both halves name the tool
+  and everything it takes, whether an argument was invented or left out, and a
+  call that fails before it has a plan is still labelled with the tool it was —
+  so a failure reads as `grep  invalid arguments: …` rather than as a blank.
 - **A framed composer.** The prompt sits in a rounded frame carrying the model
   on its top rule and the turn's elapsed time and usage on the right of it, with
   a status bar beneath: what is happening on the left, what to press on the
@@ -110,8 +116,24 @@ session files live — with a regression test that fails against the original
 implementation. The honest summary is that axio drove the whole loop competently
 and the model's code needed a review it would not have survived without.
 
-**A human did not watch the approvals.** The criterion asks for one, and this
-session was driven programmatically with each approval captured and answered
+A second session ran the identical task from the identical commit, to see
+whether the changes the first one prompted had helped. Failed calls were still
+rendering against a blank name — the first fix had stopped a long message
+truncating the name away, but three separate paths end a call before it has a
+subject and only one of them had been patched. That is now fixed at all three,
+and it is the clearest argument for doing this at all: two rounds of stub tests
+and a pty harness never produced it, and two real sessions produced it twice.
+
+The second session also settled what had *not* worked. Tool descriptions now
+name their own parameters, and the invented-argument mistakes of the first
+session did not recur — on one run each, which is weak evidence, and is recorded
+as weak. The system prompt now asks for the project's own formatter and checks
+to be run on what was changed, and **the model ignored it**: unformatted code
+again, and the same non-recursive read of a directory that contains directories.
+Prompt wording moved neither. What catches both is CI and review.
+
+**A human did not watch the approvals.** The criterion asks for one, and both
+sessions were driven programmatically with each approval captured and answered
 automatically. That half remains unverified.
 
 ### Known limitations

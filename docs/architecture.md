@@ -240,6 +240,13 @@ knowing it exists. The spill file is named for the call that produced it, and
 the truncation marker names that path and tells the model to read it, so both
 have to be true or the marker is an instruction nothing can follow.
 
+Arguments are checked at the same choke point and for the same reason: every
+schema declares what it takes and what it requires, and both halves are enforced
+before a tool is asked to plan. A tool that validated its own would be a tool
+that could forget to. What the model gets back names the tool and everything it
+accepts, whether it invented an argument or omitted one — a rejection that does
+not say what would have worked is a turn spent guessing.
+
 `files_changed` on `TurnEnded` is derived from the calls that succeeded and
 previewed a diff, which is `write` and `edit`. A shell command that rewrites a
 tree is not in it and cannot be: naming what is knowable leaves a visible gap,

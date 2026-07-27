@@ -28,7 +28,8 @@ bash scripts/features.sh                            # both feature sets, with CI
 
 A third job runs `cargo-deny` over `deny.toml`, on Linux only: permissive
 licences, no yanked or advisory-flagged crates, no wildcard versions, one TLS
-stack. It is not part of a stock toolchain — `cargo install cargo-deny`, then
+stack, and no `aws-lc-*` — the default crypto provider, which wants a C
+toolchain a clean Windows install is promised not to need. It is not part of a stock toolchain — `cargo install cargo-deny`, then
 `cargo deny check`. It runs on every pull request, so a new upstream advisory
 can turn it red when nothing about the dependencies changed.
 
@@ -66,7 +67,7 @@ justification` section in `AGENTS.md` giving the dependency-isolation reason.
 
 ## Testing
 
-Three tiers, in the order you should reach for them:
+Four tiers, in the order you should reach for them:
 
 1. **Scripted provider.** Replay a `Vec<StreamEvent>` and assert on loop
    behaviour. Microseconds, no I/O. This is where most tests belong.
@@ -82,7 +83,9 @@ Three tiers, in the order you should reach for them:
 None of those four touches a real provider. `bash scripts/live-check.sh` runs a
 real turn against the configured model in a throwaway directory, and is the only
 check that proves the wire format. It needs a credential and it spends money, so
-it never runs in CI; run it by hand after a transport or provider change.
+it never runs in CI; run it by hand after a transport or provider change. It
+has been run against the chat-completions transport and passed; the Messages
+transport has no credential and has never been through it.
 
 ## Commits
 

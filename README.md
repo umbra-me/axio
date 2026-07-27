@@ -23,6 +23,14 @@ The Anthropic transport has not had that run against it: there has been no
 credential to run it with. It is built from the documented wire format and
 snapshot-tested against it, which is not the same as having met the endpoint.
 
+It has also been pointed at its own repository and asked to add a feature, twice
+— which is where its own remaining bugs have come from lately. Both sessions are
+written up in the changelog, the code it got wrong along with them.
+
+**There is no release yet.** Nothing is tagged; `cargo install --git` builds
+whatever `main` is. The version will be cut when a few days have passed without
+real use turning something up, not before.
+
 Writes and shell commands need approval; reads do not. Interactively you are
 asked. In a one-shot run there is nobody to ask, so they are refused unless
 `--yes` was given — and a turn that completed with something refused exits `5`,
