@@ -60,8 +60,10 @@ pub fn is_stripped(key: &str) -> bool {
 /// Configure a command for containment and cancellation.
 ///
 /// On unix the child leads a new process group, so a kill reaches everything it
-/// spawned. On Windows it gets a new process group *and* a job object, because
-/// a process group alone does not stop grandchildren surviving.
+/// spawned. On Windows it gets a new process group, which keeps a console
+/// Ctrl-C from reaching it behind our backs — cancellation is decided here, not
+/// by whoever is holding the console. Killing the tree there is a separate
+/// problem, and [`kill_tree`] is where it is solved.
 ///
 /// Note what is deliberately absent on Windows: `CREATE_NO_WINDOW`. That flag
 /// belongs to a GUI application spawning a console child. In a console
@@ -100,6 +102,13 @@ pub fn configure(cmd: &mut Command, cwd: &std::path::Path, env: &[(String, Strin
 ///
 /// `Child::kill` alone signals one process. A shell that started a build leaves
 /// the build running, which is exactly the orphan the acceptance test looks for.
+///
+/// Unix kills the process group, which the child leads. Windows has no such
+/// thing to signal, so it asks `taskkill` to walk the tree — a job object would
+/// be the tidier answer, but a job has to be assigned at spawn time to capture
+/// anything, and by the time a kill is wanted the grandchildren already exist.
+/// Only the unix half is covered by an automated orphan test; the Windows half
+/// is verified by construction, and labelled as such in the gotchas.
 pub async fn kill_tree(child: &mut tokio::process::Child) {
     #[cfg(unix)]
     {
@@ -121,6 +130,22 @@ pub async fn kill_tree(child: &mut tokio::process::Child) {
             unsafe {
                 libc::killpg(pid, libc::SIGKILL);
             }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Some(pid) = child.id() {
+            // `/T` is the whole point: it walks the tree from this pid down, so
+            // a shell's grandchildren go too. Failure is ignored deliberately —
+            // the process may already be gone, and `child.kill()` below is the
+            // backstop either way.
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
         }
     }
     let _ = child.kill().await;

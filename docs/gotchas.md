@@ -274,6 +274,16 @@ every run takes the colour of the one before it: `fn` renders plain and the
 space after it renders as a keyword. It looks like an off-by-one in the colour
 table rather than in the loop, which is what makes it worth writing down.
 
+**Killing a process tree is a different problem on Windows.** There is no
+process group to signal, and a job object — the tidy answer — has to be assigned
+at spawn time to capture anything, because a process joins a job only before it
+has children. By the time a kill is wanted the grandchildren already exist, so
+the kill walks the tree with `taskkill /T /F` instead. Only the unix half has an
+automated orphan test; the Windows half is verified by construction. A
+`windows-sys` dependency with the job-object features sat in the manifest unused
+for exactly this reason — the design was written down and never built, and
+nothing failed, because the only test for it was `#[cfg(unix)]`.
+
 **A character is not a column.** An ideograph or an emoji occupies two columns
 and counts as one character, and a combining mark occupies none. Wrapping by
 character count writes those lines wider than they were measured, and the

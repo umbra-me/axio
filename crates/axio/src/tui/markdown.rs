@@ -51,6 +51,33 @@ pub fn text_width(text: &str) -> usize {
     Span::raw(text).width()
 }
 
+/// Word-wrap unstyled text to a width in columns.
+///
+/// The same wrapping the renderer uses, for callers with nothing to style — a
+/// typed prompt going to scrollback, a command preview, the streaming tail. A
+/// second implementation would drift from this one, and the first anybody would
+/// hear of it is two paragraphs breaking differently on the same screen.
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(MIN_WIDTH);
+    text.split('\n')
+        .flat_map(|paragraph| {
+            let chars: Vec<(char, Style)> =
+                paragraph.chars().map(|c| (c, Style::default())).collect();
+            wrap_styled(&chars, width)
+                .into_iter()
+                .map(|row| row.into_iter().map(|(c, _)| c).collect::<String>())
+        })
+        .collect()
+}
+
+/// Cut unstyled text to a width in columns, marking the cut.
+pub fn truncate(text: &str, width: usize) -> String {
+    fit(vec![(text.to_owned(), Style::default())], width)
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect()
+}
+
 fn code() -> Style {
     Style::default().fg(Color::Cyan)
 }
@@ -1018,5 +1045,25 @@ mod tests {
     fn a_quote_is_marked_in_the_margin() {
         let lines = render("> quoted", 40);
         assert!(text_of(&lines).contains("│ quoted"));
+    }
+    #[test]
+    fn wrapping_breaks_on_words_and_never_loses_text() {
+        let text = "the quick brown fox jumps over the lazy dog";
+        let lines = wrap(text, 20);
+        assert!(lines.iter().all(|l| l.chars().count() <= 20));
+        assert_eq!(lines.join(" "), text);
+    }
+
+    #[test]
+    fn a_word_wider_than_the_terminal_is_broken_rather_than_dropped() {
+        let long = "x".repeat(60);
+        let lines = wrap(&long, 25);
+        assert!(lines.iter().all(|l| l.chars().count() <= 25));
+        assert_eq!(lines.concat(), long);
+    }
+
+    #[test]
+    fn blank_lines_survive_wrapping() {
+        assert_eq!(wrap("a\n\nb", 40), vec!["a", "", "b"]);
     }
 }

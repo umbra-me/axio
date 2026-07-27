@@ -4,7 +4,6 @@
 //! What is settled has already gone to scrollback; this draws only what is
 //! still in flight — the streaming tail, the composer, and what is happening.
 
-use super::scrollback::wrap;
 use super::*;
 
 impl Tui {
@@ -103,7 +102,7 @@ impl Tui {
             return Paragraph::new(Vec::<Line<'static>>::new());
         }
         let dim = Style::default().add_modifier(Modifier::DIM);
-        let mut lines: Vec<Line<'static>> = wrap(&self.live, width)
+        let mut lines: Vec<Line<'static>> = markdown::wrap(&self.live, width)
             .into_iter()
             .map(|row| {
                 let mut spans = vec![Span::raw("  ")];

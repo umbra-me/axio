@@ -32,7 +32,7 @@ impl Tui {
         text: &str,
     ) -> Result<(), B::Error> {
         let width = self.width(terminal).saturating_sub(2) as usize;
-        let mut lines: Vec<Line<'static>> = wrap(text, width)
+        let mut lines: Vec<Line<'static>> = markdown::wrap(text, width)
             .into_iter()
             .enumerate()
             .map(|(i, l)| {
@@ -122,7 +122,7 @@ pub(super) fn tool_line(subject: &str, status: &ToolStatus, width: usize) -> Opt
         // No room for both: the outcome wins, since the detail is recoverable
         // from the transcript above and the outcome is not.
         let keep = room.saturating_sub(markdown::text_width(&note) + 2);
-        (truncate(&left, keep), note)
+        (markdown::truncate(&left, keep), note)
     } else {
         (left, note)
     };
@@ -146,78 +146,11 @@ pub(super) fn tool_line(subject: &str, status: &ToolStatus, width: usize) -> Opt
     ]))
 }
 
-/// Cut a string to a number of columns, marking the cut.
-fn truncate(text: &str, width: usize) -> String {
-    if markdown::text_width(text) <= width {
-        return text.to_owned();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let cell = markdown::cell_width(c);
-        if used + cell > width.saturating_sub(1) {
-            break;
-        }
-        out.push(c);
-        used += cell;
-    }
-    out.push('…');
-    out
-}
-
 fn first_sentence(text: &str) -> &str {
     match text.find(". ") {
         Some(end) => &text[..=end],
         None => text,
     }
-}
-
-/// Wrap on word boundaries, falling back to a hard break for a word that is
-/// wider than the terminal.
-pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(20);
-    let mut out = Vec::new();
-    for paragraph in text.split('\n') {
-        if paragraph.is_empty() {
-            out.push(String::new());
-            continue;
-        }
-        let mut line = String::new();
-        for word in paragraph.split(' ') {
-            let mut word = word;
-            // Measured in columns, not characters: a line of ideographs counted
-            // by character is written twice as wide as it was measured, and the
-            // end of it is clipped away.
-            while markdown::text_width(word) > width {
-                if !line.is_empty() {
-                    out.push(std::mem::take(&mut line));
-                }
-                let mut split = String::new();
-                let mut used = 0;
-                for c in word.chars() {
-                    let cell = markdown::cell_width(c);
-                    if used + cell > width {
-                        break;
-                    }
-                    split.push(c);
-                    used += cell;
-                }
-                let taken = split.len();
-                out.push(split);
-                word = &word[taken..];
-            }
-            if line.is_empty() {
-                line.push_str(word);
-            } else if markdown::text_width(&line) + 1 + markdown::text_width(word) <= width {
-                line.push(' ');
-                line.push_str(word);
-            } else {
-                out.push(std::mem::replace(&mut line, word.to_owned()));
-            }
-        }
-        out.push(line);
-    }
-    out
 }
 
 /// The evidence an approval rests on, as scrollback lines.
@@ -241,7 +174,7 @@ pub(super) fn preview_lines(preview: Option<&Preview>, width: usize) -> Vec<Line
         Some(Preview::Command { raw, cwd, .. }) => {
             // The raw string, never the word split: the split reads as a
             // simpler command than the one that runs.
-            for line in wrap(raw, width) {
+            for line in markdown::wrap(raw, width) {
                 lines.push(Line::styled(
                     format!("  $ {line}"),
                     Style::default().fg(Color::White),
@@ -253,7 +186,7 @@ pub(super) fn preview_lines(preview: Option<&Preview>, width: usize) -> Vec<Line
             ));
         }
         Some(Preview::Text { text }) => {
-            for line in wrap(text, width) {
+            for line in markdown::wrap(text, width) {
                 lines.push(Line::styled(
                     format!("  {line}"),
                     Style::default().add_modifier(Modifier::DIM),
@@ -305,27 +238,6 @@ mod tests {
         assert!(text.contains('…'), "{text:?}");
         assert!(text.ends_with("exit 1"), "{text:?}");
         assert!(line.width() <= 36, "{}", line.width());
-    }
-
-    #[test]
-    fn wrapping_breaks_on_words_and_never_loses_text() {
-        let text = "the quick brown fox jumps over the lazy dog";
-        let lines = wrap(text, 20);
-        assert!(lines.iter().all(|l| l.chars().count() <= 20));
-        assert_eq!(lines.join(" "), text);
-    }
-
-    #[test]
-    fn a_word_wider_than_the_terminal_is_broken_rather_than_dropped() {
-        let long = "x".repeat(60);
-        let lines = wrap(&long, 25);
-        assert!(lines.iter().all(|l| l.chars().count() <= 25));
-        assert_eq!(lines.concat(), long);
-    }
-
-    #[test]
-    fn blank_lines_survive_wrapping() {
-        assert_eq!(wrap("a\n\nb", 40), vec!["a", "", "b"]);
     }
 
     #[test]
