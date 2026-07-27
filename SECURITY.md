@@ -33,7 +33,9 @@ Concretely, in the shipped design:
 ## What axio does not do
 
 **There is no sandbox by default.** Confinement is the workspace root, the
-approval prompt and process-group containment — not an OS-enforced boundary.
+approval prompt, and killing a cancelled command's whole process tree — by
+process group on unix, by walking the tree on Windows, which has no group to
+signal. None of that is an OS-enforced boundary.
 `--sandbox` adds one on Linux; see below. Without it, a shell command you
 approve can do anything your user account can do.
 

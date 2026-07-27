@@ -35,6 +35,14 @@ pub(crate) fn doctor(resolved: &Resolved) -> u8 {
 
     let _ = writeln!(out, "model");
     let _ = writeln!(out, "  provider            {}", cfg.model.provider);
+    // A transport nobody has run against the real endpoint is reported as one.
+    // The claim belongs here rather than only in the README, because this is
+    // where someone looks when a request behaves strangely — and "the wire
+    // format is inferred from documentation" is the first thing they should
+    // suspect. `scripts/live-check.sh` is what retires this line.
+    if let Some(caveat) = unverified_transport(&cfg.model.provider) {
+        let _ = writeln!(out, "  transport           {caveat}");
+    }
     let _ = writeln!(out, "  model               {}", cfg.model.name);
     let _ = writeln!(out, "  effort              {}", cfg.model.effort.as_wire());
     let _ = writeln!(out, "  max_tokens          {}", cfg.model.max_tokens);
@@ -154,5 +162,39 @@ pub(crate) fn provider_prices(
         "anthropic" => Some(axio_provider::anthropic::model_info(&cfg.model.name)),
         "ollama" | "openai-compatible" => Some(axio_provider::openai::model_info(&cfg.model.name)),
         _ => None,
+    }
+}
+
+/// What has and has not been proven about a provider's wire format.
+///
+/// `None` for a transport that `scripts/live-check.sh` has been run against.
+/// The distinction is not pedantry: every other test in the suite answers from
+/// a stub written in this repository, and a stub that is wrong in the same way
+/// as the code is a test that agrees with the bug.
+pub(crate) fn unverified_transport(provider: &str) -> Option<&'static str> {
+    match provider {
+        "anthropic" => {
+            Some("never run against the real endpoint; built from the documented format")
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_proven_transport_carries_no_caveat() {
+        // The chat-completions path has been through the live check, so saying
+        // it is unverified would be as wrong as saying nothing about the other.
+        assert!(unverified_transport("ollama").is_none());
+        assert!(unverified_transport("openai-compatible").is_none());
+    }
+
+    #[test]
+    fn the_unproven_transport_says_so() {
+        let note = unverified_transport("anthropic").expect("a caveat");
+        assert!(note.contains("never run"), "{note}");
     }
 }

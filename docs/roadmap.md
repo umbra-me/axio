@@ -59,11 +59,18 @@ for it.
 Everything M5 needs is built and green. What remains is the decision to tag it,
 and three things no amount of code can supply:
 
-- **A real turn against the Anthropic endpoint.** `scripts/live-check.sh` has
-  been run against the chat-completions path and passed all thirteen checks, so
-  the turn loop, the tools, the refusal path, the deny list and resume are no
-  longer proven only against a stub somebody here wrote. The Messages transport
-  has still never been exercised, because no credential exists for it.
+- ~~A real turn against a real model.~~ **Done.** `scripts/live-check.sh` was
+  run against the chat-completions path and passed all thirteen checks, so the
+  turn loop, the tools, the refusal path, the deny list and resume are no longer
+  proven only against a stub somebody here wrote.
+
+  The Messages transport is **deliberately deferred**, not pending. It has never
+  been exercised against the real endpoint, no credential exists for it, and
+  waiting for one would hold the release hostage to a signup. It ships labelled
+  — in the README, in the changelog and by `--doctor` — and the label is the
+  deal: a provider nobody has run is presented as a provider nobody has run.
+  Verifying it is a half-hour job the day a key exists, and until then the
+  supported path is the one that has been proven.
 - **An install on a machine that has never built Rust.** Everything checkable
   has been checked: no `aws-lc-sys`, `onig_sys`, `openssl-sys`, `cmake` or
   `bindgen` in the graph for any target — now enforced by `deny.toml` rather

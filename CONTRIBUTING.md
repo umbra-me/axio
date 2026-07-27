@@ -52,10 +52,14 @@ Changes that break one of these need a very good argument in the pull request.
 
 ## Structural budgets
 
-`scripts/limits.sh` prints and enforces three numbers: workspace members,
-`ToolCx` fields, and workspace Rust lines excluding tests. They are guesses
-calibrated against a predecessor that grew to 21 crates. Raising one is allowed
-— in a commit whose message says why.
+`scripts/limits.sh` prints and enforces four numbers: workspace members,
+`ToolCx` fields, the widest single file, and workspace Rust lines excluding
+tests. They are guesses calibrated against a predecessor that grew to 21 crates.
+Raising one is allowed — in a commit whose message says why.
+
+A file past the per-file ceiling becomes child modules, never a new crate: the
+member cap exists to keep the dependency graph honest, and a long file says
+nothing about dependencies.
 
 A fifth workspace member additionally needs a `### Workspace member
 justification` section in `AGENTS.md` giving the dependency-isolation reason.
