@@ -36,6 +36,7 @@ impl Agent {
 
         for (call_id, name, input) in calls {
             let Some(tool) = self.tools.get(&name).cloned() else {
+                self.label(turn, &call_id, &name);
                 planned.push(Planned::Resolved(
                     call_id,
                     ToolStatus::Failed {
@@ -48,6 +49,7 @@ impl Agent {
             if let Err(e) =
                 crate::tool::reject_unknown_arguments(&input, tool.schema(), tool.name())
             {
+                self.label(turn, &call_id, tool.name());
                 planned.push(Planned::Resolved(
                     call_id,
                     ToolStatus::Failed {
@@ -63,6 +65,8 @@ impl Agent {
                 Err(e) => {
                     // A bad argument is a tool_result, not a turn failure: the
                     // model can read it and try again.
+                    //
+                    self.label(turn, &call_id, tool.name());
                     planned.push(Planned::Resolved(
                         call_id,
                         ToolStatus::Failed {
@@ -226,6 +230,23 @@ impl Agent {
 
     /// Record the subject and preview a plan produced, so a surface can show
     /// what is about to happen and the transcript records what was decided.
+    /// Give a call that never produced a plan something to be known by.
+    ///
+    /// Three things can end a call before it has a subject: no such tool,
+    /// arguments the schema rejects, and a `plan` that fails. All three used to
+    /// leave the item's subject empty, so the surface rendered `invalid
+    /// arguments: …` against a blank name and the reader was left to guess
+    /// which of six tools had been called. Found by watching a real session:
+    /// four of them in a row, none of them identifiable.
+    ///
+    /// Nothing is authorised by this. The subject of a call that never ran is a
+    /// label, and policy is not consulted again after it.
+    fn label(&mut self, turn: TurnId, call_id: &str, name: &str) {
+        if let Some(item) = self.session.set_tool_plan(call_id, name, None) {
+            self.emit(Some(turn), EventKind::ItemUpdated { item });
+        }
+    }
+
     fn record_plan(&mut self, turn: TurnId, call_id: &str, plan: &Plan) {
         if let Some(item) = self
             .session

@@ -1,5 +1,7 @@
 Replace an exact string in a file.
 
+Takes `path`, `old` and `new`, all required.
+
 `old` must appear exactly once. If it appears more than once the edit is
 refused rather than guessing — include surrounding lines to make it unique.
 

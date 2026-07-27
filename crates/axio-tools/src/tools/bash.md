@@ -1,5 +1,8 @@
 Run a shell command in the workspace.
 
+Takes `command` (the whole command line, required) and `timeout_secs`. The
+argument is `command` and not `cmd`.
+
 Use this for builds, tests, linters, version control and anything else the
 project already has a command for. Prefer a project's own tooling over
 reimplementing what it does.

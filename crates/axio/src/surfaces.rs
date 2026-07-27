@@ -324,6 +324,10 @@ pub(crate) fn system_prompt(cwd: &std::path::Path) -> String {
          Platform: {}\n\n\
          You have tools: read, write, edit, glob, grep and bash. Prefer the project's own \
          commands over reimplementing what they do.\n\n\
+         Match the conventions of the code you are changing. When a project has a formatter, \
+         a linter or a test command, run them on what you changed before you finish — an edit \
+         that does not survive the project's own checks is not done, and finding that out is \
+         a command you can run rather than something to leave for whoever reads it.\n\n\
          Keep responses focused, brief, and concise. Lead with the outcome, then the detail.\n\
          Deliver what was asked at the scope intended: make routine judgement calls yourself, \
          and check in only when different readings would lead to materially different work.\n\

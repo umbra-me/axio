@@ -883,3 +883,52 @@ async fn cancelling_leaves_no_orphan_process() {
         "an orphaned grandchild survived cancellation and did its work"
     );
 }
+
+/// A call the tool refuses to plan still has to say which tool refused it.
+///
+/// The regression: three things can end a call before it has a subject — no
+/// such tool, arguments the schema rejects, and a `plan` that fails — and all
+/// three left it empty, so the surface rendered `invalid arguments: …` against
+/// a blank name. With six tools registered that is a guessing game. Found by
+/// watching a real session produce four of them in a row, none identifiable.
+#[tokio::test]
+async fn a_call_that_fails_to_plan_still_names_its_tool() {
+    let mut h = harness(
+        // `grep` takes `pattern`; this asks for arguments it does not have.
+        vec![turn_with(tool_call(
+            0,
+            "t1",
+            "grep",
+            r#"{"query":"needle","path":"src","max_results":10}"#,
+        ))],
+        Policy::new().unattended_allow(),
+        Arc::new(CountingApprover {
+            asked: Arc::new(AtomicUsize::new(0)),
+            answer: Decision::Allow,
+        }),
+    );
+
+    // The turn's own outcome is beside the point: the scripted provider has one
+    // response, so what follows the tool result is not what is under test.
+    let _ = h
+        .agent
+        .run_turn("search".into(), CancellationToken::new())
+        .await;
+
+    let named = drain(&mut h.rx).into_iter().any(|e| match e.kind {
+        EventKind::ItemUpdated { item } | EventKind::ItemCompleted { item } => match item.body {
+            ItemBody::ToolCall {
+                subject, status, ..
+            } => {
+                subject.contains("grep")
+                    && matches!(status, axio_core::protocol::ToolStatus::Failed { .. })
+            }
+            _ => false,
+        },
+        _ => false,
+    });
+    assert!(
+        named,
+        "a failed call reached the surface without naming its tool"
+    );
+}
