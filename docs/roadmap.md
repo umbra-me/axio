@@ -64,10 +64,19 @@ and three things no amount of code can supply:
   the turn loop, the tools, the refusal path, the deny list and resume are no
   longer proven only against a stub somebody here wrote. The Messages transport
   has still never been exercised, because no credential exists for it.
-- **An install on a machine that has never built Rust.** No `aws-lc-sys`,
-  `onig_sys`, `openssl-sys` or `cmake` appears in the graph for any target, and
-  `ring` ships pre-assembled objects for its NASM paths — so the toolchain
-  rustup already requires should be enough. Should be, and nobody has tried.
+- **An install on a machine that has never built Rust.** Everything checkable
+  has been checked: no `aws-lc-sys`, `onig_sys`, `openssl-sys`, `cmake` or
+  `bindgen` in the graph for any target — now enforced by `deny.toml` rather
+  than left to inspection — and `ring` hands its pre-assembled objects to the
+  linker instead of invoking an assembler, so NASM is never run. CI compiles,
+  links and tests the whole workspace on Windows every push.
+
+  What none of that covers is the machine itself: a GitHub runner arrives with
+  build tools a fresh laptop does not have. The test is three commands on a
+  Windows box that has never built Rust — install rustup, accept the MSVC build
+  tools it asks for, then `cargo install --git https://github.com/umbra-me/axio
+  --locked axio` and run one turn. If it needs anything else, the dependency
+  graph gained something it should not have.
 - **A dogfooding session with a human watching every approval**, written up
   here. Done means someone ran it.
 
