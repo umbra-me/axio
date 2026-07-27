@@ -24,6 +24,8 @@ mod overlay;
 mod paint;
 mod picker;
 mod scrollback;
+mod signin;
+mod terminal;
 
 use std::io::Write;
 use std::time::Instant;
@@ -45,10 +47,13 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use approver::{Ask, TuiApprover};
-use commands::{Command, Menu};
+use commands::{After, Command, Menu};
 use composer::{Composer, Edit};
+use input::next_input;
 use login::{Login, Outcome as LoginOutcome, Stage as LoginStage};
 use picker::Picker;
+use signin::{SignIn, finish_signin, sign_in};
+use terminal::{install_panic_hook, restore_terminal};
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
 /// set when it is created and ratatui offers no way to change it after;
@@ -87,18 +92,6 @@ enum Mode {
     LoggingIn(Login),
     /// Choosing a model from what the provider listed.
     PickingModel(Picker),
-}
-
-/// What the surface should do once a command has run.
-///
-/// A bool said "leave or do not", which left no room for the one command that
-/// finishes somewhere else: listing models is a network round trip, and the
-/// loop owns both the spawning and the channel it comes back on.
-pub(super) enum After {
-    Stay,
-    Leave,
-    /// Ask the provider what it serves, then open the picker.
-    ListModels,
 }
 
 pub struct Tui {
@@ -148,30 +141,6 @@ pub struct Tui {
     started: Option<Instant>,
 }
 
-/// Restore the terminal even when the process is dying badly.
-///
-/// A panic inside a raw-mode program leaves the user with no echo and no line
-/// discipline — they have to type `reset` blind. The hook runs before the
-/// default one so the message is readable when it arrives.
-fn install_panic_hook() {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let _ = restore_terminal();
-        previous(info);
-    }));
-}
-
-fn restore_terminal() -> std::io::Result<()> {
-    crossterm::terminal::disable_raw_mode()?;
-    let mut out = std::io::stdout();
-    crossterm::execute!(
-        out,
-        crossterm::event::DisableBracketedPaste,
-        crossterm::cursor::Show
-    )?;
-    out.flush()
-}
-
 /// Run the interactive surface until the user leaves.
 ///
 /// `make_agent` builds a fresh agent per turn from the caller's setup; the
@@ -204,6 +173,9 @@ pub async fn run(
     // here. The sender is kept alive by this binding, so the receiver never
     // closes and the select arm cannot spin on `None`.
     let (models_tx, mut models_rx) = mpsc::unbounded_channel::<Result<Vec<String>, String>>();
+    // A sign-in reports twice: once with the URL, so it is on screen whether
+    // or not a browser opened, and once with the outcome.
+    let (signin_tx, mut signin_rx) = mpsc::unbounded_channel::<SignIn>();
 
     let mut app = Tui {
         facts,
@@ -293,6 +265,28 @@ pub async fn run(
                 }
             }
 
+            step = signin_rx.recv() => {
+                clock.mark();
+                match step {
+                    Some(SignIn::Opened { url, opened }) => {
+                        let mut said = if opened {
+                            vec!["a browser was opened to finish signing in".to_owned()]
+                        } else {
+                            vec!["no browser could be opened — visit this to sign in:".to_owned()]
+                        };
+                        said.push(format!("  {url}"));
+                        app.push_command_output(&mut terminal, &said)?;
+                        app.status = "waiting for the browser".into();
+                    }
+                    Some(SignIn::Done(result)) => {
+                        app.status.clear();
+                        let said = finish_signin(result);
+                        app.push_command_output(&mut terminal, &said)?;
+                    }
+                    None => {}
+                }
+            }
+
             listed = models_rx.recv() => {
                 clock.mark();
                 app.status.clear();
@@ -350,6 +344,12 @@ pub async fn run(
                         } else {
                             break;
                         }
+                    }
+                    Action::SignIn(provider) => {
+                        let tx = signin_tx.clone();
+                        let token = cancel.clone();
+                        app.status = "signing in".into();
+                        tokio::spawn(async move { sign_in(provider, tx, token).await });
                     }
                     Action::Run(command, argument) => {
                         match app.run_command(
@@ -412,29 +412,15 @@ pub async fn run(
     Ok(0)
 }
 
-/// The next terminal event the surface has any use for.
-///
-/// Key releases are dropped here rather than downstream: on Windows every press
-/// is reported twice, and one character typed would become two everywhere that
-/// handles a key.
-async fn next_input<S>(stream: &mut S) -> Option<TermEvent>
-where
-    S: Stream<Item = std::io::Result<TermEvent>> + Unpin,
-{
-    loop {
-        let next = std::future::poll_fn(|cx| std::pin::Pin::new(&mut *stream).poll_next(cx)).await;
-        match next {
-            Some(Ok(TermEvent::Key(key))) if key.kind != KeyEventKind::Press => continue,
-            Some(Ok(event)) => return Some(event),
-            Some(Err(_)) | None => return None,
-        }
-    }
-}
-
 enum Action {
     None,
     Quit,
     Submit(String),
+    /// Sign in to a provider that has a browser step instead of a paste.
+    ///
+    /// Its own action rather than something the login flow does, because the
+    /// flow is a round trip and the loop is what may await one.
+    SignIn(&'static str),
     /// A slash command. Separate from `Submit` because it never becomes a
     /// turn: no prompt is sent, nothing is recorded, and the agent is not
     /// taken — so a command works during a turn as readily as between them.

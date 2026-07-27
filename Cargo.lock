@@ -123,10 +123,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axio-core",
+ "base64",
  "bytes",
  "futures-core",
  "insta",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

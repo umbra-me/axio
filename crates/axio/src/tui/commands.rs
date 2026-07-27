@@ -102,6 +102,18 @@ pub fn parse(text: &str) -> Option<(Command, &str)> {
         .map(|spec| (spec.command, rest))
 }
 
+/// What the surface should do once a command has run.
+///
+/// A bool said "leave or do not", which left no room for the one command that
+/// finishes somewhere else: listing models is a network round trip, and the
+/// loop owns both the spawning and the channel it comes back on.
+pub(super) enum After {
+    Stay,
+    Leave,
+    /// Ask the provider what it serves, then open the picker.
+    ListModels,
+}
+
 /// Where the highlight is, and how it moves.
 ///
 /// The index is stored rather than the command, because the list it indexes
@@ -184,9 +196,9 @@ impl super::Tui {
         command: Command,
         argument: &str,
         agent: Option<&mut axio_core::agent::Agent>,
-    ) -> Result<super::After, B::Error> {
+    ) -> Result<After, B::Error> {
         match command {
-            Command::Quit => return Ok(super::After::Leave),
+            Command::Quit => return Ok(After::Leave),
             Command::Status => {
                 let mut said = vec![format!("{:<11}{}", "model", self.model)];
                 said.extend(self.facts.iter().cloned());
@@ -221,7 +233,7 @@ impl super::Tui {
                 self.status.clear();
             }
         }
-        Ok(super::After::Stay)
+        Ok(After::Stay)
     }
 
     /// Show the model, or change it.
@@ -234,13 +246,13 @@ impl super::Tui {
         terminal: &mut super::Terminal<B>,
         argument: &str,
         agent: Option<&mut axio_core::agent::Agent>,
-    ) -> Result<super::After, B::Error> {
+    ) -> Result<After, B::Error> {
         // While a turn runs the agent has been moved into it, and it comes back
         // when the turn ends. Changing the model underneath a request in flight
         // is not something to arrange; waiting is.
         let Some(agent) = agent else {
             self.status = "a turn is running — the model can change once it finishes".into();
-            return Ok(super::After::Stay);
+            return Ok(After::Stay);
         };
 
         // Bare `/model` offers the models rather than reporting one. What
@@ -248,13 +260,13 @@ impl super::Tui {
         // cheaper than reading a name and then typing it back.
         if argument.is_empty() {
             self.status = "listing models…".into();
-            return Ok(super::After::ListModels);
+            return Ok(After::ListModels);
         }
 
         let previous = agent.model().to_owned();
         if argument == previous {
             self.status = format!("already using {previous}");
-            return Ok(super::After::Stay);
+            return Ok(After::Stay);
         }
 
         agent.set_model(argument);
@@ -274,7 +286,7 @@ impl super::Tui {
         // cheaper than a lookup that would need a round trip to be honest.
         said.push("  the name is not checked until the next request".into());
         self.push_command_output(terminal, &said)?;
-        Ok(super::After::Stay)
+        Ok(After::Stay)
     }
 }
 

@@ -6,6 +6,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod browser;
 pub mod diff;
 pub mod proc;
 pub mod schema;

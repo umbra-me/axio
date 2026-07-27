@@ -194,6 +194,14 @@ impl Tui {
             LoginStage::Provider => match key.code {
                 KeyCode::Up => login.step_provider(-1),
                 KeyCode::Down => login.step_provider(1),
+                // A provider that is signed in to has nothing to type. Showing
+                // it a paste box would be asking for a credential that does not
+                // exist yet and could not be pasted if it did.
+                KeyCode::Enter if login.needs_browser() => {
+                    let provider = login.provider();
+                    self.mode = Mode::Idle;
+                    return Ok(Action::SignIn(provider));
+                }
                 KeyCode::Enter => login.confirm_provider(),
                 _ => {}
             },
@@ -269,5 +277,24 @@ impl Tui {
             let _ = reply.send(decision);
         }
         Ok(Action::None)
+    }
+}
+
+/// The next terminal event the surface has any use for.
+///
+/// Key releases are dropped here rather than downstream: on Windows every press
+/// is reported twice, and one character typed would become two everywhere that
+/// handles a key.
+pub(super) async fn next_input<S>(stream: &mut S) -> Option<TermEvent>
+where
+    S: Stream<Item = std::io::Result<TermEvent>> + Unpin,
+{
+    loop {
+        let next = std::future::poll_fn(|cx| std::pin::Pin::new(&mut *stream).poll_next(cx)).await;
+        match next {
+            Some(Ok(TermEvent::Key(key))) if key.kind != KeyEventKind::Press => continue,
+            Some(Ok(event)) => return Some(event),
+            Some(Err(_)) | None => return None,
+        }
     }
 }

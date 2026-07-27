@@ -106,6 +106,15 @@ impl Login {
         self.stage = Stage::Secret;
     }
 
+    /// Whether the chosen provider is signed in to rather than pasted into.
+    ///
+    /// Asked of the transport crate, which is where the flows are, so this
+    /// cannot come to a different answer and offer a paste box for a provider
+    /// with nowhere to send what was typed.
+    pub fn needs_browser(&self) -> bool {
+        axio_provider::oauth::is_oauth(self.provider())
+    }
+
     /// Store what was typed.
     ///
     /// Takes `self` because the credential must not outlive the attempt: on

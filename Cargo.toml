@@ -52,6 +52,13 @@ reqwest = { version = "0.13.4", default-features = false, features = [
     "stream",
 ] }
 rustls = { version = "0.23.42", default-features = false, features = ["ring", "std", "tls12"] }
+# Already in the tree as rustls' crypto provider, named here so the OAuth flow
+# can use the SHA-256 and the CSPRNG it already ships rather than pulling a
+# second implementation of either. Nothing new enters the build by naming it.
+ring = "0.17.14"
+# base64url for the PKCE challenge. Also already in the tree; hand-rolling the
+# alphabet is twenty lines nobody should have to review.
+base64 = "0.22.1"
 
 clap = { version = "4.6.2", default-features = false, features = ["std", "help", "usage", "error-context"] }
 # The interactive surface. Behind the `tui` feature so the headless build links
