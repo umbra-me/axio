@@ -47,7 +47,9 @@ impl Agent {
             };
 
             if let Err(e) =
-                crate::tool::reject_unknown_arguments(&input, tool.schema(), tool.name())
+                crate::tool::reject_unknown_arguments(&input, tool.schema(), tool.name()).and_then(
+                    |()| crate::tool::reject_missing_arguments(&input, tool.schema(), tool.name()),
+                )
             {
                 self.label(turn, &call_id, tool.name());
                 planned.push(Planned::Resolved(
@@ -65,7 +67,6 @@ impl Agent {
                 Err(e) => {
                     // A bad argument is a tool_result, not a turn failure: the
                     // model can read it and try again.
-                    //
                     self.label(turn, &call_id, tool.name());
                     planned.push(Planned::Resolved(
                         call_id,

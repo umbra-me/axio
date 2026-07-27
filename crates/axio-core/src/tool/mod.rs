@@ -167,6 +167,54 @@ pub fn reject_unknown_arguments(
     )))
 }
 
+/// Reject a call that leaves out an argument the schema requires.
+///
+/// The mirror of [`reject_unknown_arguments`], and it exists because the two
+/// halves were not saying the same quality of thing. An unrecognised argument
+/// produced "unknown argument `cmd` — `bash` takes command, timeout_secs",
+/// which is enough to fix the call. A missing one produced "`path` is required
+/// and must be a string", from deep inside whichever tool happened to ask for
+/// it first: no tool named, nothing else it takes, and no way to tell which of
+/// several calls in flight it belonged to. A model that has just guessed wrong
+/// needs the same help either way.
+pub fn reject_missing_arguments(
+    args: &serde_json::Value,
+    schema: &serde_json::Value,
+    tool: &str,
+) -> Result<(), ToolError> {
+    let (Some(given), Some(required)) = (
+        args.as_object(),
+        schema.get("required").and_then(|r| r.as_array()),
+    ) else {
+        return Ok(());
+    };
+
+    let missing: Vec<&str> = required
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|k| !given.contains_key(*k))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let declared = schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .map(|p| p.keys().map(String::as_str).collect::<Vec<_>>().join(", "))
+        .unwrap_or_default();
+
+    Err(ToolError::BadInput(format!(
+        "missing required argument{} {} — `{tool}` takes {declared}",
+        if missing.len() == 1 { "" } else { "s" },
+        missing
+            .iter()
+            .map(|k| format!("`{k}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )))
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
     #[error("invalid arguments: {0}")]
@@ -428,5 +476,48 @@ mod tests {
                 text: "after close".into(),
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod missing_argument_tests {
+    use super::*;
+
+    fn schema() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string"},
+                "glob": {"type": "string"},
+                "hidden": {"type": "boolean"},
+            },
+            "required": ["pattern"],
+        })
+    }
+
+    #[test]
+    fn a_missing_argument_names_the_tool_and_what_it_takes() {
+        // The message a model gets has to be enough to fix the call without
+        // guessing which tool asked or what else it wanted.
+        let err = reject_missing_arguments(&serde_json::json!({"glob": "*.rs"}), &schema(), "grep")
+            .expect_err("a missing required argument");
+        let text = err.to_string();
+        assert!(text.contains("`pattern`"), "{text}");
+        assert!(text.contains("`grep`"), "{text}");
+        assert!(text.contains("pattern, glob, hidden"), "{text}");
+    }
+
+    #[test]
+    fn a_complete_call_passes() {
+        assert!(
+            reject_missing_arguments(&serde_json::json!({"pattern": "x"}), &schema(), "grep")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_schema_without_required_arguments_rejects_nothing() {
+        let open = serde_json::json!({"type": "object", "properties": {}});
+        assert!(reject_missing_arguments(&serde_json::json!({}), &open, "anything").is_ok());
     }
 }
