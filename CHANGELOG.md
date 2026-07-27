@@ -89,7 +89,10 @@ ordered permission engine, sessions on disk, and layered configuration.
   confinement. Off by default.
 - **The Anthropic path is consistent with the documented wire format but has
   never met the real endpoint.** `scripts/live-check.sh` is what would change
-  that.
+  that, and it has now been run against the chat-completions path — thirteen
+  checks, all passing — so the loop, the tools, the deny list and resume are
+  proven against something nobody here wrote. Only the Anthropic transport
+  remains unproven, and only because no credential exists for it.
 - `budget.max_usd_per_turn` cannot fire on a provider that reports no prices.
   `--doctor` says so rather than leaving it looking enforced.
 

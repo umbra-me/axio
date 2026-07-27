@@ -45,6 +45,15 @@ wildcards = "deny"
 deny = [
     { name = "openssl-sys" },
     { name = "native-tls" },
+    # rustls' and reqwest's default crypto provider. It vendors AWS-LC as C and
+    # assembly, so it wants CMake everywhere and NASM on Windows — the two tools
+    # a clean Windows install is promised not to need. It is kept out by
+    # `default-features = false` on both, which is exactly the kind of thing a
+    # future dependency undoes by accident: feature unification means one crate
+    # asking for the defaults re-enables them for everyone, and nothing in the
+    # build would say so.
+    { name = "aws-lc-sys" },
+    { name = "aws-lc-rs" },
 ]
 
 [sources]

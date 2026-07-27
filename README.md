@@ -11,10 +11,17 @@ read-only.
 
 ## Status
 
-Early, but it works, and `scripts/live-check.sh` proves it against a real model
-rather than a stub: the turn loop, the transport, the one-shot CLI, the read,
-write and bash tools, the deny list, sessions on disk, and resume. It can read,
-search, edit and run commands in a workspace, and pick up where it left off.
+Early, but it works. `scripts/live-check.sh` has been run end to end against a
+real model on the chat-completions path — thirteen checks over seven turns
+covering the turn loop, the transport, the one-shot CLI, the read, write and
+bash tools, a refusal and its exit code, the built-in deny list keeping a secret
+out of both the answer and the transcript, sessions on disk, and resume carrying
+its history. It can read, search, edit and run commands in a workspace, and pick
+up where it left off.
+
+The Anthropic transport has not had that run against it: there has been no
+credential to run it with. It is built from the documented wire format and
+snapshot-tested against it, which is not the same as having met the endpoint.
 
 Writes and shell commands need approval; reads do not. Interactively you are
 asked. In a one-shot run there is nobody to ask, so they are refused unless

@@ -59,11 +59,11 @@ for it.
 Everything M5 needs is built and green. What remains is the decision to tag it,
 and three things no amount of code can supply:
 
-- **A real turn against a real model.** `scripts/live-check.sh` has never been
-  run. Every test in the suite answers from a stub, and a stub that is wrong the
-  same way the code is wrong passes. A credential for `ollama` is configured, so
-  that half can be checked whenever someone spends the credits; `anthropic` has
-  no credential and its wire format remains unproven against the real endpoint.
+- **A real turn against the Anthropic endpoint.** `scripts/live-check.sh` has
+  been run against the chat-completions path and passed all thirteen checks, so
+  the turn loop, the tools, the refusal path, the deny list and resume are no
+  longer proven only against a stub somebody here wrote. The Messages transport
+  has still never been exercised, because no credential exists for it.
 - **An install on a machine that has never built Rust.** No `aws-lc-sys`,
   `onig_sys`, `openssl-sys` or `cmake` appears in the graph for any target, and
   `ring` ships pre-assembled objects for its NASM paths — so the toolchain
