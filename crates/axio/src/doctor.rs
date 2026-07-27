@@ -122,6 +122,11 @@ pub(crate) fn doctor(resolved: &Resolved) -> u8 {
     let _ = writeln!(out, "  state               {}", state_dir().display());
     let _ = writeln!(
         out,
+        "  sessions            {} recorded",
+        session_count(&state_dir())
+    );
+    let _ = writeln!(
+        out,
         "  cwd                 {}",
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
@@ -165,6 +170,19 @@ pub(crate) fn provider_prices(
     }
 }
 
+/// How many sessions are on disk.
+///
+/// Asked of `SessionStore`, which knows that a session file lives in a
+/// directory named for the day it was created rather than directly under
+/// `sessions/`. Reading `sessions/` itself finds only those day directories,
+/// whose names do not end in `.jsonl` — so a count done that way is always
+/// zero, and looks entirely reasonable until someone has a session to count.
+pub(crate) fn session_count(state: &std::path::Path) -> usize {
+    axio_core::record::SessionStore::new(state.join("sessions"))
+        .files()
+        .len()
+}
+
 /// What has and has not been proven about a provider's wire format.
 ///
 /// `None` for a transport that `scripts/live-check.sh` has been run against.
@@ -183,6 +201,28 @@ pub(crate) fn unverified_transport(provider: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The regression this exists for: a count that reads `sessions/` directly
+    /// finds day directories rather than session files, returns zero, and is
+    /// indistinguishable from a correct answer until there is something to
+    /// count. It was written that way once, by axio itself.
+    #[test]
+    fn sessions_are_counted_inside_the_day_directories_they_live_in() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let state = dir.path();
+        assert_eq!(session_count(state), 0, "nothing recorded yet");
+
+        let day = state.join("sessions").join("2026-07-27");
+        std::fs::create_dir_all(&day).expect("the day directory");
+        std::fs::write(day.join("01KYGWKF1W5QKJVXHC1MWSM5NS.jsonl"), "{}\n").expect("a session");
+        std::fs::write(day.join("not-a-session.txt"), "ignore me").expect("a stray file");
+        assert_eq!(session_count(state), 1);
+
+        let other = state.join("sessions").join("2026-07-28");
+        std::fs::create_dir_all(&other).expect("another day");
+        std::fs::write(other.join("01KYGWKF1W5QKJVXHC1MWSM5NT.jsonl"), "{}\n").expect("a session");
+        assert_eq!(session_count(state), 2, "days are not counted, files are");
+    }
 
     #[test]
     fn the_proven_transport_carries_no_caveat() {

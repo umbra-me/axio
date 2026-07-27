@@ -82,6 +82,38 @@ ordered permission engine, sessions on disk, and layered configuration.
   starts and inherited by every command axio spawns. `--sandbox`, or
   `[sandbox] enabled`.
 
+### Dogfooding
+
+axio was asked to add one small feature to its own repository — a line in
+`--doctor` reporting how many sessions are on disk — running its interactive
+surface against a real model, on a clone, with every approval displayed before
+it was answered. Two approvals were asked for and granted: running the test
+suite, and one edit to `crates/axio/src/doctor.rs`.
+
+**It produced code that compiled, passed clippy, and was wrong.** The count read
+`sessions/` directly, where it found the day directories that session files live
+inside rather than the files themselves, so it returned zero and would have gone
+on returning zero forever. Nothing about reading it suggested that; running it
+did, immediately. It also failed `cargo fmt --check`, which CI would have caught
+and no reviewer needed to.
+
+What the surface got right is the part that is hard to test any other way. Four
+malformed tool calls — `grep` with invented arguments, `bash` with `cmd` for
+`command`, an `edit` whose `old` text was absent, another whose `old` text
+matched six times — each came back as a specific, actionable message rather than
+a failure, and the model corrected itself each time and carried on. The approval
+prompts showed the diff and the command before asking. The turn ended cleanly,
+the session recorded, and the transcript is readable.
+
+The feature shipped, rewritten to ask `SessionStore` — which already knew where
+session files live — with a regression test that fails against the original
+implementation. The honest summary is that axio drove the whole loop competently
+and the model's code needed a review it would not have survived without.
+
+**A human did not watch the approvals.** The criterion asks for one, and this
+session was driven programmatically with each approval captured and answered
+automatically. That half remains unverified.
+
 ### Known limitations
 
 - **The sandbox is filesystem-only and Linux-only.** It says nothing about the
