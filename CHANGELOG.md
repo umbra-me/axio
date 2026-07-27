@@ -29,7 +29,10 @@ ordered permission engine, sessions on disk, and layered configuration.
 - **Sessions.** Append-only JSONL with a versioned header, `--list`,
   `--resume` by unique id prefix, and `--ephemeral` to record nothing.
 - **Layered configuration** — defaults, user file, project file, environment,
-  flags — with per-section salvage and `--explain` for provenance.
+  flags — with per-section salvage and `--explain` for provenance. A section that
+  will not parse is reset on its own and the file preserved; a section axio does
+  not use is ignored quietly, because another tool's config is not a damaged
+  one.
 - **`--doctor`**, reporting credentials, the effective model and endpoint, the
   provider's real prices, the permission rules in force, and whatever the
   configuration loader complained about.

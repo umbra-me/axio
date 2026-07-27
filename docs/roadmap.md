@@ -84,21 +84,30 @@ and three things no amount of code can supply:
   tools it asks for, then `cargo install --git https://github.com/umbra-me/axio
   --locked axio` and run one turn. If it needs anything else, the dependency
   graph gained something it should not have.
-- ~~A dogfooding session, written up here.~~ **Done, with one half open.** Two
-  sessions: axio adding a feature to its own repository through its interactive
-  surface, against a real model, with every approval displayed before it was
-  answered. Both are written up in the changelog, including the code it got
-  wrong and the two bugs of its own they exposed. A human still has not watched
-  the approvals — both runs were driven programmatically — and that is the half
-  that stays open.
+
+  `axio.exe` has since been built and run on Windows, and started correctly —
+  which leaves only whether that machine already had a toolchain. That run also
+  found a bug nothing here could: against a `.axio/config.toml` belonging to
+  another tool, axio reported every section as damage and wrote a backup of a
+  healthy file. Two seconds of use, on the first platform nobody had used it on.
+- ~~A dogfooding session, written up here.~~ **Done, with one half open.** Four
+  sessions across two models: axio adding a feature to its own repository
+  through its interactive surface, against a real model, with every approval
+  displayed before it was answered. All four are written up in the changelog,
+  including the code it got wrong and the bugs of its own they exposed — among
+  them the discovery that it read no project instructions at all, which was the
+  ceiling the whole time and not the model. A human still has not watched the
+  approvals; every run was driven programmatically, and that half stays open.
 
 ### Not tagged yet, deliberately
 
 Everything above is either done or bounded, and the tag is still being held.
-Two sessions of real use produced four fixes on the day they ran, three of them
-in code written the day before. That is not a reason to panic and it is not a
-reason to hurry: a release is a promise that what is in it has settled, and the
-honest thing to say about code this recently changed is that it has not.
+Real use keeps producing fixes on the day it happens: four from the dogfooding
+sessions, several in code written hours earlier, and a fifth from someone
+starting the binary on Windows once. Nothing in a suite of 381 tests reached any
+of them. That is not a reason to panic and it is not a reason to hurry — a
+release is a promise that what is in it has settled, and the honest thing to say
+about code this recent is that it has not.
 
 What would move it: the Windows install above, a human watching a session, and
 a few days in which nothing new turns up. The release workflow has itself never

@@ -325,6 +325,13 @@ parsed first; each table is then validated independently, and one that fails is
 dropped with a notice while the rest survive. A backup is written only when
 something was actually lost — a healthy config never litters.
 
+A section axio does not recognise is not a broken one. It belongs to another
+tool, or a newer axio, or it is a typo; none of those is this file being
+damaged, so it is skipped, mentioned once, and nothing is written. The
+distinction is load-bearing: without it, running axio in a directory some other
+program also calls `.axio` reports every section as wreckage and then copies the
+file aside to prove it.
+
 ## Providers
 
 Two implementations, selected by name in configuration. Deliberately not a

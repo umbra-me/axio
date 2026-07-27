@@ -388,6 +388,16 @@ Grant the rest of the system and forget these two and every command fails with
 
 ## Sessions, config and compaction
 
+**"Not mine" and "mine and broken" cannot share an answer.** One predicate
+returned `false` for both, and the caller could only read the second — so every
+unrecognised section became damage, and damage means a backup, which means
+writing into a directory axio was only supposed to read. Someone ran the binary
+against a `.axio/config.toml` belonging to a different tool and got
+thirty-three warnings and a `.corrupt-<ts>` copy of a perfectly healthy file.
+The comment above the predicate had said unknown sections should be dropped
+silently the whole time; the code had never done it. When one function answers
+two questions, the caller gets whichever answer the author was thinking about.
+
 **A derived `Default` on the permission engine would empty the built-in deny
 lists.** They are ordinary fields, populated only by `Policy::new`, so a derived
 `Default` yields a policy with no built-in denies at all — and read-only effects

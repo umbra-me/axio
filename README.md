@@ -93,7 +93,8 @@ write = ["/home/me/.cache/go-build"]
 ```
 
 A project's own `.axio/config.toml` may only add restrictions, never remove
-them.
+them. Sections axio does not use are ignored — it will not complain about, or
+touch, a file that belongs to something else.
 
 If the workspace root has an `AGENTS.md` — or a `CLAUDE.md`, when there is no
 `AGENTS.md` — axio reads it and tells the model those instructions describe this
