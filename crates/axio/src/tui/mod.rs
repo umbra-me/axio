@@ -54,6 +54,12 @@ use composer::{Composer, Edit};
 /// so the tail gets what is left.
 const VIEWPORT_ROWS: u16 = 7;
 
+/// Below this many rows the composer's frame is dropped rather than the line
+/// being typed. Three rows of frame plus a status bar in a five-row terminal
+/// leaves nothing to type into, and a prompt you cannot see is worse than a
+/// prompt without a border.
+const FRAMED_ROWS: u16 = 6;
+
 /// Rows the composer may grow to before it scrolls instead. A multi-line prompt
 /// is common enough to deserve room and rare enough not to deserve the whole
 /// viewport, which the answer is still streaming into.

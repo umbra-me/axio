@@ -831,3 +831,55 @@ async fn a_path_outside_the_workspace_is_refused() {
         results[0]
     );
 }
+
+/// The Windows half of the orphan gate.
+///
+/// There is no process group to signal, so the tree is walked with `taskkill`.
+/// This asserts the effect rather than a process listing: the grandchild is
+/// told to wait and then write a file, and the file must never appear. A
+/// listing would have to be parsed, and a parse that goes wrong reports a pass.
+#[cfg(windows)]
+#[tokio::test]
+async fn cancelling_leaves_no_orphan_process() {
+    let marker = std::env::temp_dir().join(format!("axio-orphan-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+
+    // A grandchild: the shell starts it and then waits, so killing only the
+    // shell leaves it running long enough to write the file.
+    let command = format!(
+        "Start-Process -NoNewWindow -FilePath powershell -ArgumentList \
+         '-NoProfile','-Command','Start-Sleep 3; Set-Content -Path ''{}'' -Value done'; \
+         Start-Sleep 30",
+        marker.display()
+    );
+    let args = json!({ "command": command }).to_string();
+
+    let mut h = harness(
+        vec![turn_with(tool_call(0, "t1", "bash", &args))],
+        Policy::new().unattended_allow(),
+        Arc::new(CountingApprover {
+            asked: Arc::new(AtomicUsize::new(0)),
+            answer: Decision::Allow,
+        }),
+    );
+
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        token.cancel();
+    });
+
+    let outcome = h.agent.run_turn("sleep".into(), cancel).await;
+    assert!(matches!(outcome, TurnOutcome::Interrupted));
+
+    // Longer than the grandchild's own wait, so "not yet" cannot pass for
+    // "never".
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    let survived = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(
+        !survived,
+        "an orphaned grandchild survived cancellation and did its work"
+    );
+}

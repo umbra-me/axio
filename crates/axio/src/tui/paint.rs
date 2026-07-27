@@ -9,22 +9,39 @@ use super::*;
 impl Tui {
     pub(super) fn draw<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
         terminal.draw(|frame| {
-            // Two columns of border and two of padding stand between the text
-            // and the edge of the terminal.
-            let width = frame.area().width.saturating_sub(6) as usize;
+            // The frame costs two rows and four columns. In a terminal too
+            // short to spare them it is the frame that goes, not the line being
+            // typed: decoration losing to content is the whole ordering.
+            let framed = frame.area().height >= FRAMED_ROWS;
+            let chrome = if framed { 6 } else { 2 };
+            let width = frame.area().width.saturating_sub(chrome) as usize;
             let (rows_of_text, cursor) = self.composer.rows(width.max(1));
             // The composer takes the rows it needs and no more; what it leaves
             // goes to the answer, which is the thing being read.
             let prompt_height = rows_of_text.len().clamp(1, COMPOSER_ROWS) as u16;
 
             let rows = Layout::vertical([
-                Constraint::Min(1),
-                Constraint::Length(prompt_height + 2),
+                Constraint::Min(0),
+                Constraint::Length(prompt_height + if framed { 2 } else { 0 }),
                 Constraint::Length(1),
             ])
             .split(frame.area());
 
             frame.render_widget(self.live_rows(rows[0]), rows[0]);
+
+            let first = rows_of_text.len().saturating_sub(prompt_height as usize);
+            if !framed {
+                frame.render_widget(self.prompt_row(&rows_of_text[first..]), rows[1]);
+                frame.render_widget(self.status_row(rows[2]), rows[2]);
+                if matches!(self.mode, Mode::Idle) {
+                    let row = cursor.0.saturating_sub(first) as u16;
+                    frame.set_cursor_position((
+                        (rows[1].x + 2 + cursor.1 as u16).min(rows[1].right().saturating_sub(1)),
+                        rows[1].y + row.min(prompt_height.saturating_sub(1)),
+                    ));
+                }
+                return;
+            }
 
             let frame_style = match self.mode {
                 Mode::Approving(..) => Style::default().fg(Color::Yellow),
@@ -42,7 +59,6 @@ impl Tui {
 
             // Show the end of a prompt too long for the rows it has: the part
             // being typed is the part that matters.
-            let first = rows_of_text.len().saturating_sub(prompt_height as usize);
             frame.render_widget(self.prompt_row(&rows_of_text[first..]), inner);
             frame.render_widget(self.status_row(rows[2]), rows[2]);
 
