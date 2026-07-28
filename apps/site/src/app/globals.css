@@ -1,26 +1,34 @@
 /* axio — site styles.
  *
- * The page is light and the terminal block is dark, and in dark mode the page
- * inverts while the block does not. That is not a styling accident: axio
- * renders in the terminal's own colours rather than a bundled theme, so the
- * one element representing it looks the same whatever the page is doing.
+ * The page is a paired argument: a claim in serif on the left, and on the right
+ * the artifact that answers it in the terminal's own voice. That pairing is the
+ * layout, not a decoration on top of one — the product's whole character is
+ * that it emits evidence, so the page is built to put evidence next to every
+ * claim rather than describing the program in prose and hoping.
  *
- * No webfonts. It would be the only network request on the page and would buy
- * nothing a good monospace stack does not already give.
+ * Consequences of that: no rules between sections (the two-column rhythm does
+ * the separating), and no masthead logo (the name appears in the composer
+ * frame, where the program itself puts it).
+ *
+ * The page is light and the terminal is dark, and in dark mode the page inverts
+ * while the terminal does not — axio renders in the terminal's own colours
+ * rather than a bundled theme, so the element standing for it holds still.
+ *
+ * No webfonts. It would be the only network request the page makes.
  */
 
 :root {
-  --paper: #edefea;
-  --ink: #16181c;
-  --muted: #565b52;
-  --rule: #c8cdc2;
+  --paper: #eceee9;
+  --ink: #15171b;
+  --muted: #5a6058;
+  --rule: #c6cbc0;
   --signal: #0b5f4f;
   --unmet: #6b4e14;
 
   /* Constant across colour schemes. */
-  --term-bg: #101216;
-  --term-fg: #d7dbd4;
-  --term-dim: #7d857b;
+  --term-bg: #0e1014;
+  --term-fg: #d5d9d2;
+  --term-dim: #767e74;
   --term-accent: #6fc9b0;
 
   --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
@@ -28,19 +36,20 @@
   --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
     serif;
 
-  --measure: 34rem;
-  --gutter: 7.5rem;
+  --claim-col: 23rem;
+  --evidence-col: 35rem;
+  --gap: 4rem;
+  --step: 5.5rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Deliberately a clear step lighter than --term-bg. The terminal block is
-     * the one element that does not change between schemes, so the page has to
-     * move far enough away from it to keep it legible as a distinct artifact —
-     * at #14161a the two were within four points and the block disappeared. */
+    /* A clear step lighter than --term-bg: the terminal is the one element that
+     * does not change between schemes, so the page has to move away from it or
+     * the artifacts stop reading as artifacts. */
     --paper: #1e2126;
     --ink: #e6e8e2;
-    --muted: #9aa196;
+    --muted: #99a095;
     --rule: #343943;
     --signal: #6fc9b0;
     --unmet: #d9ae5c;
@@ -50,17 +59,17 @@
 :root[data-theme="dark"] {
   --paper: #1e2126;
   --ink: #e6e8e2;
-  --muted: #9aa196;
+  --muted: #99a095;
   --rule: #343943;
   --signal: #6fc9b0;
   --unmet: #d9ae5c;
 }
 
 :root[data-theme="light"] {
-  --paper: #edefea;
-  --ink: #16181c;
-  --muted: #565b52;
-  --rule: #c8cdc2;
+  --paper: #eceee9;
+  --ink: #15171b;
+  --muted: #5a6058;
+  --rule: #c6cbc0;
   --signal: #0b5f4f;
   --unmet: #6b4e14;
 }
@@ -75,98 +84,300 @@ body {
   color: var(--ink);
   font-family: var(--serif);
   font-size: 1.0625rem;
-  line-height: 1.6;
+  line-height: 1.62;
   -webkit-font-smoothing: antialiased;
 }
 
 .wrap {
-  max-width: calc(var(--gutter) + var(--measure) + 2rem);
+  max-width: calc(var(--claim-col) + var(--gap) + var(--evidence-col) + 3rem);
   margin: 0 auto;
   padding: 0 1.5rem;
 }
 
-/* The left gutter carries utility markers the way a terminal carries a status
- * column. Below the breakpoint it becomes a normal stacked label. */
-.row {
+/* ---- the pairing ---- */
+
+.spread {
   display: grid;
-  grid-template-columns: var(--gutter) minmax(0, var(--measure));
-  gap: 0 2rem;
+  grid-template-columns: var(--claim-col) minmax(0, var(--evidence-col));
+  gap: 0 var(--gap);
+  align-items: start;
+  padding-top: var(--step);
 }
 
-.mark {
+/* The claim column is set narrow on purpose: a short measure next to a wide
+ * fixed-width artifact is what makes the two read as argument and evidence
+ * rather than as two columns of equal weight. */
+.claim h2 {
   font-family: var(--mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding-top: 0.45rem;
-  white-space: nowrap;
-}
-
-@media (max-width: 46rem) {
-  :root {
-    --gutter: 0rem;
-  }
-  .row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
-  .mark {
-    padding-top: 0;
-    margin-bottom: 0.5rem;
-  }
-}
-
-/* ---- masthead ---- */
-
-.masthead {
-  padding: 4.5rem 0 0;
-}
-
-.wordmark {
-  font-family: var(--mono);
-  font-size: clamp(3.5rem, 13vw, 6.5rem);
+  font-size: 1.0625rem;
   font-weight: 600;
-  letter-spacing: -0.055em;
-  line-height: 0.9;
-  margin: 0;
-}
-
-.standfirst {
-  font-size: clamp(1.25rem, 3.2vw, 1.6rem);
-  line-height: 1.35;
-  margin: 1.5rem 0 0;
-  max-width: 26ch;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin: 0 0 0.9rem;
   text-wrap: balance;
 }
 
-.status-line {
+.claim p {
+  margin: 0 0 0.9rem;
+  color: var(--ink);
+}
+
+.claim p:last-child {
+  margin-bottom: 0;
+}
+
+.evidence {
+  display: grid;
+  gap: 1rem;
+  /* Optically aligns the artifact's first line with the heading beside it. */
+  padding-top: 0.2rem;
+}
+
+@media (max-width: 62rem) {
+  :root {
+    --step: 3.75rem;
+  }
+  .spread {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+  .evidence {
+    padding-top: 0;
+  }
+}
+
+/* ---- artifacts ---- */
+
+.term {
+  margin: 0;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.term pre {
+  margin: 0;
+  padding: 1.1rem 1.25rem;
+  overflow-x: auto;
+}
+
+/* The label names the artifact inside its own frame rather than as a caption
+ * underneath, so the pairing stays two columns and not four rows. */
+.term__label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--term-dim);
+  padding: 0.7rem 1.25rem 0;
+}
+
+.term .dim {
+  color: var(--term-dim);
+}
+
+.term .acc {
+  color: var(--term-accent);
+}
+
+/* The install commands must be copyable whole. In a scrolling block the tail
+ * sits behind the edge and a reader who misses the scrollbar copies a truncated
+ * command. `anywhere` rather than `break-word`: the long token is a URL and the
+ * flags after it must stay intact. */
+.term--wrap pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the hero turn ---- */
+
+.hero {
+  padding-top: 4.5rem;
+}
+
+.hero .term {
+  font-size: 0.875rem;
+}
+
+.hero__standfirst {
+  font-size: clamp(1.5rem, 4.4vw, 2.1rem);
+  line-height: 1.24;
+  letter-spacing: -0.015em;
+  margin: 1.75rem 0 0;
+  max-width: 24ch;
+  text-wrap: balance;
+}
+
+.hero__meta {
   font-family: var(--mono);
   font-size: 0.8125rem;
   color: var(--muted);
-  margin: 2rem 0 0;
+  margin: 1.1rem 0 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem 1.25rem;
+  gap: 0.35rem 1.25rem;
 }
 
-.status-line b {
+.hero__meta b {
   font-weight: 600;
   color: var(--unmet);
 }
 
-/* ---- sections ---- */
-
-section {
-  padding: 4.5rem 0 0;
+/* Lines hold their space from the start and only opacity changes, so the
+ * monospace grid never reflows and nothing below the block moves as it plays. */
+.hero .out {
+  opacity: 0;
 }
 
-p {
-  margin: 0 0 1rem;
+.hero .in {
+  opacity: 1;
 }
 
-p.lead {
-  font-size: 1.1875rem;
+@media (prefers-reduced-motion: no-preference) {
+  .hero .out,
+  .hero .in {
+    transition: opacity 220ms ease;
+  }
+  .hero .caret {
+    animation: caret 1s steps(2, start) infinite;
+  }
+}
+
+/* Unanimated, the caret is a solid block that reads as a rendering artifact. */
+@media (prefers-reduced-motion: reduce) {
+  .hero .caret {
+    display: none;
+  }
+}
+
+@keyframes caret {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ---- the ledger ---- */
+
+.ledger-block {
+  padding-top: var(--step);
+}
+
+.ledger-head {
+  display: grid;
+  grid-template-columns: var(--claim-col) minmax(0, var(--evidence-col));
+  gap: 0 var(--gap);
+  align-items: baseline;
+}
+
+.ledger-head h2 {
+  font-family: var(--mono);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.ledger-head p {
+  margin: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 62rem) {
+  .ledger-head {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+}
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  margin-top: 1.75rem;
+}
+
+.ledger th,
+.ledger td {
+  text-align: left;
+  padding: 0.75rem 0.75rem 0.75rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+/* Header row only. Unscoped this also hits the row headers in tbody and renders
+ * "Chat-completions transport" as three lines of uppercase micro-type. */
+.ledger thead th {
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom-color: var(--ink);
+}
+
+.ledger tbody th {
+  font-weight: 600;
+  width: 14rem;
+  padding-right: 1.5rem;
+}
+
+.state {
+  font-weight: 600;
+  white-space: nowrap;
+  width: 6rem;
+}
+
+.state--met {
+  color: var(--signal);
+}
+
+.state--unmet {
+  color: var(--unmet);
+}
+
+.ledger td:last-child {
+  font-family: var(--serif);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--muted);
+  padding-right: 0;
+}
+
+@media (max-width: 40rem) {
+  .ledger tbody th {
+    width: auto;
+  }
+  .ledger,
+  .ledger tbody,
+  .ledger tr,
+  .ledger th,
+  .ledger td {
+    display: block;
+    width: auto;
+  }
+  .ledger thead {
+    display: none;
+  }
+  .ledger tr {
+    padding: 0.9rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ledger th,
+  .ledger td {
+    border: 0;
+    padding: 0 0 0.25rem;
+  }
+}
+
+/* ---- shared inline type ---- */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
 }
 
 a {
@@ -186,229 +397,35 @@ button:focus-visible {
   border-radius: 2px;
 }
 
-code {
-  font-family: var(--mono);
-  font-size: 0.9em;
-}
+/* ---- colophon ---- */
 
-hr {
-  border: 0;
+.colophon {
+  margin-top: var(--step);
+  padding: 2rem 0 5rem;
   border-top: 1px solid var(--rule);
-  margin: 4.5rem 0 0;
-}
-
-/* ---- terminal blocks ----
- * These break out past the text measure: the transcript is the artifact and
- * the prose is commentary on it, which is the same relationship axio has with
- * the scrollback it prints into. */
-
-.term {
-  background: var(--term-bg);
-  color: var(--term-fg);
   font-family: var(--mono);
   font-size: 0.8125rem;
-  line-height: 1.55;
-  padding: 1.25rem 1.35rem;
-  margin: 1.5rem 0 0;
-  overflow-x: auto;
-  border-radius: 3px;
-  tab-size: 2;
-}
-
-.term pre {
-  margin: 0;
-}
-
-.term .dim {
-  color: var(--term-dim);
-}
-.term .acc {
-  color: var(--term-accent);
-}
-
-/* ---- the hero turn, played once on load ----
- * Height is reserved for the finished turn so nothing below shifts as lines
- * arrive. Lines occupy their space from the start and only their opacity
- * changes, which is also what keeps the monospace grid from reflowing. */
-
-.term--hero pre .out {
-  opacity: 0;
-}
-
-.term--hero pre .in {
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .term--hero pre .out,
-  .term--hero pre .in {
-    transition: opacity 220ms ease;
-  }
-  .term--hero .caret {
-    animation: caret 1s steps(2, start) infinite;
-  }
-}
-
-/* Without the motion query the caret would sit as a solid block forever, which
- * reads as a rendering artifact rather than a cursor — so it is hidden instead. */
-@media (prefers-reduced-motion: reduce) {
-  .term--hero .caret {
-    display: none;
-  }
-}
-
-@keyframes caret {
-  to {
-    opacity: 0;
-  }
-}
-
-@media (min-width: 60rem) {
-  .term--wide {
-    margin-right: -6rem;
-  }
-}
-
-/* The install command is the one string on the page that must be copied whole.
- * In a scrolling block its tail sits behind the edge, and a reader who does not
- * notice the scrollbar copies a truncated command — so this one wraps instead.
- * `anywhere` rather than `break-word` because the long token is a URL and the
- * flags after it must stay intact. */
-.term--cmd pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* ---- the ledger: the one thing this page is for ---- */
-
-.ledger {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--mono);
-  font-size: 0.8125rem;
-  margin-top: 1.5rem;
-}
-
-.ledger caption {
-  text-align: left;
-  font-family: var(--serif);
-  font-size: 1.0625rem;
   color: var(--muted);
-  margin-bottom: 1rem;
-  max-width: var(--measure);
-}
-
-.ledger th,
-.ledger td {
-  text-align: left;
-  padding: 0.7rem 0.75rem 0.7rem 0;
-  border-bottom: 1px solid var(--rule);
-  vertical-align: top;
-}
-
-/* Scoped to the header row only. Unscoped, this also hit the row headers in
- * tbody and rendered "Chat-completions transport" as three lines of uppercase
- * micro-type. */
-.ledger thead th {
-  font-weight: 600;
-  font-size: 0.6875rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.ledger tbody th {
-  font-weight: 600;
-  min-width: 11rem;
-  padding-right: 1.5rem;
-}
-
-.state {
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.state--met {
-  color: var(--signal);
-}
-.state--unmet {
-  color: var(--unmet);
-}
-
-.ledger td:last-child {
-  font-family: var(--serif);
-  font-size: 0.9375rem;
-  color: var(--muted);
-  padding-right: 0;
-}
-
-@media (min-width: 60rem) {
-  .ledger {
-    margin-right: -6rem;
-  }
-}
-
-/* ---- key/value lists ---- */
-
-.pairs {
-  margin: 1.5rem 0 0;
-  font-size: 0.9375rem;
-}
-
-.pairs div {
   display: grid;
-  grid-template-columns: 10.5rem minmax(0, 1fr);
-  gap: 0 1rem;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--rule);
+  gap: 1.25rem;
 }
 
-.pairs dt {
-  font-family: var(--mono);
-  font-size: 0.8125rem;
-  padding-top: 0.1rem;
-}
-
-.pairs dd {
-  margin: 0;
-  color: var(--muted);
-}
-
-@media (max-width: 34rem) {
-  .pairs div {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/* ---- footer ---- */
-
-footer {
-  padding: 4.5rem 0 5rem;
-  font-family: var(--mono);
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-
-.footer-links {
-  font-family: var(--serif);
-  margin-bottom: 1.5rem;
-}
-
-.footer-links a {
+.colophon__links a {
   margin-right: 1.5rem;
   display: inline-block;
   padding: 0.2rem 0;
 }
 
-.colophon {
-  font-family: var(--mono);
-  margin-bottom: 1.5rem;
+.colophon__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .theme-toggle {
   font: inherit;
-  font-family: var(--mono);
-  font-size: 0.8125rem;
   background: none;
   border: 1px solid var(--rule);
   color: var(--muted);
