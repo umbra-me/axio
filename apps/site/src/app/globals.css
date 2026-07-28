@@ -1,228 +1,536 @@
 /* axio — site styles.
  *
- * One grid runs the whole page. Argument sits in a narrow column on the left;
- * evidence sits on the right in a dark rail that runs continuously down the
- * page and bleeds off the right edge of the viewport — a terminal that carries
- * on past the frame. The rail is the composition, not a decoration on one: the
- * product's character is that it emits evidence, so the page is built to hold
- * an artifact beside every claim.
+ * Built in the Umbra design language so this reads as one of the family: the
+ * #050505 ground, #18181b surfaces, #262626 hairlines, 0.5rem radius, Geist,
+ * blurred colour fields behind the hero, pill section labels, and a gradient
+ * phrase in the headline. Tokens are lifted from
+ * products/web-stack/packages/ui/tailwind.config.ts rather than eyeballed.
  *
- * Consequences: no rules between sections (the rail separates), no masthead
- * logo (the name appears as `$ axio`, where the program puts it), and no gaps
- * between evidence cells — consecutive cells touch, which is what makes the
- * rail continuous rather than a column of cards.
+ * What makes it axio rather than Umbra is the accent. That system already
+ * gives every product its own hue — aegis emerald, hermes violet, nebula
+ * pink, nexus indigo — so axio takes amber: the colour a terminal has
+ * historically been, and the one warm note against an otherwise cold palette.
+ * Its gradient resolves from that amber into the house violet — a distinct
+ * product that is still part of Umbra.
  *
- * The page is light and the rail is dark, and in dark mode the page inverts
- * while the rail does not. axio renders in the terminal's own colours rather
- * than a bundled theme, so the element standing for it holds still.
+ * The ambient texture is axio's too. umbra.me drifts a constellation network
+ * behind the hero; this drifts scrollback, because that is the material this
+ * product is made of.
  *
- * No webfonts. It would be the only network request the page makes.
+ * Geist is self-hosted through next/font. No CDN, no external request.
  */
 
 :root {
-  --paper: #eceee9;
-  --ink: #15171b;
-  --muted: #5a6058;
-  --rule: #c6cbc0;
-  --signal: #0b5f4f;
-  --unmet: #6b4e14;
+  /* House */
+  --bg: #050505;
+  --surface: #18181b;
+  --surface-2: #101012;
+  --border: #262626;
+  --fg: #fafafa;
+  --muted: #8c8c8c;
+  --violet: #7c3aed;
+  --cyan: #06b6d4;
+  --radius: 0.5rem;
 
-  /* Constant across colour schemes. */
-  --term-bg: #0e1014;
-  --term-fg: #d5d9d2;
-  /* 4.54:1 on --term-bg was passing AA by 0.04. This carries most of the
-   * artifact text, so it gets real margin instead. */
-  --term-dim: #838b81;
-  --term-accent: #6fc9b0;
-  --term-warn: #d9ae5c;
+  /* axio */
+  --accent: #f59e0b;
+  /* Amber holds most of the run and the house violet arrives as a short
+   * tail. Travelling through pale yellow at the midpoint desaturated it and
+   * the headline read washed-out pink. */
+  --gradient: linear-gradient(110deg, #fbbf24 0%, #f59e0b 52%, #8b5cf6 100%);
 
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
-    Consolas, "Liberation Mono", monospace;
-  --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
-    serif;
+  --ok: #34d399;
+  --warn: #fbbf24;
 
-  --claim-col: 22rem;
-  --evidence-col: 34rem;
-  --gap: 3rem;
-  /* rail track = the gap plus the artifact measure; the gap becomes padding
-   * inside the dark so the edge sits immediately beside the argument. */
-  --rail-col: 37rem;
-  --step: 5rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* A clear step lighter than --term-bg. The rail does not change between
-     * schemes, so the page has to move away from it or the rail stops reading
-     * as a distinct surface. */
-    --paper: #1e2126;
-    --ink: #e6e8e2;
-    --muted: #99a095;
-    --rule: #343943;
-    --signal: #6fc9b0;
-    --unmet: #d9ae5c;
-  }
-}
-
-:root[data-theme="dark"] {
-  --paper: #1e2126;
-  --ink: #e6e8e2;
-  --muted: #99a095;
-  --rule: #343943;
-  --signal: #6fc9b0;
-  --unmet: #d9ae5c;
-}
-
-:root[data-theme="light"] {
-  --paper: #eceee9;
-  --ink: #15171b;
-  --muted: #5a6058;
-  --rule: #c6cbc0;
-  --signal: #0b5f4f;
-  --unmet: #6b4e14;
+  --wide: 72rem;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--serif);
-  font-size: 1.0625rem;
-  line-height: 1.62;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
-/* ---- the sheet ----
- * Four tracks. The outer two are equal, so the content block is centred; the
- * rail spans the evidence track *and* the right margin, which is what carries
- * it off the edge of the screen. */
-.sheet {
-  display: grid;
-  grid-template-columns:
-    minmax(1.5rem, 1fr)
-    minmax(0, var(--claim-col))
-    minmax(0, var(--rail-col))
-    minmax(1.5rem, 1fr);
-  align-items: stretch;
+.container {
+  width: 100%;
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 0 1.5rem;
 }
 
-.claim {
-  grid-column: 2;
-  padding: var(--step) 0 var(--step);
+/* ---- header ---- */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(5, 5, 5, 0.72);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
 }
 
-.evidence {
-  grid-column: 3 / 5;
-  background: var(--term-bg);
-  padding: var(--step) 1.5rem var(--step) var(--gap);
-  /* No row gap anywhere on this grid, so consecutive evidence cells meet and
-   * the rail reads as one surface. */
+.header__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  height: 4rem;
 }
 
-/* `display: contents` lets each pairing keep its own <section> for semantics
- * while its two children sit directly on the sheet grid — which is what allows
- * the rail to be continuous across sections rather than restarting per card. */
-.spread {
-  display: contents;
-}
-
-/* ---- type scale ---- */
-
-.claim h2 {
-  font-family: var(--mono);
-  font-size: clamp(1.3rem, 2.1vw, 1.6rem);
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
   font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.16;
-  margin: 0 0 1.1rem;
-  text-wrap: balance;
+  font-size: 1.0625rem;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+  color: var(--fg);
 }
 
-.claim p {
-  margin: 0 0 1rem;
+.wordmark__mark {
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 0.35rem;
+  background: var(--gradient);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #1a1204;
 }
 
-.claim p:last-child {
-  margin-bottom: 0;
+.header__nav {
+  display: flex;
+  align-items: center;
+  gap: 1.75rem;
+  font-size: 0.875rem;
+}
+
+.header__nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.header__nav a:hover {
+  color: var(--fg);
+}
+
+@media (max-width: 44rem) {
+  .header__nav-link {
+    display: none;
+  }
+}
+
+/* ---- buttons ---- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn--primary {
+  background: var(--gradient);
+  color: #1a1204;
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn--ghost {
+  border-color: var(--border);
+  color: var(--fg);
+  background: transparent;
+}
+
+.btn--ghost:hover {
+  border-color: #3f3f46;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 /* ---- hero ---- */
 
 .hero {
-  grid-column: 1 / -1;
-  background: var(--term-bg);
-  color: var(--term-fg);
+  position: relative;
+  padding: 6rem 0 4.5rem;
+  overflow: hidden;
+  text-align: center;
 }
 
-.hero__inner {
-  max-width: calc(var(--claim-col) + var(--rail-col));
+/* The same device umbra.me uses — large, heavily blurred colour fields behind
+ * the fold — with axio's amber where umbra.me leads with violet. */
+.hero__glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hero__glow span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(128px);
+}
+
+.hero__glow span:nth-child(1) {
+  width: 28rem;
+  height: 28rem;
+  top: -7rem;
+  left: 10%;
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.hero__glow span:nth-child(2) {
+  width: 24rem;
+  height: 24rem;
+  bottom: -9rem;
+  right: 8%;
+  background: rgba(124, 58, 237, 0.17);
+}
+
+/* axio's ambient texture: scrollback rather than a constellation. Dim, large
+ * and drifting — it must read as material, never as content, so it is masked
+ * away from the centre where the headline sits. */
+.hero__scrollback {
+  position: absolute;
+  inset: -25% -10%;
+  pointer-events: none;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  line-height: 2.15;
+  color: rgba(245, 158, 11, 0.06);
+  white-space: pre;
+  user-select: none;
+  mask-image: radial-gradient(
+    ellipse 65% 55% at 50% 42%,
+    transparent 30%,
+    #000 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 65% 55% at 50% 42%,
+    transparent 30%,
+    #000 100%
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero__scrollback {
+    animation: drift 100s linear infinite;
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-33.333%);
+  }
+}
+
+.hero__body {
+  position: relative;
+  z-index: 1;
+  max-width: 52rem;
   margin: 0 auto;
-  padding: 4rem 1.5rem 4.5rem;
 }
 
-.hero .term {
-  font-size: 0.875rem;
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 999px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
-/* Measured in rem, not ch: `ch` resolves against this element's own font-size
- * (body, 17px) rather than the display size inside it, which crushed the
- * standfirst into six stub lines. */
-.hero__caption {
-  margin-top: 3.5rem;
-  max-width: 36rem;
+.pill__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
-.hero__standfirst {
-  font-size: clamp(1.9rem, 4.4vw, 2.7rem);
-  line-height: 1.14;
-  letter-spacing: -0.03em;
-  margin: 0;
-  color: var(--term-fg);
+.hero h1 {
+  font-size: clamp(2.5rem, 6.6vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 1.03;
+  margin: 1.75rem 0 0;
   text-wrap: balance;
 }
 
-.hero__meta {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  color: var(--term-dim);
-  margin: 1.75rem 0 0;
-  display: grid;
-  gap: 0.35rem;
+.gradient-text {
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.hero__meta b {
+.hero__sub {
+  margin: 1.5rem auto 0;
+  max-width: 38rem;
+  font-size: 1.0625rem;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.hero__actions {
+  margin-top: 2.25rem;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ---- stat strip ---- */
+
+.stats {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin: 0;
+}
+
+.stats > div {
+  padding: 1.5rem 1rem;
+  text-align: center;
+  border-left: 1px solid var(--border);
+}
+
+.stats > div:first-child {
+  border-left: 0;
+}
+
+.stats dt {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.stats dd {
+  margin: 0.3rem 0 0;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@media (max-width: 44rem) {
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .stats > div:nth-child(3) {
+    border-left: 0;
+  }
+  .stats > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* ---- sections ---- */
+
+.section {
+  padding: 5.5rem 0;
+}
+
+.section__head {
+  max-width: 44rem;
+  margin: 0 auto 3rem;
+  text-align: center;
+}
+
+.section-label {
+  display: inline-block;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1rem;
+}
+
+.section__head h2 {
+  font-size: clamp(1.75rem, 3.4vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.section__head p {
+  margin: 1rem auto 0;
+  max-width: 36rem;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* ---- cards ---- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.6rem;
+}
+
+.card__icon {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 0.55rem;
+  display: grid;
+  place-items: center;
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--accent);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.95rem;
+  margin-bottom: 1.1rem;
+}
+
+.card h3 {
+  font-size: 1.0625rem;
   font-weight: 600;
-  color: var(--term-warn);
+  letter-spacing: -0.015em;
+  margin: 0 0 0.5rem;
+}
+
+.card p {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--muted);
+}
+
+/* ---- terminal ---- */
+
+.terminal {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  max-width: 54rem;
+  margin: 0 auto;
+}
+
+.terminal__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.terminal__dots {
+  display: flex;
+  gap: 0.35rem;
+  margin-right: 0.4rem;
+}
+
+.terminal__dots i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #2e2e33;
+}
+
+.terminal pre {
+  margin: 0;
+  padding: 1.35rem 1.5rem;
+  overflow-x: auto;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: #d4d4d8;
+}
+
+.terminal--wrap pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* #71717a measured 3.93:1 on the terminal surface — under AA, and this colour
+ * carries every comment, frame and timing in the artifacts. */
+.dim {
+  color: #8a8a94;
+}
+
+.acc {
+  color: var(--accent);
 }
 
 /* Lines hold their space from the start and only opacity changes, so the
- * monospace grid never reflows and nothing below the block moves as it plays. */
-.hero .out {
+ * monospace grid never reflows and nothing below moves as the turn plays. */
+.out {
   opacity: 0;
 }
 
-.hero .in {
+.in {
   opacity: 1;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .hero .out,
-  .hero .in {
+  .out,
+  .in {
     transition: opacity 220ms ease;
   }
-  .hero .caret {
+  .caret {
     animation: caret 1s steps(2, start) infinite;
   }
 }
 
 /* Unanimated, the caret is a solid block that reads as a rendering artifact. */
 @media (prefers-reduced-motion: reduce) {
-  .hero .caret {
+  .caret {
     display: none;
   }
 }
@@ -233,268 +541,71 @@ body {
   }
 }
 
-/* ---- artifacts ---- */
+/* ---- ledger ---- */
 
-.term {
-  margin: 0 0 2rem;
-  color: var(--term-fg);
-  font-family: var(--mono);
-  font-size: 0.8125rem;
-  line-height: 1.6;
-}
-
-.term:last-child {
-  margin-bottom: 0;
-}
-
-.term pre {
-  margin: 0;
-  overflow-x: auto;
-  padding-bottom: 0.2rem;
-}
-
-/* The label names the artifact where it sits. There is no frame to put it in
- * any more — the rail is the frame — so it is a rule-and-caption instead. */
-.term__label {
-  font-size: 0.6875rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--term-dim);
-  padding-bottom: 0.7rem;
-  margin-bottom: 0.9rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-}
-
-.term .dim {
-  color: var(--term-dim);
-}
-
-.term .acc {
-  color: var(--term-accent);
-}
-
-/* The install commands must be copyable whole. In a scrolling block the tail
- * sits behind the edge and a reader who misses the scrollbar copies a truncated
- * command. `anywhere` rather than `break-word`: the long token is a URL and the
- * flags after it must stay intact. */
-.term--wrap pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* ---- the ledger: the one moment evidence takes the whole page ---- */
-
-.ledger-block {
-  grid-column: 1 / -1;
-  background: var(--term-bg);
-  color: var(--term-fg);
-  padding: 5.5rem 0 6rem;
-  display: grid;
-  /* Inherits the sheet's five tracks so the ledger stays on the same grid as
-   * everything above it, despite spanning edge to edge. */
-  grid-template-columns:
-    minmax(1.5rem, 1fr)
-    minmax(0, var(--claim-col))
-    minmax(0, var(--rail-col))
-    minmax(1.5rem, 1fr);
-}
-
-.ledger-head {
-  grid-column: 2 / 4;
-  max-width: 46rem;
-  margin-bottom: 2.75rem;
-}
-
-.ledger-head h2 {
-  font-family: var(--mono);
-  font-size: clamp(1.3rem, 2.1vw, 1.6rem);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.16;
-  margin: 0 0 1rem;
-  color: var(--term-fg);
-  text-wrap: balance;
-}
-
-.ledger-head p {
-  margin: 0;
-  color: var(--term-dim);
-  font-size: 0.9375rem;
-}
-
-.ledger-wrap {
-  grid-column: 2 / 4;
+.ledger-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   overflow-x: auto;
 }
 
 .ledger {
   width: 100%;
   border-collapse: collapse;
-  font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 .ledger th,
 .ledger td {
   text-align: left;
-  padding: 0.85rem 0.75rem 0.85rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
 
-/* Header row only. Unscoped this also hits the row headers in tbody and renders
- * "Chat-completions transport" as three lines of uppercase micro-type. */
+.ledger tbody tr:last-child th,
+.ledger tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Header row only. Unscoped this also hits the row headers in tbody and
+ * renders them as uppercase micro-type. */
 .ledger thead th {
-  font-weight: 600;
+  font-family: var(--font-geist-mono), monospace;
   font-size: 0.6875rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--term-dim);
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .ledger tbody th {
   font-weight: 600;
-  color: var(--term-fg);
-  width: 15rem;
-  padding-right: 1.5rem;
-}
-
-.state {
-  font-weight: 600;
-  white-space: nowrap;
-  padding-right: 1.5rem !important;
-}
-
-.state--met {
-  color: var(--term-accent);
-}
-
-.state--unmet {
-  color: var(--term-warn);
+  width: 16rem;
 }
 
 .ledger td:last-child {
-  font-family: var(--serif);
-  font-size: 0.9375rem;
-  line-height: 1.5;
-  color: var(--term-dim);
-  padding-right: 0;
-}
-
-/* ---- shared inline type ---- */
-
-code {
-  font-family: var(--mono);
-  font-size: 0.875em;
-}
-
-a {
-  color: inherit;
-  text-decoration-color: var(--rule);
-  text-underline-offset: 0.2em;
-}
-
-a:hover {
-  text-decoration-color: var(--signal);
-}
-
-a:focus-visible,
-button:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 3px;
-  border-radius: 2px;
-}
-
-/* ---- colophon ---- */
-
-.colophon {
-  grid-column: 2 / 4;
-  padding: 3rem 0 5rem;
-  font-family: var(--mono);
-  font-size: 0.8125rem;
   color: var(--muted);
-  display: grid;
-  gap: 1.25rem;
 }
 
-.colophon__links a {
-  margin-right: 1.5rem;
-  display: inline-block;
-  padding: 0.2rem 0;
+.state {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  width: 7rem;
 }
 
-.colophon__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
+.state--met {
+  color: var(--ok);
 }
 
-.theme-toggle {
-  font: inherit;
-  background: none;
-  border: 1px solid var(--rule);
-  color: var(--muted);
-  padding: 0.3rem 0.7rem;
-  border-radius: 2px;
-  cursor: pointer;
+.state--unmet {
+  color: var(--warn);
 }
 
-.theme-toggle:hover {
-  border-color: var(--signal);
-  color: var(--ink);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a,
-  .theme-toggle {
-    transition: color 120ms ease, border-color 120ms ease,
-      text-decoration-color 120ms ease;
-  }
-}
-
-/* ---- narrow ----
- * The rail cannot run beside anything on a phone, so it becomes full-bleed
- * bands between the claims it answers. Same alternation, stacked. */
-@media (max-width: 62rem) {
-  :root {
-    --step: 2.5rem;
-  }
-
-  .sheet {
-    grid-template-columns: minmax(1.25rem, 1fr) minmax(0, 34rem) minmax(1.25rem, 1fr);
-  }
-
-  .claim,
-  .hero__caption,
-  .ledger-head,
-  .colophon {
-    grid-column: 2;
-  }
-
-  .hero,
-  .evidence,
-  .ledger-wrap {
-    grid-column: 1 / -1;
-    padding: 2rem clamp(1.25rem, 5vw, 2rem);
-  }
-
-  .hero__caption {
-    padding-top: 2.5rem;
-  }
-
-  .ledger-block {
-    grid-template-columns: minmax(1.25rem, 1fr) minmax(0, 34rem) minmax(1.25rem, 1fr);
-    padding: 3.5rem 0 4rem;
-  }
-
-  .ledger-wrap {
-    padding-top: 1.75rem;
-  }
-}
-
-@media (max-width: 40rem) {
+@media (max-width: 44rem) {
   .ledger,
   .ledger tbody,
   .ledger tr,
@@ -506,17 +617,76 @@ button:focus-visible {
   .ledger thead {
     display: none;
   }
-  .ledger tr {
-    padding: 0.9rem 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  .ledger tbody tr {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
   }
   .ledger th,
   .ledger td {
     border: 0;
-    padding: 0 0 0.3rem;
-    white-space: normal;
+    padding: 0 0 0.35rem;
   }
-  .state {
-    padding-right: 0 !important;
+}
+
+/* ---- install ---- */
+
+.install {
+  max-width: 48rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.9375rem;
+  text-align: center;
+  margin: 1.75rem auto 0;
+  max-width: 42rem;
+}
+
+code {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.9em;
+  color: #e4e4e7;
+}
+
+/* ---- footer ---- */
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 2.5rem 0 4rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.footer__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.footer a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: var(--fg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a,
+  .btn {
+    transition: color 140ms ease, border-color 140ms ease, filter 140ms ease,
+      background-color 140ms ease;
   }
 }

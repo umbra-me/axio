@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
+// Geist is the Umbra house face. next/font self-hosts it, so the page still
+// makes no external request.
 export const metadata: Metadata = {
   title: "axio — an AI coding agent that stays in your terminal",
   description:
@@ -13,17 +17,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* Applied before first paint. Without this the page renders in the
-            system scheme and then snaps to the stored one, which flashes the
-            whole background — the most visible thing on a page this plain. */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem("axio-theme");if(t&&t!=="system")document.documentElement.setAttribute("data-theme",t)}catch(e){}`,
-          }}
-        />
-      </head>
+    <html
+      lang="en"
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
+    >
       <body>{children}</body>
     </html>
   );

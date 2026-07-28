@@ -2,17 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// The page opens with a turn, played the way the real one runs: invoked, the
-// prompt already sent, the status line thinking, tool calls landing as they
-// finish, the answer streaming, the status settling.
-//
-// It leads rather than illustrating. The product's defining behaviour is that
-// it streams a transcript inline instead of repainting a screen, so the most
-// characteristic thing about it is a turn happening — and a page that explains
-// that in prose first, then shows a static block, has the order backwards.
-//
-// There is no wordmark. The name appears as the command, which is where the
-// program itself puts it.
+// A turn, played the way the real one runs: invoked, the prompt already sent,
+// the status line thinking, tool calls landing as they finish, the answer
+// streaming, the status settling.
 
 const BOX_WIDTH = 54;
 
@@ -21,7 +13,7 @@ const METER = "4s · 1.2k in / 340 out";
 const PROMPT = "› explain the change";
 
 // Every frame line is built to exactly BOX_WIDTH so the corners meet. Composed
-// from measured parts rather than hand-counted dashes: the first version had a
+// from measured parts rather than hand-counted dashes: an early version had a
 // 63-character top against a 54-character bottom and the box did not close.
 const TOP = (() => {
   const left = `╭─ ${MODEL} `;
@@ -41,6 +33,40 @@ const TOOL_LINES = [
 const ANSWER = "Done — the lexer now owns the span table.";
 
 type Phase = "thinking" | "streaming" | "done";
+
+/**
+ * The ambient texture behind the hero. umbra.me drifts a constellation network;
+ * axio drifts scrollback, because that is the material this product is made of.
+ * Rendered from the same lines the transcript uses so it is the product's own
+ * output rather than lorem noise, repeated three times so the drift can loop by
+ * translating exactly one third.
+ */
+export function ScrollbackBackdrop() {
+  const block = [
+    "$ axio -p \"explain this repo\"",
+    "  ⏺ read    src/parse.rs                    3ms",
+    "  ⏺ grep    fn parse_span                  11ms",
+    "  ⏺ edit    src/parse.rs  +12 −4           18ms",
+    "  Done — the lexer now owns the span table.",
+    "",
+    "$ axio --doctor",
+    "  provider   ollama          ✓ configured",
+    "  model      gpt-oss:120b",
+    "  workspace  ~/src/axio",
+    "",
+    "$ cat src/lib.rs | axio -p \"review this\"",
+    "  ⏺ read    src/lib.rs                       2ms",
+    "  approve  edit:src/lib.rs",
+    "  allow? y once  a this session  n no",
+    "",
+  ].join("\n");
+
+  return (
+    <div className="hero__scrollback" aria-hidden="true">
+      {`${block}\n${block}\n${block}`}
+    </div>
+  );
+}
 
 export default function HeroTranscript() {
   const [tools, setTools] = useState(0);
@@ -82,71 +108,55 @@ export default function HeroTranscript() {
       : `  ${"· thinking".padEnd(32)}ctrl-c to interrupt`;
 
   return (
-    <>
-      {/* The rail starts here, at full width, then narrows to the right column
-          and runs down the page. Two grid children rather than one wrapper, so
-          the dark block and the caption beneath it sit on the sheet directly. */}
-      <div className="hero">
-        <div className="hero__inner">
-          <figure className="term" aria-label="An example axio turn">
-            <figcaption className="term__label">a turn, played once</figcaption>
-            <pre>
-          <span className="dim">{"$ "}</span>
-          {"axio\n\n"}
-          {TOOL_LINES.map((line, i) => (
-            <span key={line.name} className={i < tools ? "in" : "out"}>
-              {"  "}
-              <span className="acc">⏺</span>
-              {` ${line.name.padEnd(8)}${line.arg}`}
-              {line.delta ? <span className="dim">{`  ${line.delta}`}</span> : ""}
-              <span className="dim">
-                {" ".repeat(
-                  Math.max(
-                    1,
-                    38 - line.arg.length - (line.delta ? line.delta.length + 2 : 0),
-                  ),
-                )}
-                {line.ms}
-              </span>
-              {"\n"}
-            </span>
-          ))}
-          {"\n"}
-          <span className={phase === "thinking" ? "out" : "in"}>
+    <figure className="terminal" aria-label="An example axio turn">
+      <figcaption className="terminal__bar">
+        <span className="terminal__dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+        a turn, played once
+      </figcaption>
+      <pre>
+        <span className="dim">{"$ "}</span>
+        {"axio\n\n"}
+        {TOOL_LINES.map((line, i) => (
+          <span key={line.name} className={i < tools ? "in" : "out"}>
             {"  "}
-            {ANSWER.slice(0, typed)}
-            {phase === "streaming" && <span className="caret">▌</span>}
+            <span className="acc">⏺</span>
+            {` ${line.name.padEnd(8)}${line.arg}`}
+            {line.delta ? <span className="dim">{`  ${line.delta}`}</span> : ""}
+            <span className="dim">
+              {" ".repeat(
+                Math.max(
+                  1,
+                  38 - line.arg.length - (line.delta ? line.delta.length + 2 : 0),
+                ),
+              )}
+              {line.ms}
+            </span>
             {"\n"}
           </span>
+        ))}
+        {"\n"}
+        <span className={phase === "thinking" ? "out" : "in"}>
+          {"  "}
+          {ANSWER.slice(0, typed)}
+          {phase === "streaming" && <span className="caret">▌</span>}
           {"\n"}
-          <span className="dim">{TOP}</span>
-          {"\n"}
-          <span className="dim">│</span>
-          {` ${PROMPT}`}
-          {MID_PAD}
-          <span className="dim">│</span>
-          {"\n"}
-          <span className="dim">{BOTTOM}</span>
-          {"\n"}
-              <span className="dim">{status}</span>
-            </pre>
-          </figure>
-
-          <div className="hero__caption">
-            <h1 className="hero__standfirst">
-              An AI coding agent that stays inside your terminal instead of
-              taking it over.
-            </h1>
-            <p className="hero__meta">
-              <span>Rust 1.88+ · Linux · macOS · Windows</span>
-              <span>Apache-2.0</span>
-              <span>
-                <b>Pre-release — nothing is tagged</b>
-              </span>
-            </p>
-          </div>
-        </div>
-      </div>
-    </>
+        </span>
+        {"\n"}
+        <span className="dim">{TOP}</span>
+        {"\n"}
+        <span className="dim">│</span>
+        {` ${PROMPT}`}
+        {MID_PAD}
+        <span className="dim">│</span>
+        {"\n"}
+        <span className="dim">{BOTTOM}</span>
+        {"\n"}
+        <span className="dim">{status}</span>
+      </pre>
+    </figure>
   );
 }

@@ -2,12 +2,12 @@ import type { ReactNode } from "react";
 
 // Artifacts are written as plain strings so they stay legible in source and can
 // be diffed against the README they came from. Two inline marks:
-//   «dim»  — the terminal's secondary colour (timings, frames, comments)
-//   ‹acc›  — the accent (tool markers, the one thing the eye should land on)
+//   «dim»  — the terminal's secondary colour (comments, frames, timings)
+//   ‹acc›  — the accent, for the one thing the eye should land on
 //
-// Anything else is literal. Keeping the artifacts as text rather than JSX is
-// what makes it possible to check them character-for-character against the
-// program's real output, which is the whole point of showing them.
+// Keeping them as text rather than JSX is what makes it possible to check them
+// character-for-character against the program's real output, which is the point
+// of showing artifacts at all.
 
 const TOKEN = /(«[^»]*»|‹[^›]*›)/g;
 
@@ -42,15 +42,21 @@ export default function Term({
   wrap = false,
 }: {
   children: string;
-  /** Names what the artifact is, in the frame itself rather than as a caption. */
   label?: string;
-  /** For the install command, whose tail must never hide behind a scrollbar. */
+  /** For the install commands, whose tail must never hide behind a scrollbar. */
   wrap?: boolean;
 }) {
   const lines = children.replace(/^\n/, "").replace(/\n$/, "").split("\n");
   return (
-    <figure className={`term${wrap ? " term--wrap" : ""}`}>
-      {label ? <figcaption className="term__label">{label}</figcaption> : null}
+    <figure className={`terminal${wrap ? " terminal--wrap" : ""}`}>
+      <figcaption className="terminal__bar">
+        <span className="terminal__dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+        {label}
+      </figcaption>
       <pre>{lines.map(render)}</pre>
     </figure>
   );
