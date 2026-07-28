@@ -521,6 +521,16 @@ than to the session.
 
 ## Providers
 
+**A model catalogue in the binary can be wrong the day it is written.** Not
+just stale — wrong immediately. Three names were compiled in for the
+subscription endpoint on the reasoning that it published no listing; it
+publishes one, and it serves none of those three. Nothing would have said so
+until someone picked a name and got a 404. The listing needs
+`?client_version=`, and it *filters* on it: each model declares a minimum and
+axio's own version returns an empty catalog, so the value sent is one that does
+not filter and the real filtering is done on what each model says about itself
+(`visibility`, `supported_in_api`).
+
 **A model catalogue in the binary is wrong the first time either side ships a
 model, and wrong invisibly.** A name missing from a compiled-in list is
 indistinguishable from a name the provider refuses. Both dialects publish

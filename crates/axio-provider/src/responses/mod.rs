@@ -41,6 +41,15 @@ pub const PROVIDER: &str = "openai-codex";
 /// thirty, and the failure lands in the middle of an answer.
 const SKEW_MS: u64 = 120_000;
 
+/// What to answer when the catalog asks which client version this is.
+///
+/// It filters on the answer: every model declares a minimum, and axio's own
+/// `0.1.0` returns an empty list. axio has no version in that numbering — the
+/// question is about a different program — so any value here is a fiction, and
+/// this is the one that does not silently hide the whole catalog. What a model
+/// says about *itself* is what actually filters the list, and that is read.
+const CLIENT_VERSION: &str = "999.0.0";
+
 pub struct CodexProvider {
     http: reqwest::Client,
     /// Behind a lock because a refresh replaces it, and the request path is
@@ -116,18 +125,34 @@ impl Provider for CodexProvider {
         model_info(model)
     }
 
-    /// This endpoint publishes no listing, so the picker gets what is known to
-    /// work rather than a request that 404s.
+    /// The catalog, asked of the endpoint like every other provider's.
     ///
-    /// The one place in axio a model list is not asked for. It is a short,
-    /// slow-moving set, and the alternative is `/model` failing outright on the
-    /// provider where it is most useful.
-    async fn models(&self, _cancel: CancellationToken) -> Result<Vec<String>, ProviderError> {
-        Ok(vec![
-            "gpt-5-codex".to_owned(),
-            "gpt-5".to_owned(),
-            "codex-mini-latest".to_owned(),
-        ])
+    /// This was a hardcoded list of three names for exactly one commit, and
+    /// every one of them was wrong — the endpoint serves none of them. That is
+    /// the argument against compiled-in catalogues in one line: it is not that
+    /// they go stale, it is that they can be wrong on the day they are written
+    /// and nothing says so until someone picks a name and gets a 404.
+    async fn models(&self, cancel: CancellationToken) -> Result<Vec<String>, ProviderError> {
+        let (access, account) = self.usable().await?;
+        let url = format!("{}/models?client_version={CLIENT_VERSION}", self.base_url);
+
+        let mut request = self.http.get(&url).bearer_auth(&access);
+        if let Some(account) = account {
+            request = request.header("chatgpt-account-id", account);
+        }
+
+        let response = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
+            r = request.send() => r.map_err(|e| transport_error(e, &url))?,
+        };
+
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(crate::anthropic::classify(status, None, &body));
+        }
+        crate::catalog::codex_models(&body)
     }
 
     async fn stream(

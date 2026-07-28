@@ -29,6 +29,35 @@ pub(crate) fn model_ids(body: &str) -> Result<Vec<String>, ProviderError> {
         .collect())
 }
 
+/// The model names in a Codex catalog response.
+///
+/// A different shape from the OpenAI-compatible listing — `models[].slug`
+/// rather than `data[].id` — and it carries two things worth reading rather
+/// than showing everything it returns:
+///
+/// * `visibility: "hide"` marks a model the catalog itself does not offer.
+/// * `supported_in_api: false` marks one that cannot be driven this way at
+///   all, so listing it produces a pick that fails at the first request.
+pub(crate) fn codex_models(body: &str) -> Result<Vec<String>, ProviderError> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| ProviderError::Transport(Redacted::new(format!("model catalog: {e}"))))?;
+
+    let Some(entries) = parsed.get("models").and_then(|m| m.as_array()) else {
+        return Err(ProviderError::Transport(Redacted::new(
+            "the model catalog had no `models` array".to_owned(),
+        )));
+    };
+
+    Ok(entries
+        .iter()
+        .filter(|entry| {
+            entry.get("visibility").and_then(|v| v.as_str()) != Some("hide")
+                && entry.get("supported_in_api").and_then(|v| v.as_bool()) != Some(false)
+        })
+        .filter_map(|entry| entry.get("slug")?.as_str().map(str::to_owned))
+        .collect())
+}
+
 /// Where a listing lives, given the endpoint the requests go to.
 ///
 /// The Messages dialect is configured with the full path to `/v1/messages`, so
@@ -68,6 +97,44 @@ mod tests {
         assert!(model_ids("not json").is_err());
         assert!(model_ids(r#"{"error":"nope"}"#).is_err());
         assert_eq!(model_ids(r#"{"data":[]}"#).unwrap(), Vec::<String>::new());
+    }
+
+    /// Shaped from a real response: `models[].slug`, not `data[].id`.
+    #[test]
+    fn a_codex_catalog_is_read_from_its_own_shape() {
+        let body = r#"{"models":[
+            {"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true},
+            {"slug":"gpt-5.4","visibility":"list","supported_in_api":true}
+        ]}"#;
+        assert_eq!(codex_models(body).unwrap(), vec!["gpt-5.6-sol", "gpt-5.4"]);
+        // The other dialect's parser must not accept it, or a wrong endpoint
+        // would return an empty list instead of an error.
+        assert!(model_ids(body).is_err());
+    }
+
+    /// Both are pickable-looking and neither works: one the catalog hides, one
+    /// it says cannot be driven through the API at all. Listing either produces
+    /// a choice that fails at the first request.
+    #[test]
+    fn hidden_and_non_api_models_are_left_out() {
+        let body = r#"{"models":[
+            {"slug":"shown","visibility":"list","supported_in_api":true},
+            {"slug":"internal","visibility":"hide","supported_in_api":true},
+            {"slug":"not-over-the-api","visibility":"list","supported_in_api":false}
+        ]}"#;
+        assert_eq!(codex_models(body).unwrap(), vec!["shown"]);
+    }
+
+    /// A catalog with no `models` is a different response, not an empty one —
+    /// and "this provider serves nothing" is never true.
+    #[test]
+    fn a_response_that_is_not_a_catalog_is_an_error() {
+        assert!(codex_models(r#"{"error":{"message":"nope"}}"#).is_err());
+        assert!(codex_models("not json").is_err());
+        assert_eq!(
+            codex_models(r#"{"models":[]}"#).unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     /// The regression: appending to the Messages URL asks for

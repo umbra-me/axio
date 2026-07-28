@@ -198,7 +198,7 @@ heard of. A provider with no credential stays on the list and cannot be
 chosen — removing it would read as one axio cannot reach, when the answer is
 `/login` away.
 
-The model list is fetched from the provider, never compiled in: a name missing
+The model list is fetched from every provider, never compiled in: a name missing
 from a built-in catalogue looks exactly like a name the provider refuses. The
 one in use is ticked and the highlight opens on it, so the reflex Enter changes
 nothing.

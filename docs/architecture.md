@@ -214,7 +214,8 @@ The surface has no configuration, so it cannot build a provider. It is given a
 factory instead — a closure over the resolved config — which keeps credential
 lookup and transport construction where they already live.
 
-The second stage's list is **asked of the provider** rather
+The second stage's list is **asked of the provider** — every provider, with
+no exception — rather
 than compiled in — the second method on the seam exists for this. A catalogue
 in the binary is wrong the first time either side ships a model, and wrong
 where nobody looks: a name missing from a picker is indistinguishable from a
