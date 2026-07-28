@@ -84,6 +84,36 @@ pub(super) fn finish_signin(result: Result<axio_core::auth::OAuthTokens, String>
     }
 }
 
+/// Report what a running sign-in just did.
+///
+/// One of the two arms the loop hands straight back: the sign-in is already
+/// off the loop, so what arrives here is only ever something to say.
+pub(super) fn on_signin_step<B: Backend>(
+    app: &mut Tui,
+    terminal: &mut Terminal<B>,
+    step: Option<SignIn>,
+) -> Result<(), B::Error> {
+    match step {
+        Some(SignIn::Opened { url, opened }) => {
+            let mut said = if opened {
+                vec!["a browser was opened to finish signing in".to_owned()]
+            } else {
+                vec!["no browser could be opened — visit this to sign in:".to_owned()]
+            };
+            said.push(format!("  {url}"));
+            app.push_command_output(terminal, &said)?;
+            app.status = "waiting for the browser".into();
+        }
+        Some(SignIn::Done(result)) => {
+            app.status.clear();
+            let said = finish_signin(result);
+            app.push_command_output(terminal, &said)?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 /// Ask a provider what it serves, off the loop.
 ///
 /// The provider is built by name rather than taken from the agent, because the
@@ -115,5 +145,38 @@ pub(super) fn list_models(
         Err(why) => {
             let _ = tx.send(Err(why));
         }
+    }
+}
+
+/// Open the picker on what a provider listed.
+pub(super) fn on_models_listed(
+    app: &mut Tui,
+    agent: Option<&Agent>,
+    listed: Option<Result<Vec<String>, String>>,
+) {
+    app.status.clear();
+    match listed {
+        Some(Ok(models)) if models.is_empty() => {
+            app.status = "the provider listed no models".into();
+        }
+        Some(Ok(models)) => {
+            // Marked against the running model only when the provider did not
+            // change; a tick beside a name the new endpoint merely happens to
+            // share would be a lie.
+            let staying = app
+                .pending_provider
+                .as_deref()
+                .is_none_or(|p| agent.is_none_or(|a| a.id_of_provider() == p));
+            let current = if staying {
+                agent
+                    .map(|a| a.model().to_owned())
+                    .unwrap_or_else(|| app.model.clone())
+            } else {
+                String::new()
+            };
+            app.mode = Mode::PickingModel(Picker::new(models, current));
+        }
+        Some(Err(why)) => app.status = format!("could not list models: {why}"),
+        None => {}
     }
 }

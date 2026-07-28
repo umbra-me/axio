@@ -54,7 +54,7 @@ use input::next_input;
 use login::{Login, Outcome as LoginOutcome, Stage as LoginStage};
 pub use picker::Offer;
 use picker::Picker;
-use signin::{SignIn, finish_signin, list_models, sign_in};
+use signin::{SignIn, list_models, on_models_listed, on_signin_step, sign_in};
 use state::Mode;
 pub use state::Tui;
 use terminal::{install_panic_hook, restore_terminal};
@@ -238,54 +238,12 @@ pub async fn run(
 
             step = signin_rx.recv() => {
                 clock.mark();
-                match step {
-                    Some(SignIn::Opened { url, opened }) => {
-                        let mut said = if opened {
-                            vec!["a browser was opened to finish signing in".to_owned()]
-                        } else {
-                            vec!["no browser could be opened — visit this to sign in:".to_owned()]
-                        };
-                        said.push(format!("  {url}"));
-                        app.push_command_output(&mut terminal, &said)?;
-                        app.status = "waiting for the browser".into();
-                    }
-                    Some(SignIn::Done(result)) => {
-                        app.status.clear();
-                        let said = finish_signin(result);
-                        app.push_command_output(&mut terminal, &said)?;
-                    }
-                    None => {}
-                }
+                on_signin_step(&mut app, &mut terminal, step)?;
             }
 
             listed = models_rx.recv() => {
                 clock.mark();
-                app.status.clear();
-                match listed {
-                    Some(Ok(models)) if models.is_empty() => {
-                        app.status = "the provider listed no models".into();
-                    }
-                    Some(Ok(models)) => {
-                        // Marked against the running model only when the
-                        // provider did not change; a tick beside a name the new
-                        // endpoint merely happens to share would be a lie.
-                        let staying = app
-                            .pending_provider
-                            .as_deref()
-                            .is_none_or(|p| agent.as_ref().is_none_or(|a| a.id_of_provider() == p));
-                        let current = if staying {
-                            agent
-                                .as_ref()
-                                .map(|a| a.model().to_owned())
-                                .unwrap_or_else(|| app.model.clone())
-                        } else {
-                            String::new()
-                        };
-                        app.mode = Mode::PickingModel(Picker::new(models, current));
-                    }
-                    Some(Err(why)) => app.status = format!("could not list models: {why}"),
-                    None => {}
-                }
+                on_models_listed(&mut app, agent.as_ref(), listed);
             }
 
             input = next_input(&mut keys) => {
