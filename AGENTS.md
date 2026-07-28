@@ -10,7 +10,7 @@ cargo fmt --all -- --check
 bash scripts/features.sh                            # both feature sets, with CI's -D warnings
 
 bash scripts/firewall.sh                            # naming firewall (also a pre-commit hook)
-bash scripts/limits.sh                              # members, ToolCx fields, file size; LOC reported
+bash scripts/limits.sh                              # members, ToolCx fields, file size; LOC per crate
 bash scripts/deps.sh                                # axio-core links no transport/terminal/walker
 bash scripts/check-windows.sh                       # cfg-gated code still compiles for windows
 
@@ -36,8 +36,10 @@ lines becomes child modules — `tui/`, `agent/`, `config/`, `markdown/` — nev
 another crate. Crates are how the dependency graph is kept honest (`axio-core`
 links no transport, no terminal, no filesystem walker), and a module that has
 grown says nothing about dependencies. `scripts/limits.sh` enforces both counts
-and reports the widest file on every run. Total workspace lines are reported and
-never enforced: the only way to satisfy such a ceiling is to build less.
+and reports the widest file on every run. Lines are reported per crate and never
+enforced: the only way to satisfy such a ceiling is to build less, and one
+workspace figure cannot tell a growing surface apart from a thickening core. A
+crate with no budget entry does fail — pricing one gives up nothing.
 
 Splitting means the boundaries get named: a method reached from a sibling module
 is `pub(super)` and everything else stays private, so each file states what it

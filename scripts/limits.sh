@@ -5,27 +5,50 @@
 # mechanism. Raising any of them is allowed — in a commit whose message says
 # why.
 #
-# Three of them fail the build; the total line count does not, and the
-# difference is deliberate. A crate count, a `ToolCx` field count and a file
-# length can always be satisfied without giving anything up — by not adding a
-# dependency edge, by not coupling a tool to a host, by splitting a module. The
-# only way to satisfy a total-lines ceiling is to write less code, which means
-# building less. Worse, as it tightens it rewards density: comments are free
-# here and code is not, so the pressure would be toward clever code with long
+# Some of them fail the build; the line counts do not, and the difference is
+# deliberate. A crate count, a `ToolCx` field count and a file length can
+# always be satisfied without giving anything up — by not adding a dependency
+# edge, by not coupling a tool to a host, by splitting a module. The only way
+# to satisfy a line-count ceiling is to write less code, which means building
+# less. Worse, as it tightens it rewards density: comments are free here and
+# code is not, so the pressure would be toward clever code with long
 # explanations, which is backwards for this codebase.
 #
-# So the total is reported and never enforced. Being able to see it is what
-# catches drift; failing on it only interrupts someone mid-change to edit a
+# So the counts are reported and never enforced. Being able to see them is what
+# catches drift; failing on them only interrupts someone mid-change to edit a
 # constant they are permitted to edit anyway.
+#
+# They are per crate because one workspace number cannot distinguish the two
+# things it is summing. `axio` is where surfaces land and it is meant to grow —
+# a TUI, then whatever follows it. `axio-core` is the root every other crate
+# depends on, so lines there are where coupling accumulates, and the same
+# thousand lines mean something entirely different. A single total reports both
+# as the same event. The workspace figure is the sum of the parts rather than a
+# separate knob, so it cannot disagree with them.
+#
+# A crate with no budget entry does fail, and that is not an exception to the
+# above: adding a line to `crate_budget` gives up nothing, and a crate the
+# script cannot price is one it has quietly stopped tracking — the same failure
+# the `ToolCx` lookup below is written to avoid.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 MAX_MEMBERS=4
 MAX_TOOLCX_FIELDS=5
-# Reported, not enforced — see the header.
-LOC_BUDGET=10000
 MAX_FILE_LOC=300
+
+# Reported, not enforced — see the header. A crate absent from this list fails,
+# so a rename cannot drop one out of the report unnoticed.
+crate_budget() {
+  case "$1" in
+    axio-core) echo 6000 ;;      # the loop, protocol, session, config, policy
+    axio-provider) echo 5000 ;;  # one block per transport
+    axio-tools) echo 4000 ;;     # one module per tool
+    axio) echo 10000 ;;          # every surface
+    *) echo '' ;;
+  esac
+}
 
 status=0
 
@@ -71,33 +94,58 @@ if awk '/^pub struct ToolCx \{/{f=1;next} /^\}/{f=0} f' "$toolcx_file" \
   status=1
 fi
 
-# --- workspace Rust LOC, excluding tests ------------------------------------
+# --- Rust LOC per crate, excluding tests -------------------------------------
 # Heuristic: everything from a file's first `#[cfg(test)]` to its end is a test
 # module, which is where they live by convention here. Files under tests/ are
 # excluded outright.
+#
+# The crate list is derived from the tracked paths rather than from Cargo.toml,
+# so it names what is actually there.
 loc=0
+budgeted=0
 widest=0
 widest_file=""
-while IFS= read -r f; do
-  n=$(awk '/#\[cfg\(test\)\]/{exit} {print}' "$f" | grep -cvE '^\s*(//|$)' || true)
-  loc=$((loc + n))
-  if [ "$n" -gt "$widest" ]; then
-    widest=$n
-    widest_file=$f
-  fi
-  # A file past this is a module that has stopped being one thing. The answer
-  # is child modules, never another crate: the dependency graph is the reason
-  # the crate count is capped, and it is not what a long file is evidence of.
-  if [ "$n" -gt "$MAX_FILE_LOC" ]; then
-    echo "FAIL: $f is $n lines (max $MAX_FILE_LOC). Split it into modules." >&2
+over=""
+
+echo "Rust LOC (excl. tests):"
+for crate in $(git ls-files 'crates/*/src/*.rs' | cut -d/ -f2 | sort -u); do
+  crate_loc=0
+  while IFS= read -r f; do
+    n=$(awk '/#\[cfg\(test\)\]/{exit} {print}' "$f" | grep -cvE '^\s*(//|$)' || true)
+    crate_loc=$((crate_loc + n))
+    if [ "$n" -gt "$widest" ]; then
+      widest=$n
+      widest_file=$f
+    fi
+    # A file past this is a module that has stopped being one thing. The answer
+    # is child modules, never another crate: the dependency graph is the reason
+    # the crate count is capped, and it is not what a long file is evidence of.
+    if [ "$n" -gt "$MAX_FILE_LOC" ]; then
+      echo "FAIL: $f is $n lines (max $MAX_FILE_LOC). Split it into modules." >&2
+      status=1
+    fi
+  done < <(git ls-files "crates/$crate/src/*.rs")
+
+  loc=$((loc + crate_loc))
+  budget=$(crate_budget "$crate")
+  if [ -z "$budget" ]; then
+    printf '  %-14s %6d / (none)\n' "$crate" "$crate_loc"
+    echo "FAIL: crate '$crate' has no entry in crate_budget()" >&2
     status=1
+    continue
   fi
-done < <(git ls-files 'crates/*/src/*.rs' 'crates/*/src/**/*.rs')
-echo "workspace Rust LOC (excl. tests): $loc / $LOC_BUDGET"
+  budgeted=$((budgeted + budget))
+  printf '  %-14s %6d / %6d\n' "$crate" "$crate_loc" "$budget"
+  if [ "$crate_loc" -gt "$budget" ]; then
+    over="$over $crate"
+  fi
+done
+
+printf '  %-14s %6d / %6d\n' "workspace" "$loc" "$budgeted"
 echo "widest file: $widest / $MAX_FILE_LOC ($widest_file)"
-if [ "$loc" -gt "$LOC_BUDGET" ]; then
-  echo "note: past the $LOC_BUDGET-line budget. Not a failure — a number worth" >&2
-  echo "      knowing, and worth asking whether the scope grew on purpose." >&2
+if [ -n "$over" ]; then
+  echo "note: over budget:$over. Not a failure — a number worth knowing, and" >&2
+  echo "      worth asking whether the scope grew on purpose." >&2
 fi
 
 exit "$status"

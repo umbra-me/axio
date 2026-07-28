@@ -53,19 +53,27 @@ Changes that break one of these need a very good argument in the pull request.
 
 ## Structural budgets
 
-`scripts/limits.sh` prints four numbers and enforces three: workspace members,
-`ToolCx` fields and the widest single file fail the build; workspace Rust lines
-excluding tests is reported and never does. They are guesses calibrated against
-a predecessor that grew to 21 crates. Raising one is allowed — in a commit whose
-message says why.
+`scripts/limits.sh` prints a line count per crate and enforces the structural
+limits around them: workspace members, `ToolCx` fields, the widest single file
+and any crate with no budget entry fail the build; the line counts themselves
+are reported and never do. They are guesses calibrated against a predecessor
+that grew to 21 crates. Raising one is allowed — in a commit whose message says
+why.
 
-The total is the odd one out on purpose. The other three can always be satisfied
-without giving anything up — by not adding a dependency edge, by not coupling a
-tool to a host, by splitting a module. A total-lines ceiling can only be
-satisfied by building less, and as it tightens it rewards density: comments are
-free here and code is not, so it would push toward clever code with long
-explanations. Seeing the number is what catches drift; failing on it only
-interrupts someone mid-change.
+The line counts are the odd ones out on purpose. The others can always be
+satisfied without giving anything up — by not adding a dependency edge, by not
+coupling a tool to a host, by splitting a module, by pricing a new crate. A line
+ceiling can only be satisfied by building less, and as it tightens it rewards
+density: comments are free here and code is not, so it would push toward clever
+code with long explanations. Seeing the number is what catches drift; failing on
+it only interrupts someone mid-change.
+
+They are per crate because one workspace figure cannot tell apart the things it
+sums. `axio` is where surfaces land and is meant to grow — a TUI, then whatever
+follows it. `axio-core` is the root every other crate depends on, so the same
+thousand lines there are coupling rather than features. The workspace figure is
+the sum of the per-crate budgets, not a separate knob, so it cannot disagree
+with them.
 
 A file past the per-file ceiling becomes child modules, never a new crate: the
 member cap exists to keep the dependency graph honest, and a long file says
