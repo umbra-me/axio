@@ -174,7 +174,7 @@ can open on a keystroke.
 ```
 › /help    list these commands
   /status  what this session is configured to do
-  /model   show the model, or `/model NAME` to change it
+  /model   pick a provider and model, or `/model NAME`
 ```
 
 `↑` `↓` move, `tab` completes the name into the line, `enter` runs the

@@ -78,7 +78,18 @@ Browser OAuth with PKCE for `openai-codex`, a credential store that holds a
 token pair beside an API key, renewal before expiry with the renewed pair
 persisted through a sink, and the Responses transport the subscription endpoint
 requires. The client id is Codex's, vendored deliberately and said so in the
-module that holds it.
+module that holds it. Verified against the live endpoint: a turn answered and
+`--probe` reported a tool called.
+
+`/model` became two stages — provider, then model — because changing one
+without the other leaves a session naming a model its new endpoint has never
+heard of. Every provider's list is fetched, including the subscription
+endpoint's, whose three compiled-in names turned out to be wrong on the day
+they were written. A switch that works is saved as the default, after the turn
+rather than at the moment of choosing.
+
+The home moved to `~/.axio` on every platform, which needed the project-config
+walk taught that the user's own file is not a project's.
 
 ## Next
 

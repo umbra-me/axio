@@ -362,6 +362,20 @@ project file walking up from the working directory, `AXIO_*` environment
 variables, then command-line flags. The merge is leaf-wise, so a layer that
 mentions one key does not clobber the rest of its section.
 
+Everything axio owns lives in `~/.axio`, the same path on every platform
+rather than each one's own configuration directory. One path to document, to
+sync between machines and to name in a bug report; `AXIO_HOME` moves it. The
+departure from XDG is deliberate — a tool that follows someone across four
+platforms is worth more consistent than conventional.
+
+**The user's file is never also a project file.** Both are called
+`.axio/config.toml`, so the upward walk finds the user's own from anywhere
+beneath the home directory and would load it twice — the second time as a
+project, a layer that may only restrict. Settings returning as a restricted
+copy of themselves, silently, and only on machines where someone works under
+`$HOME`. The walk is given the user's path and refuses to return it, matched on
+the path rather than the boundary because `AXIO_HOME` can put it anywhere.
+
 The winning layer is retained per key, which is what `axio --explain <key>`
 reports. A key nobody set still explains itself as a built-in default.
 
@@ -369,6 +383,14 @@ reports. A key nobody set still explains itself as a built-in default.
 ignored from a project file with a notice: a cloned repository that can grant
 itself shell access is remote code execution by `cd`, on a tool whose sandbox is
 off by default and which has `--yes`.
+
+**A default that worked is written back.** Choosing a provider and model in
+the interface saves them — but only after a turn returns an outcome that could
+not have happened unless the endpoint accepted the request, because a model
+name is not checked until then and saving at the moment of choosing would make
+a typo the default. The write is a line edit of the two keys, not a serialise
+of the whole config: comments, ordering and sections axio does not use are
+someone's work and survive it.
 
 **A broken section resets that section and nothing else.** The whole file is
 parsed first; each table is then validated independently, and one that fails is

@@ -43,12 +43,12 @@ pub const COMMANDS: &[Spec] = &[
     },
     Spec {
         name: "/model",
-        blurb: "show the model, or `/model NAME` to change it",
+        blurb: "pick a provider and model, or `/model NAME`",
         command: Command::Model,
     },
     Spec {
         name: "/login",
-        blurb: "store a credential for a provider",
+        blurb: "store a credential, or sign in with a browser",
         command: Command::Login,
     },
     Spec {
