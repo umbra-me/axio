@@ -132,10 +132,8 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
  "tokio",
  "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -147,15 +145,12 @@ dependencies = [
  "globset",
  "ignore",
  "libc",
- "serde",
  "serde_json",
  "shlex",
  "similar 3.1.1",
  "tempfile",
  "tokio",
  "tokio-util",
- "tracing",
- "which",
 ]
 
 [[package]]
@@ -3102,15 +3097,6 @@ dependencies = [
  "lazy_static",
  "serde",
  "wezterm-dynamic",
-]
-
-[[package]]
-name = "which"
-version = "8.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f3ef584124b911bcc3875c2f1472e80f24361ceb789bd1c62b3e9a3df9ff43c"
-dependencies = [
- "libc",
 ]
 
 [[package]]

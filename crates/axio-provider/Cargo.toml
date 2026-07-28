@@ -20,7 +20,6 @@ reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 # `net` and `io-util` are the OAuth callback listener: the browser redirects to
 # a port on the loopback, so this crate has to accept one connection and answer
 # it. Everything else here is a client.
@@ -28,7 +27,6 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "net", "io-util"] 
 ring.workspace = true
 base64.workspace = true
 tokio-util.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 axio-core = { workspace = true, features = ["testing"] }
