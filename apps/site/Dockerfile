@@ -23,7 +23,9 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 # `output: "standalone"` emits server.js plus only the dependencies it traced.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+# No `public/` copy: the site ships no static assets, and git does not track an
+# empty directory — so a COPY of one fails the build in CI and on a clean clone
+# while succeeding for whoever created it locally. Add it back with the assets.
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
