@@ -12,18 +12,18 @@ read-only.
 ## Status
 
 Early, but it works. `scripts/live-check.sh` has been run end to end against a
-real model on the chat-completions path — thirteen checks over seven turns
+real model on **both** the chat-completions and the Responses paths, and on
+Windows — thirteen checks over seven turns, each time
 covering the turn loop, the transport, the one-shot CLI, the read, write and
 bash tools, a refusal and its exit code, the built-in deny list keeping a secret
 out of both the answer and the transcript, sessions on disk, and resume carrying
 its history. It can read, search, edit and run commands in a workspace, and pick
 up where it left off.
 
-The Responses transport has met its endpoint too: signed in through the
-browser flow, a turn answered, and `--probe` reporting a tool called. Its
-request body took two live 400s to settle — a field that exists in the dialect
-and is refused by the endpoint, and a model catalogue that had to be asked for
-rather than assumed.
+The Responses transport has met its endpoint too: signed in through the browser
+flow, then the same thirteen checks green against it. Its request body took two
+live 400s to settle — a field that exists in the dialect and is refused by the
+endpoint, and a model catalogue that had to be asked for rather than assumed.
 
 The Anthropic transport has not had that run against it: there has been no
 credential to run it with. It is built from the documented wire format and

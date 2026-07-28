@@ -14,6 +14,8 @@ set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 bin="$root/target/debug/axio"
+# Windows builds it with the extension; the rest of the script does not care.
+[ -x "$bin" ] || bin="$root/target/debug/axio.exe"
 [ -x "$bin" ] || { echo "build first: cargo build -p axio"; exit 2; }
 
 sandbox=$(mktemp -d)
