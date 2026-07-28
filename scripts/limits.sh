@@ -95,10 +95,43 @@ if awk '/^pub struct ToolCx \{/{f=1;next} /^\}/{f=0} f' "$toolcx_file" \
 fi
 
 # --- Rust LOC per crate, excluding tests -------------------------------------
-# Heuristic: everything from a file's first `#[cfg(test)]` to its end is a test
-# module, which is where they live by convention here. Files under tests/ are
-# excluded outright.
+# The countable body of a file is everything outside a `#[cfg(test)]` item.
 #
+# This used to truncate at the first `#[cfg(test)]`, on the assumption that
+# tests are one module at the bottom. `redact.rs` has a `#[cfg(test)] fn`
+# helper at line 29 and its test module at 136, so a 185-line file was scored
+# as 14 — and no file with an early test helper could ever have failed the
+# width check, however wide it grew. A gate that can only err toward passing is
+# the one that never gets caught by use.
+#
+# So the test module still ends the count — everything below it is tests by
+# convention — but a `#[cfg(test)]` item that is not a module is skipped by
+# brace balance and counting resumes after it.
+#
+# The module is not balanced through, only truncated at, and that is not
+# laziness: test code contains deliberately malformed fixtures. `auth.rs` has
+# the literal `"{ not json"` and `sse.rs` a truncated JSON frame, so brace
+# counting through a test module is unreliable by construction.
+non_test_body() {
+  awk '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*#\[cfg\(test\)\]/ { pending = 1; next }
+    pending && /^[[:space:]]*$/ { next }
+    pending && /^[[:space:]]*(pub[[:space:]]+)?mod[[:space:]]/ { exit 0 }
+    pending { pending = 0; skip = 1; depth = 0; opened = 0 }
+    skip {
+      o = gsub(/\{/, "{"); c = gsub(/\}/, "}")
+      if (o > 0) opened = 1
+      depth += o - c
+      if (opened && depth <= 0) skip = 0
+      else if (!opened && /;[[:space:]]*$/) skip = 0
+      next
+    }
+    { print }
+    END { if (skip) exit 3 }
+  ' "$1"
+}
+
 # The crate list is derived from the tracked paths rather than from Cargo.toml,
 # so it names what is actually there.
 loc=0
@@ -111,7 +144,12 @@ echo "Rust LOC (excl. tests):"
 for crate in $(git ls-files 'crates/*/src/*.rs' | cut -d/ -f2 | sort -u); do
   crate_loc=0
   while IFS= read -r f; do
-    n=$(awk '/#\[cfg\(test\)\]/{exit} {print}' "$f" | grep -cvE '^\s*(//|$)' || true)
+    if ! body=$(non_test_body "$f"); then
+      echo "FAIL: $f has an unterminated #[cfg(test)] item and cannot be counted" >&2
+      status=1
+      continue
+    fi
+    n=$(printf '%s\n' "$body" | grep -cvE '^\s*(//|$)' || true)
     crate_loc=$((crate_loc + n))
     if [ "$n" -gt "$widest" ]; then
       widest=$n
