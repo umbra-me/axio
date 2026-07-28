@@ -260,13 +260,24 @@ export default function Page() {
               </p>
             </div>
             <div className="install">
-              <Term label="from the repository" wrap>{`
+              <Term label="macOS · Linux · WSL" wrap>{`
+curl -fsSL https://axio.sh/install | sh
+`}</Term>
+              <Term label="Windows · PowerShell" wrap>{`
+irm https://axio.sh/install.ps1 | iex
+`}</Term>
+              <Term label="or drive cargo yourself" wrap>{`
 cargo install --git ${REPO} --locked axio
 `}</Term>
-              <Term label="from a clone" wrap>{`
-cargo install --path crates/axio --locked
-`}</Term>
             </div>
+            <p className="note">
+              The installer checks for a toolchain, refuses politely if it is
+              missing or older than 1.88, and installs into your cargo bin as
+              your own user — no sudo, nothing written outside{" "}
+              <code>CARGO_HOME</code>, no changes to your shell profile.{" "}
+              <a href="/install">Read it first</a>; that advice applies to every
+              script anyone asks you to pipe into a shell, including this one.
+            </p>
             <p className="note">
               <code>cargo install axio</code> from crates.io does{" "}
               <strong>not</strong> work — that name belongs to an unrelated
