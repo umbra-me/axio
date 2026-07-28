@@ -22,7 +22,7 @@ function Spread({
 
 export default function Page() {
   return (
-    <main className="wrap">
+    <main className="sheet">
       <HeroTranscript />
 
       <Spread
@@ -228,6 +228,7 @@ enabled = true
             were.
           </p>
         </div>
+        <div className="ledger-wrap">
         <table className="ledger">
           <thead>
             <tr>
@@ -272,6 +273,7 @@ enabled = true
             </tr>
           </tbody>
         </table>
+        </div>
       </section>
 
       <Spread

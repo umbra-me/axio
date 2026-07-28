@@ -82,10 +82,15 @@ export default function HeroTranscript() {
       : `  ${"· thinking".padEnd(32)}ctrl-c to interrupt`;
 
   return (
-    <section className="hero">
-      <figure className="term" aria-label="An example axio turn">
-        <figcaption className="term__label">a turn, played once</figcaption>
-        <pre>
+    <>
+      {/* The rail starts here, at full width, then narrows to the right column
+          and runs down the page. Two grid children rather than one wrapper, so
+          the dark block and the caption beneath it sit on the sheet directly. */}
+      <div className="hero">
+        <div className="hero__inner">
+          <figure className="term" aria-label="An example axio turn">
+            <figcaption className="term__label">a turn, played once</figcaption>
+            <pre>
           <span className="dim">{"$ "}</span>
           {"axio\n\n"}
           {TOOL_LINES.map((line, i) => (
@@ -123,22 +128,25 @@ export default function HeroTranscript() {
           {"\n"}
           <span className="dim">{BOTTOM}</span>
           {"\n"}
-          <span className="dim">{status}</span>
-        </pre>
-      </figure>
+              <span className="dim">{status}</span>
+            </pre>
+          </figure>
 
-      <p className="hero__standfirst">
-        An AI coding agent that stays inside your terminal instead of taking it
-        over.
-      </p>
-      <p className="hero__meta">
-        <span>Rust 1.88+</span>
-        <span>Linux · macOS · Windows</span>
-        <span>Apache-2.0</span>
-        <span>
-          <b>Pre-release — nothing is tagged</b>
-        </span>
-      </p>
-    </section>
+          <div className="hero__caption">
+            <h1 className="hero__standfirst">
+              An AI coding agent that stays inside your terminal instead of
+              taking it over.
+            </h1>
+            <p className="hero__meta">
+              <span>Rust 1.88+ · Linux · macOS · Windows</span>
+              <span>Apache-2.0</span>
+              <span>
+                <b>Pre-release — nothing is tagged</b>
+              </span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }

@@ -1,18 +1,20 @@
 /* axio — site styles.
  *
- * The page is a paired argument: a claim in serif on the left, and on the right
- * the artifact that answers it in the terminal's own voice. That pairing is the
- * layout, not a decoration on top of one — the product's whole character is
- * that it emits evidence, so the page is built to put evidence next to every
- * claim rather than describing the program in prose and hoping.
+ * One grid runs the whole page. Argument sits in a narrow column on the left;
+ * evidence sits on the right in a dark rail that runs continuously down the
+ * page and bleeds off the right edge of the viewport — a terminal that carries
+ * on past the frame. The rail is the composition, not a decoration on one: the
+ * product's character is that it emits evidence, so the page is built to hold
+ * an artifact beside every claim.
  *
- * Consequences of that: no rules between sections (the two-column rhythm does
- * the separating), and no masthead logo (the name appears in the composer
- * frame, where the program itself puts it).
+ * Consequences: no rules between sections (the rail separates), no masthead
+ * logo (the name appears as `$ axio`, where the program puts it), and no gaps
+ * between evidence cells — consecutive cells touch, which is what makes the
+ * rail continuous rather than a column of cards.
  *
- * The page is light and the terminal is dark, and in dark mode the page inverts
- * while the terminal does not — axio renders in the terminal's own colours
- * rather than a bundled theme, so the element standing for it holds still.
+ * The page is light and the rail is dark, and in dark mode the page inverts
+ * while the rail does not. axio renders in the terminal's own colours rather
+ * than a bundled theme, so the element standing for it holds still.
  *
  * No webfonts. It would be the only network request the page makes.
  */
@@ -28,25 +30,31 @@
   /* Constant across colour schemes. */
   --term-bg: #0e1014;
   --term-fg: #d5d9d2;
-  --term-dim: #767e74;
+  /* 4.54:1 on --term-bg was passing AA by 0.04. This carries most of the
+   * artifact text, so it gets real margin instead. */
+  --term-dim: #838b81;
   --term-accent: #6fc9b0;
+  --term-warn: #d9ae5c;
 
   --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
     Consolas, "Liberation Mono", monospace;
   --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
     serif;
 
-  --claim-col: 23rem;
-  --evidence-col: 35rem;
-  --gap: 4rem;
-  --step: 5.5rem;
+  --claim-col: 22rem;
+  --evidence-col: 34rem;
+  --gap: 3rem;
+  /* rail track = the gap plus the artifact measure; the gap becomes padding
+   * inside the dark so the edge sits immediately beside the argument. */
+  --rail-col: 37rem;
+  --step: 5rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* A clear step lighter than --term-bg: the terminal is the one element that
-     * does not change between schemes, so the page has to move away from it or
-     * the artifacts stop reading as artifacts. */
+    /* A clear step lighter than --term-bg. The rail does not change between
+     * schemes, so the page has to move away from it or the rail stops reading
+     * as a distinct surface. */
     --paper: #1e2126;
     --ink: #e6e8e2;
     --muted: #99a095;
@@ -88,142 +96,108 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.wrap {
-  max-width: calc(var(--claim-col) + var(--gap) + var(--evidence-col) + 3rem);
-  margin: 0 auto;
-  padding: 0 1.5rem;
-}
-
-/* ---- the pairing ---- */
-
-.spread {
+/* ---- the sheet ----
+ * Four tracks. The outer two are equal, so the content block is centred; the
+ * rail spans the evidence track *and* the right margin, which is what carries
+ * it off the edge of the screen. */
+.sheet {
   display: grid;
-  grid-template-columns: var(--claim-col) minmax(0, var(--evidence-col));
-  gap: 0 var(--gap);
-  align-items: start;
-  padding-top: var(--step);
+  grid-template-columns:
+    minmax(1.5rem, 1fr)
+    minmax(0, var(--claim-col))
+    minmax(0, var(--rail-col))
+    minmax(1.5rem, 1fr);
+  align-items: stretch;
 }
 
-/* The claim column is set narrow on purpose: a short measure next to a wide
- * fixed-width artifact is what makes the two read as argument and evidence
- * rather than as two columns of equal weight. */
+.claim {
+  grid-column: 2;
+  padding: var(--step) 0 var(--step);
+}
+
+.evidence {
+  grid-column: 3 / 5;
+  background: var(--term-bg);
+  padding: var(--step) 1.5rem var(--step) var(--gap);
+  /* No row gap anywhere on this grid, so consecutive evidence cells meet and
+   * the rail reads as one surface. */
+}
+
+/* `display: contents` lets each pairing keep its own <section> for semantics
+ * while its two children sit directly on the sheet grid — which is what allows
+ * the rail to be continuous across sections rather than restarting per card. */
+.spread {
+  display: contents;
+}
+
+/* ---- type scale ---- */
+
 .claim h2 {
   font-family: var(--mono);
-  font-size: 1.0625rem;
+  font-size: clamp(1.3rem, 2.1vw, 1.6rem);
   font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-  margin: 0 0 0.9rem;
+  letter-spacing: -0.035em;
+  line-height: 1.16;
+  margin: 0 0 1.1rem;
   text-wrap: balance;
 }
 
 .claim p {
-  margin: 0 0 0.9rem;
-  color: var(--ink);
+  margin: 0 0 1rem;
 }
 
 .claim p:last-child {
   margin-bottom: 0;
 }
 
-.evidence {
-  display: grid;
-  gap: 1rem;
-  /* Optically aligns the artifact's first line with the heading beside it. */
-  padding-top: 0.2rem;
-}
-
-@media (max-width: 62rem) {
-  :root {
-    --step: 3.75rem;
-  }
-  .spread {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1.25rem;
-  }
-  .evidence {
-    padding-top: 0;
-  }
-}
-
-/* ---- artifacts ---- */
-
-.term {
-  margin: 0;
-  background: var(--term-bg);
-  color: var(--term-fg);
-  font-family: var(--mono);
-  font-size: 0.8125rem;
-  line-height: 1.55;
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.term pre {
-  margin: 0;
-  padding: 1.1rem 1.25rem;
-  overflow-x: auto;
-}
-
-/* The label names the artifact inside its own frame rather than as a caption
- * underneath, so the pairing stays two columns and not four rows. */
-.term__label {
-  font-size: 0.6875rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--term-dim);
-  padding: 0.7rem 1.25rem 0;
-}
-
-.term .dim {
-  color: var(--term-dim);
-}
-
-.term .acc {
-  color: var(--term-accent);
-}
-
-/* The install commands must be copyable whole. In a scrolling block the tail
- * sits behind the edge and a reader who misses the scrollbar copies a truncated
- * command. `anywhere` rather than `break-word`: the long token is a URL and the
- * flags after it must stay intact. */
-.term--wrap pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* ---- the hero turn ---- */
+/* ---- hero ---- */
 
 .hero {
-  padding-top: 4.5rem;
+  grid-column: 1 / -1;
+  background: var(--term-bg);
+  color: var(--term-fg);
+}
+
+.hero__inner {
+  max-width: calc(var(--claim-col) + var(--rail-col));
+  margin: 0 auto;
+  padding: 4rem 1.5rem 4.5rem;
 }
 
 .hero .term {
   font-size: 0.875rem;
 }
 
+/* Measured in rem, not ch: `ch` resolves against this element's own font-size
+ * (body, 17px) rather than the display size inside it, which crushed the
+ * standfirst into six stub lines. */
+.hero__caption {
+  margin-top: 3.5rem;
+  max-width: 36rem;
+}
+
 .hero__standfirst {
-  font-size: clamp(1.5rem, 4.4vw, 2.1rem);
-  line-height: 1.24;
-  letter-spacing: -0.015em;
-  margin: 1.75rem 0 0;
-  max-width: 24ch;
+  font-size: clamp(1.9rem, 4.4vw, 2.7rem);
+  line-height: 1.14;
+  letter-spacing: -0.03em;
+  margin: 0;
+  color: var(--term-fg);
   text-wrap: balance;
 }
 
 .hero__meta {
   font-family: var(--mono);
-  font-size: 0.8125rem;
-  color: var(--muted);
-  margin: 1.1rem 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 1.25rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--term-dim);
+  margin: 1.75rem 0 0;
+  display: grid;
+  gap: 0.35rem;
 }
 
 .hero__meta b {
   font-weight: 600;
-  color: var(--unmet);
+  color: var(--term-warn);
 }
 
 /* Lines hold their space from the start and only opacity changes, so the
@@ -259,37 +233,98 @@ body {
   }
 }
 
-/* ---- the ledger ---- */
+/* ---- artifacts ---- */
+
+.term {
+  margin: 0 0 2rem;
+  color: var(--term-fg);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.term:last-child {
+  margin-bottom: 0;
+}
+
+.term pre {
+  margin: 0;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+}
+
+/* The label names the artifact where it sits. There is no frame to put it in
+ * any more — the rail is the frame — so it is a rule-and-caption instead. */
+.term__label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--term-dim);
+  padding-bottom: 0.7rem;
+  margin-bottom: 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.term .dim {
+  color: var(--term-dim);
+}
+
+.term .acc {
+  color: var(--term-accent);
+}
+
+/* The install commands must be copyable whole. In a scrolling block the tail
+ * sits behind the edge and a reader who misses the scrollbar copies a truncated
+ * command. `anywhere` rather than `break-word`: the long token is a URL and the
+ * flags after it must stay intact. */
+.term--wrap pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the ledger: the one moment evidence takes the whole page ---- */
 
 .ledger-block {
-  padding-top: var(--step);
+  grid-column: 1 / -1;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  padding: 5.5rem 0 6rem;
+  display: grid;
+  /* Inherits the sheet's five tracks so the ledger stays on the same grid as
+   * everything above it, despite spanning edge to edge. */
+  grid-template-columns:
+    minmax(1.5rem, 1fr)
+    minmax(0, var(--claim-col))
+    minmax(0, var(--rail-col))
+    minmax(1.5rem, 1fr);
 }
 
 .ledger-head {
-  display: grid;
-  grid-template-columns: var(--claim-col) minmax(0, var(--evidence-col));
-  gap: 0 var(--gap);
-  align-items: baseline;
+  grid-column: 2 / 4;
+  max-width: 46rem;
+  margin-bottom: 2.75rem;
 }
 
 .ledger-head h2 {
   font-family: var(--mono);
-  font-size: 1.0625rem;
+  font-size: clamp(1.3rem, 2.1vw, 1.6rem);
   font-weight: 600;
-  letter-spacing: -0.02em;
-  margin: 0;
+  letter-spacing: -0.035em;
+  line-height: 1.16;
+  margin: 0 0 1rem;
+  color: var(--term-fg);
+  text-wrap: balance;
 }
 
 .ledger-head p {
   margin: 0;
-  color: var(--muted);
+  color: var(--term-dim);
+  font-size: 0.9375rem;
 }
 
-@media (max-width: 62rem) {
-  .ledger-head {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.5rem;
-  }
+.ledger-wrap {
+  grid-column: 2 / 4;
+  overflow-x: auto;
 }
 
 .ledger {
@@ -297,14 +332,13 @@ body {
   border-collapse: collapse;
   font-family: var(--mono);
   font-size: 0.8125rem;
-  margin-top: 1.75rem;
 }
 
 .ledger th,
 .ledger td {
   text-align: left;
-  padding: 0.75rem 0.75rem 0.75rem 0;
-  border-bottom: 1px solid var(--rule);
+  padding: 0.85rem 0.75rem 0.85rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   vertical-align: top;
 }
 
@@ -313,64 +347,38 @@ body {
 .ledger thead th {
   font-weight: 600;
   font-size: 0.6875rem;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--muted);
-  border-bottom-color: var(--ink);
+  color: var(--term-dim);
 }
 
 .ledger tbody th {
   font-weight: 600;
-  width: 14rem;
+  color: var(--term-fg);
+  width: 15rem;
   padding-right: 1.5rem;
 }
 
 .state {
   font-weight: 600;
   white-space: nowrap;
-  width: 6rem;
+  padding-right: 1.5rem !important;
 }
 
 .state--met {
-  color: var(--signal);
+  color: var(--term-accent);
 }
 
 .state--unmet {
-  color: var(--unmet);
+  color: var(--term-warn);
 }
 
 .ledger td:last-child {
   font-family: var(--serif);
   font-size: 0.9375rem;
   line-height: 1.5;
-  color: var(--muted);
+  color: var(--term-dim);
   padding-right: 0;
-}
-
-@media (max-width: 40rem) {
-  .ledger tbody th {
-    width: auto;
-  }
-  .ledger,
-  .ledger tbody,
-  .ledger tr,
-  .ledger th,
-  .ledger td {
-    display: block;
-    width: auto;
-  }
-  .ledger thead {
-    display: none;
-  }
-  .ledger tr {
-    padding: 0.9rem 0;
-    border-bottom: 1px solid var(--rule);
-  }
-  .ledger th,
-  .ledger td {
-    border: 0;
-    padding: 0 0 0.25rem;
-  }
 }
 
 /* ---- shared inline type ---- */
@@ -400,9 +408,8 @@ button:focus-visible {
 /* ---- colophon ---- */
 
 .colophon {
-  margin-top: var(--step);
-  padding: 2rem 0 5rem;
-  border-top: 1px solid var(--rule);
+  grid-column: 2 / 4;
+  padding: 3rem 0 5rem;
   font-family: var(--mono);
   font-size: 0.8125rem;
   color: var(--muted);
@@ -444,5 +451,72 @@ button:focus-visible {
   .theme-toggle {
     transition: color 120ms ease, border-color 120ms ease,
       text-decoration-color 120ms ease;
+  }
+}
+
+/* ---- narrow ----
+ * The rail cannot run beside anything on a phone, so it becomes full-bleed
+ * bands between the claims it answers. Same alternation, stacked. */
+@media (max-width: 62rem) {
+  :root {
+    --step: 2.5rem;
+  }
+
+  .sheet {
+    grid-template-columns: minmax(1.25rem, 1fr) minmax(0, 34rem) minmax(1.25rem, 1fr);
+  }
+
+  .claim,
+  .hero__caption,
+  .ledger-head,
+  .colophon {
+    grid-column: 2;
+  }
+
+  .hero,
+  .evidence,
+  .ledger-wrap {
+    grid-column: 1 / -1;
+    padding: 2rem clamp(1.25rem, 5vw, 2rem);
+  }
+
+  .hero__caption {
+    padding-top: 2.5rem;
+  }
+
+  .ledger-block {
+    grid-template-columns: minmax(1.25rem, 1fr) minmax(0, 34rem) minmax(1.25rem, 1fr);
+    padding: 3.5rem 0 4rem;
+  }
+
+  .ledger-wrap {
+    padding-top: 1.75rem;
+  }
+}
+
+@media (max-width: 40rem) {
+  .ledger,
+  .ledger tbody,
+  .ledger tr,
+  .ledger th,
+  .ledger td {
+    display: block;
+    width: auto;
+  }
+  .ledger thead {
+    display: none;
+  }
+  .ledger tr {
+    padding: 0.9rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  }
+  .ledger th,
+  .ledger td {
+    border: 0;
+    padding: 0 0 0.3rem;
+    white-space: normal;
+  }
+  .state {
+    padding-right: 0 !important;
   }
 }
