@@ -46,8 +46,24 @@ so `&&` sees it.
 
 ## Install
 
-No published binary yet — releases are built by tag, and none has been cut.
-Until then, and for the current `main`:
+No published binary yet — releases are built by tag, and none has been cut. So
+every route below compiles the current `main`; there is nothing to download and
+nothing to checksum.
+
+```sh
+curl -fsSL https://axio.sh/install | sh      # macOS, Linux, WSL
+irm https://axio.sh/install.ps1 | iex        # Windows
+```
+
+Those scripts live in this repository at `apps/site/scripts/`, and the site
+serves them as `text/plain` so a browser shows the source rather than
+downloading it. Read one before running it — that applies to every script anyone
+asks you to pipe into a shell, including these. They check for a toolchain and
+refuse if it is missing or older than 1.88, install into `CARGO_HOME` as the
+invoking user, use no `sudo`, and change no shell profile. `AXIO_INSTALL_REF`
+builds a branch, tag or commit instead of the default.
+
+Driving cargo yourself does the same thing:
 
 ```sh
 cargo install --git https://github.com/umbra-me/axio --locked axio
@@ -259,10 +275,12 @@ word-split of it: the split reads as a simpler command than the one that runs.
 
 ## Providers
 
-Three names over two implementations, not a plugin system. `anthropic` speaks
-the Messages API; `ollama` and `openai-compatible` share the chat-completions
-one, the second for any other host speaking that dialect, pointed at it with
-`model.base_url` or `AXIO_BASE_URL`:
+Four names over three wire dialects, not a plugin system — the list is
+`PROVIDERS` in `crates/axio-core/src/auth.rs`. `anthropic` speaks the Messages
+API; `ollama` and `openai-compatible` share the chat-completions one, the second
+for any other host speaking that dialect, pointed at it with `model.base_url` or
+`AXIO_BASE_URL`; `openai-codex` speaks the Responses API and is signed in to
+through the browser rather than pasted into, as described above:
 
 ```sh
 axio auth login                             # the default provider
@@ -305,6 +323,12 @@ Four crates, and one binary serving both surfaces:
 The core emits a stream of events and knows nothing about rendering, so each
 surface is a consumer of the same channel. `--json` is a second renderer, never
 a second loop.
+
+`apps/site` is the axio.sh website and the only thing here that is not Rust: a
+Next.js app, plus the two install scripts the site serves. It is not a Cargo
+workspace member and holds no `.rs` files, so `scripts/limits.sh` — which counts
+members and Rust lines under `crates/` — does not see it. `scripts/firewall.sh`
+greps the whole tracked tree, so it applies there like anywhere else.
 
 See [`docs/architecture.md`](docs/architecture.md) for the invariants,
 [`docs/gotchas.md`](docs/gotchas.md) for the traps, and

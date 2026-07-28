@@ -7,6 +7,44 @@ a minor bump may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **A website, at `apps/site`.** Next.js 16, deployed to axio.sh by the Umbra
+  control plane as the `axio-site` stack. Built in the Umbra design language
+  with amber as axio's product accent — that system already gives each product
+  its own hue inside a shared dark shell. It is the first thing in this
+  repository that is not Rust; it is not a Cargo workspace member and holds no
+  `.rs` files, so `scripts/limits.sh` does not see it, while
+  `scripts/firewall.sh` covers it like anything else tracked.
+- **Install scripts**, served from the site and living at
+  `apps/site/scripts/`:
+
+  ```sh
+  curl -fsSL https://axio.sh/install | sh      # macOS, Linux, WSL
+  irm https://axio.sh/install.ps1 | iex        # Windows
+  ```
+
+  Both build from source with cargo, because nothing is tagged: there is no
+  binary to download and no checksum to verify. They check for a toolchain and
+  refuse if it is missing or older than 1.88, install into `CARGO_HOME` as the
+  invoking user, use no `sudo`, and change no shell profile. `AXIO_INSTALL_REF`
+  builds a branch, tag or commit instead of the default. The site serves them as
+  `text/plain` so a browser shows the source rather than downloading it.
+
+  Two details in them are load-bearing. The version check compares major and
+  minor numerically, because a string compare ranks `1.100` below `1.88` and
+  would start rejecting every toolchain the day Rust reaches 1.100. And success
+  is reported from the binary just installed rather than from whatever `axio`
+  resolves to, because an older copy earlier on `PATH` would otherwise let the
+  script confirm a build that never took effect.
+
+### Fixed
+
+- **The README said three providers over two implementations.** There are four
+  over three — `PROVIDERS` in `crates/axio-core/src/auth.rs` — and has been
+  since `openai-codex` landed. The Responses transport was documented elsewhere
+  in the same file while that section still described the state before it.
+
 ## [0.1.0] — unreleased
 
 First release. A one-shot CLI and an interactive terminal surface, six tools, an
