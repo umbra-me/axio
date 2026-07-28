@@ -30,6 +30,10 @@ pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const AUTH_BASE: &str = "https://auth.openai.com";
 pub const REDIRECT_PORT: u16 = 1455;
 pub const SCOPE: &str = "openid profile email offline_access";
+/// Who is asking. The client id is Codex's, but this is not — the parameter
+/// names the program running the flow, and claiming to be the official client
+/// as well as borrowing its id would be a second untruth for nothing.
+pub const ORIGINATOR: &str = "axio";
 /// Where the account id hides in the access token.
 const CLAIM: &str = "https://api.openai.com/auth";
 
@@ -61,7 +65,9 @@ pub fn start() -> Result<Started, ProviderError> {
          &code_challenge={challenge}\
          &code_challenge_method=S256\
          &state={state}\
-         &id_token_add_organizations=true",
+         &id_token_add_organizations=true\
+         &codex_cli_simplified_flow=true\
+         &originator={ORIGINATOR}",
         redirect = encode(&redirect_uri()),
         scope = encode(SCOPE),
         challenge = pkce.challenge,
@@ -261,6 +267,11 @@ mod tests {
                 .starts_with(&format!("{AUTH_BASE}/oauth/authorize?"))
         );
         assert!(started.url.contains("code_challenge_method=S256"));
+        // The regression: without these two the authorize request is refused
+        // as `missing_required_parameter`, and the only place that says so is a
+        // browser page the program never sees.
+        assert!(started.url.contains("codex_cli_simplified_flow=true"));
+        assert!(started.url.contains(&format!("originator={ORIGINATOR}")));
         assert!(started.url.contains(&format!("client_id={CLIENT_ID}")));
         assert!(started.url.contains(&format!("state={}", started.state)));
         // The verifier is the secret half and must never be in the URL.

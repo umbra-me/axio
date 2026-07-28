@@ -48,6 +48,22 @@ pub(super) async fn catch(
                 .map(|(_, v)| v.clone())
         };
 
+        // The provider's own complaint comes first, and deliberately before the
+        // state check. An error redirect carries no code, so there is nothing
+        // for state to protect — and checking state first replaced "a required
+        // parameter is missing" with a message about state, which is how a
+        // malformed authorize URL cost a screenshot of a browser to diagnose.
+        if let Some(why) = found("error") {
+            let described = match found("error_description") {
+                Some(detail) if !detail.is_empty() => format!("{why}: {detail}"),
+                _ => why,
+            };
+            let _ = socket.write_all(page(false).as_bytes()).await;
+            return Err(ProviderError::Configuration(format!(
+                "the sign-in was refused ({described})"
+            )));
+        }
+
         // Checked before the code is touched. A callback whose state is not
         // ours belongs to somebody else's flow, and redeeming its code would
         // be redeeming a code we were never issued.
@@ -65,10 +81,9 @@ pub(super) async fn catch(
         }
 
         let _ = socket.write_all(page(false).as_bytes()).await;
-        return Err(ProviderError::Configuration(match found("error") {
-            Some(why) => format!("the sign-in was refused: {why}"),
-            None => "the sign-in came back without a code".to_owned(),
-        }));
+        return Err(ProviderError::Configuration(
+            "the sign-in came back without a code".to_owned(),
+        ));
     }
 }
 
