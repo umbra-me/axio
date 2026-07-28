@@ -47,12 +47,17 @@ pub fn open(url: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn opener(url: &str) -> Command {
-    // Through `cmd /c start`, whose first quoted argument is the window title
-    // rather than the target — omitting the empty title makes a URL containing
-    // a space open a window called that and nothing else. `start` is a shell
-    // builtin, so there is no executable to call directly.
-    let mut command = Command::new("cmd");
-    command.args(["/c", "start", "", url]);
+    // Not `cmd /c start`. `start` is a shell builtin, so reaching it means
+    // going through cmd's parser — and cmd reads `&` as a command separator.
+    // A URL is mostly `&`: the browser received everything up to the first one
+    // and the authorization server refused it as missing half its parameters,
+    // which is a failure with no visible connection to the opener at all.
+    //
+    // `rundll32 url.dll,FileProtocolHandler` hands the URL to the registered
+    // protocol handler with no shell in between, so the argument arrives as
+    // one argument whatever is in it.
+    let mut command = Command::new("rundll32.exe");
+    command.args(["url.dll,FileProtocolHandler", url]);
     command
 }
 
@@ -89,7 +94,7 @@ mod tests {
         let command = opener("https://example.invalid/");
         let program = command.get_program().to_string_lossy().into_owned();
         let expected = if cfg!(target_os = "windows") {
-            "cmd"
+            "rundll32.exe"
         } else if cfg!(target_os = "macos") {
             "open"
         } else {
@@ -98,19 +103,27 @@ mod tests {
         assert_eq!(program, expected);
     }
 
-    /// On Windows the empty title is load-bearing: without it a URL containing
-    /// a space is read as the window title and nothing opens.
-    #[cfg(target_os = "windows")]
+    /// The regression, and it cost two rounds of browser screenshots to find:
+    /// routed through `cmd /c start`, everything after the first `&` was a
+    /// separate command, so the authorization server saw a URL with one
+    /// parameter and refused it for reasons that named nothing to do with the
+    /// opener. A URL must arrive as exactly one argument, ampersands included.
     #[test]
-    fn the_windows_opener_passes_an_empty_title_first() {
-        let command = opener("https://example.invalid/a%20b");
+    fn the_whole_url_is_one_argument() {
+        let url = "https://example.invalid/auth?response_type=code&scope=a%20b&state=xyz";
+        let command = opener(url);
         let args: Vec<String> = command
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args[0], "/c");
-        assert_eq!(args[1], "start");
-        assert_eq!(args[2], "", "the empty title must come before the URL");
-        assert_eq!(args[3], "https://example.invalid/a%20b");
+
+        assert!(
+            args.iter().any(|a| a == url),
+            "the URL must survive whole: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a.contains("cmd") || a == "/c"),
+            "no shell may parse this: {args:?}"
+        );
     }
 }

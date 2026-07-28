@@ -76,15 +76,18 @@ impl Tui {
         if said.is_empty() {
             return Ok(());
         }
-        let mut lines: Vec<Line<'static>> = said
-            .iter()
-            .map(|line| {
-                Line::styled(
-                    format!("  {line}"),
-                    Style::default().add_modifier(Modifier::DIM),
-                )
-            })
-            .collect();
+        // Wrapped, not clipped. A `Line` wider than the terminal loses its tail
+        // silently, and the tail is the part that matters when the line is a
+        // sign-in URL — one was copied off the screen a few characters short
+        // and refused for a scope that did not exist.
+        let width = self.width(terminal).saturating_sub(2).max(8) as usize;
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for line in said {
+            for row in wrap_hard(line, width) {
+                lines.push(Line::styled(format!("  {row}"), dim));
+            }
+        }
         lines.push(Line::raw(""));
         self.push(terminal, lines)
     }
@@ -235,6 +238,44 @@ pub(super) fn preview_lines(preview: Option<&Preview>, width: usize) -> Vec<Line
     lines
 }
 
+/// Break a line to fit, at a space when there is one and mid-token when there
+/// is not.
+///
+/// `markdown::wrap` breaks on whitespace, which is right for prose and wrong
+/// for the one thing here that most needs to survive: a URL is a single token
+/// wider than any terminal, so word-wrapping leaves it exactly as long as it
+/// was and the surface clips it.
+fn wrap_hard(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_owned()];
+    }
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    let mut used = 0;
+
+    for word in line.split_inclusive(' ') {
+        let len = word.chars().count();
+        if used + len > width && used > 0 {
+            rows.push(std::mem::take(&mut row));
+            used = 0;
+        }
+        // Still too wide with a row to itself: a token no break can help, so
+        // it is cut at the width rather than left to be clipped invisibly.
+        if len > width {
+            for chunk in word.chars().collect::<Vec<_>>().chunks(width) {
+                rows.push(chunk.iter().collect());
+            }
+            continue;
+        }
+        row.push_str(word);
+        used += len;
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +371,30 @@ mod tests {
         );
         assert!(text.contains("invalid arguments"), "{text:?}");
         assert!(line.width() <= 110, "{}", line.width());
+    }
+
+    #[test]
+    fn short_lines_are_left_alone() {
+        assert_eq!(wrap_hard("model  kimi", 40), vec!["model  kimi"]);
+        assert_eq!(wrap_hard("", 40), vec![""]);
+    }
+
+    /// The regression: a sign-in URL is one token wider than the terminal, so
+    /// breaking only on spaces leaves it full length and the surface clips it.
+    /// The copy taken off the screen was then a few characters short, and the
+    /// authorization server refused a scope that had lost its last letter.
+    #[test]
+    fn a_url_too_wide_to_fit_is_broken_rather_than_lost() {
+        let url = "https://auth.example.invalid/oauth/authorize?scope=openid%20profile%20email";
+        let rows = wrap_hard(url, 30);
+        assert!(rows.len() > 1, "it must be broken up");
+        assert!(rows.iter().all(|r| r.chars().count() <= 30), "{rows:?}");
+        assert_eq!(rows.concat(), url, "every character must survive");
+    }
+    #[test]
+    fn words_break_at_spaces_when_they_can() {
+        let rows = wrap_hard("alpha beta gamma", 12);
+        assert_eq!(rows.concat(), "alpha beta gamma");
+        assert!(rows.iter().all(|r| r.chars().count() <= 12), "{rows:?}");
     }
 }
