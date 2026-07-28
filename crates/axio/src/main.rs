@@ -8,6 +8,10 @@ mod surfaces;
 
 mod cli;
 mod credentials;
+// Only the interactive surface can switch provider mid-session, so only it
+// has a default to save.
+#[cfg(feature = "tui")]
+mod defaults;
 mod doctor;
 mod paths;
 mod probe;

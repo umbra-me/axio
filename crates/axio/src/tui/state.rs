@@ -65,6 +65,12 @@ pub struct Tui {
     pub(super) factory: crate::provider::Factory,
     /// Every provider and whether it is usable, for the picker's first stage.
     pub(super) offers: Vec<Offer>,
+    /// A provider and model that were adopted but have not yet answered.
+    ///
+    /// Held rather than written at the moment of choosing: the name is not
+    /// checked until the next request, so saving then would make a typo the
+    /// default and every later session would start broken.
+    pub(super) unproven_default: Option<(String, String)>,
     /// Chosen in the first stage and applied with the model in the second.
     /// Held rather than applied immediately, because a provider changed on its
     /// own leaves the session naming a model its endpoint has never heard of.

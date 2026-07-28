@@ -13,6 +13,7 @@
 //! loop. A rule in a document is not an enforcement mechanism; a type that
 //! cannot be constructed any other way is.
 
+pub mod edit;
 mod layers;
 mod load;
 mod sections;

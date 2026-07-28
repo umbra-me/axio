@@ -199,12 +199,43 @@ impl Tui {
         Ok(())
     }
 
+    /// Save a switched provider and model, once a turn has shown they work.
+    ///
+    /// Taken rather than borrowed: this is the one chance, and a switch that
+    /// failed must not be reconsidered on the next turn — by then the failure
+    /// has been reported and a second attempt would save a default nothing
+    /// proved. A write that fails is said out loud and then dropped for the
+    /// same reason.
+    fn remember_default<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        outcome: &TurnOutcome,
+    ) -> Result<(), B::Error> {
+        let Some((provider, model)) = self.unproven_default.take() else {
+            return Ok(());
+        };
+        if !crate::defaults::proves_it_works(outcome) {
+            return Ok(());
+        }
+
+        let path = crate::paths::config_file_path();
+        let said = match crate::defaults::save(&path, &provider, &model) {
+            Ok(()) => vec![
+                format!("saved as the default: {provider} · {model}"),
+                format!("  {}", path.display()),
+            ],
+            Err(e) => vec![format!("could not save the default: {e}")],
+        };
+        self.push_command_output(terminal, &said)
+    }
+
     pub(super) fn on_turn_end<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
         outcome: &TurnOutcome,
     ) -> Result<(), B::Error> {
         self.begin_message();
+        self.remember_default(terminal, outcome)?;
         let line = match outcome {
             TurnOutcome::Completed => None,
             TurnOutcome::Interrupted => Some(("interrupted".to_owned(), Color::Yellow)),

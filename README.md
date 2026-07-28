@@ -209,8 +209,16 @@ from a built-in catalogue looks exactly like a name the provider refuses. The
 one in use is ticked and the highlight opens on it, so the reflex Enter changes
 nothing.
 
-`/model` changes the name in the request body and nothing else, so it reaches
-only models the configured provider already serves. Moving away from the model
+A switch that works becomes the default. It is written **after** the next turn
+comes back, never when it is chosen — the name is not checked until then, so
+saving at the moment of choosing would make a typo the default and every later
+session would start broken. Only an outcome that could not have happened
+without the endpoint accepting the request counts, so a refusal saves and a
+transport failure does not. The file is line-edited rather than rewritten, so
+comments and sections axio does not use survive.
+
+`/model NAME` changes the name in the request body and nothing else, so it
+reaches only models the configured provider already serves. Moving away from the model
 that minted the transcript drops that model's reasoning from every later
 request; it says so when it happens. The name is not checked until the next
 request, so a typo surfaces then rather than at the prompt.

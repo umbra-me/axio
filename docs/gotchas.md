@@ -397,6 +397,20 @@ Grant the rest of the system and forget these two and every command fails with
 
 ## Sessions, config and compaction
 
+**A configuration file is something a person wrote.** Serialising `Config` back
+out is a few lines and deletes every comment, the ordering, the blank lines and
+every section axio does not use. Writing a default is a line edit that touches
+two keys and leaves every other byte alone — and it has to know that `provider`
+under `[voice]` is not `provider` under `[model]`, which a previous generation
+of this file would have proved the hard way.
+
+**A default must never be saved at the moment it is chosen.** The model name is
+not checked until the next request, so choosing is not knowing. It is written
+once a turn has come back with an outcome that could not have happened unless
+the endpoint accepted the request — a refusal counts, since it arrives as a
+normal 200; an interrupt does not, since the turn may have been stopped before
+the first byte.
+
 **"Not mine" and "mine and broken" cannot share an answer.** One predicate
 returned `false` for both, and the caller could only read the second — so every
 unrecognised section became damage, and damage means a backup, which means

@@ -295,6 +295,10 @@ impl super::Tui {
         // name above every answer the new model gives.
         self.model = argument.to_owned();
 
+        // Remembered, not written. The next turn is what decides whether this
+        // becomes the default; a name is not checked until then.
+        self.unproven_default = Some((agent.id_of_provider().to_owned(), argument.to_owned()));
+
         let mut said = vec![format!("model      {previous} → {argument}")];
         if agent.model() != agent.session_model() {
             said.push(format!(
