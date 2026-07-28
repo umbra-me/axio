@@ -5,9 +5,8 @@
  * renders in the terminal's own colours rather than a bundled theme, so the
  * one element representing it looks the same whatever the page is doing.
  *
- * No external fonts, no external anything. The repo is public and the site is
- * served as static files; a webfont request would be the only network call on
- * the page and would buy nothing a good monospace stack does not already give.
+ * No webfonts. It would be the only network request on the page and would buy
+ * nothing a good monospace stack does not already give.
  */
 
 :root {
@@ -49,10 +48,10 @@
 }
 
 :root[data-theme="dark"] {
-  --paper: #14161a;
+  --paper: #1e2126;
   --ink: #e6e8e2;
   --muted: #9aa196;
-  --rule: #2c3038;
+  --rule: #343943;
   --signal: #6fc9b0;
   --unmet: #d9ae5c;
 }
@@ -105,6 +104,9 @@ body {
 }
 
 @media (max-width: 46rem) {
+  :root {
+    --gutter: 0rem;
+  }
   .row {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
@@ -112,9 +114,6 @@ body {
   .mark {
     padding-top: 0;
     margin-bottom: 0.5rem;
-  }
-  :root {
-    --gutter: 0rem;
   }
 }
 
@@ -160,21 +159,6 @@ body {
 
 section {
   padding: 4.5rem 0 0;
-}
-
-h2 {
-  font-family: var(--mono);
-  font-size: 1.0625rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0 0 1rem;
-}
-
-h3 {
-  font-family: var(--mono);
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin: 2rem 0 0.5rem;
 }
 
 p {
@@ -248,11 +232,11 @@ hr {
   }
 }
 
-/* The install command is the one string on the page that must be copied
- * whole. In a scrolling block its tail sits behind the edge, and a reader who
- * does not notice the scrollbar copies a truncated command — so this one wraps
- * instead. `anywhere` rather than `break-word` because the long token is a URL
- * and the flags after it must stay intact. */
+/* The install command is the one string on the page that must be copied whole.
+ * In a scrolling block its tail sits behind the edge, and a reader who does not
+ * notice the scrollbar copies a truncated command — so this one wraps instead.
+ * `anywhere` rather than `break-word` because the long token is a URL and the
+ * flags after it must stay intact. */
 .term--cmd pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -368,10 +352,20 @@ footer {
   color: var(--muted);
 }
 
-footer a {
+.footer-links {
+  font-family: var(--serif);
+  margin-bottom: 1.5rem;
+}
+
+.footer-links a {
   margin-right: 1.5rem;
   display: inline-block;
   padding: 0.2rem 0;
+}
+
+.colophon {
+  font-family: var(--mono);
+  margin-bottom: 1.5rem;
 }
 
 .theme-toggle {
