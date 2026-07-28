@@ -72,6 +72,14 @@ when the launch directory holds several repositories, because the workspace
 being a whole shelf of projects is invisible until a search is slow and its
 results are almost right.
 
+### M8 — signing in, and a third dialect
+
+Browser OAuth with PKCE for `openai-codex`, a credential store that holds a
+token pair beside an API key, renewal before expiry with the renewed pair
+persisted through a sink, and the Responses transport the subscription endpoint
+requires. The client id is Codex's, vendored deliberately and said so in the
+module that holds it.
+
 ## Next
 
 ### v0.1 — the release itself

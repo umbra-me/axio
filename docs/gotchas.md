@@ -529,6 +529,17 @@ the full path to `/v1/messages`, so its listing is the *sibling* of that path �
 appending asks for `/v1/messages/models` and gets a 404 that reads as "this
 provider has no listing".
 
+**In the Responses dialect a tool is flat, and a nested one is never called.**
+`{type, name, description, parameters}` at the top level; wrapping it under
+`function`, as the chat-completions dialect requires, is accepted and silently
+ignored. `store` must be `false` there too — the endpoint answers "Store must
+be set to false" — and the system prompt is `instructions`, a field, not a
+message with a role.
+
+**Answer a tool call with its `call_id`, not the item `id`.** The item id names
+the output item; a result carrying it is one the model cannot match to the call
+it made, and the turn continues as though the tool never ran.
+
 **`WireMessage` is Messages-API-shaped.** One user message carrying N
 `tool_result`s is correct there and invalid in the chat-completions dialect,
 where each result is a separate `role: "tool"` message. The split belongs in the

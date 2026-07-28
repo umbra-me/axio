@@ -172,6 +172,28 @@ impl Credential {
     }
 }
 
+/// Somewhere to put tokens that have just been renewed.
+///
+/// A transport that refreshes has to persist the result, or the next process
+/// starts from the pair that already expired and refreshes again — burning a
+/// round trip per run, and eventually a refresh token the issuer has rotated.
+/// It is a trait rather than a path because writing files is not the transport
+/// crate's job; it produces tokens and hands them somewhere.
+pub trait TokenSink: Send + Sync + 'static {
+    fn store(&self, provider: &str, tokens: &OAuthTokens);
+}
+
+/// A sink that drops what it is given.
+///
+/// For a caller that has no store — a test, or a one-shot that will not outlive
+/// the token. Named rather than an `Option`, so "nowhere to save this" is a
+/// decision at the call site instead of a `None` nobody reads.
+pub struct Discard;
+
+impl TokenSink for Discard {
+    fn store(&self, _provider: &str, _tokens: &OAuthTokens) {}
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Store {
     #[serde(default)]

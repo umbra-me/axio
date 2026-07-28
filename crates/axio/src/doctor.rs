@@ -208,6 +208,7 @@ pub(crate) fn provider_prices(
     match cfg.model.provider.as_str() {
         "anthropic" => Some(axio_provider::anthropic::model_info(&cfg.model.name)),
         "ollama" | "openai-compatible" => Some(axio_provider::openai::model_info(&cfg.model.name)),
+        "openai-codex" => Some(axio_provider::responses::model_info(&cfg.model.name)),
         _ => None,
     }
 }

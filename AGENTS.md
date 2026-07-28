@@ -27,7 +27,7 @@ Four crates and one binary. The dependency graph is a tree rooted at
 | Crate | Owns |
 | --- | --- |
 | `axio-core` | `protocol`, the `Provider` / `Tool` / `Approver` traits, the turn loop, `Session` and its JSONL records, layered `config`, `compact`, `policy`, output `truncate`, credential storage, `Workspace`, `Redacted` |
-| `axio-provider` | Both transports — the Messages dialect and the chat-completions one: SSE decoder, request builders, block state machines, error classification. The only crate linking HTTP or TLS |
+| `axio-provider` | All three transports — the Messages dialect, chat-completions, and Responses — plus the OAuth flows: SSE decoder, request builders, block state machines, error classification. The only crate linking HTTP or TLS |
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
 | `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations |
 

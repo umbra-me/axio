@@ -68,7 +68,7 @@ axio                                # interactive, if stdin is a terminal
                                     #   `/` opens the command menu
                                     #   `/status` what this session is set to do
                                     #   `/model NAME` change model mid-session
-                                    #   `/login` stores a credential, unechoed
+                                    #   `/login` store a key, or sign in via browser
 axio --list                         # recent sessions
 axio --resume 01K3F               # continue one; a unique prefix is enough
 axio --explain model.effort         # where a setting came from
@@ -179,7 +179,7 @@ answering a typo.
 | `/help` | list the commands |
 | `/status` | model, provider, endpoint, credential source, permissions, workspace |
 | `/model` | pick from what the provider serves; `/model NAME` sets one directly |
-| `/login` | store a credential, without echoing it |
+| `/login` | store a credential, or sign in to one that uses a browser |
 | `/clear` | discard what is in the composer |
 | `/quit` | leave |
 
@@ -201,7 +201,15 @@ that minted the transcript drops that model's reasoning from every later
 request; it says so when it happens. The name is not checked until the next
 request, so a typo surfaces then rather than at the prompt.
 
-`/login` runs in the viewport rather than the shell. What is typed is never
+`openai-codex` is signed in to rather than pasted into: choosing it opens a
+browser, catches the redirect on the loopback and stores the token pair, which
+axio then renews before it expires. Requests go to the subscription endpoint,
+which speaks a third dialect. The client id used is Codex's own — a public
+identifier, but presenting it is outside what a third-party client is
+authorised to do, and the module holding it says so.
+
+For the providers that take a key, `/login` runs in the viewport rather than
+the shell. What is typed is never
 drawn — only how many characters there are — and never reaches scrollback,
 which outlives the process. A pasted key loses its trailing newline, because a
 credential with one in it is rejected as simply wrong. The session keeps the

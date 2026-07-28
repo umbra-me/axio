@@ -34,7 +34,8 @@ pub(crate) fn prepare(
     label: Option<&str>,
     approver: Arc<dyn axio_core::approver::Approver>,
 ) -> Result<Prepared, String> {
-    let provider: Arc<dyn axio_core::provider::Provider> = build_provider(resolved)?;
+    let provider: Arc<dyn axio_core::provider::Provider> =
+        crate::provider::build_provider(resolved)?;
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut cfg = resolved.runtime();
@@ -290,42 +291,6 @@ pub(crate) async fn one_shot(
             other => other.exit_code(),
         },
         code => code,
-    }
-}
-
-/// Construct the provider the configuration names.
-///
-/// Two implementations selected by name. Adding a third would be the moment to
-/// ask for a registry; two is not.
-pub(crate) fn build_provider(
-    resolved: &Resolved,
-) -> Result<Arc<dyn axio_core::provider::Provider>, String> {
-    let model = &resolved.config().model;
-    // One lookup for every provider: the environment, then the store. A second
-    // resolution path is how the two disagree about which key is in use.
-    let (found, _source) = credential(&model.provider)?;
-
-    match model.provider.as_str() {
-        "anthropic" => AnthropicProvider::new(found.bearer().expose())
-            .map(|p| match &model.base_url {
-                // `model.base_url` was accepted, reported by `--explain`, and
-                // ignored here — so a gateway or proxy endpoint silently went
-                // to the public API instead.
-                Some(url) => p.with_base_url(url.clone()),
-                None => p,
-            })
-            .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
-            .map_err(|e| format!("could not start the http client: {e}")),
-        "ollama" | "openai-compatible" => {
-            let base = model
-                .base_url
-                .clone()
-                .unwrap_or_else(|| OLLAMA_BASE.to_owned());
-            OpenAiProvider::new(found.bearer().expose(), base, model.provider.clone())
-                .map(|p| Arc::new(p) as Arc<dyn axio_core::provider::Provider>)
-                .map_err(|e| format!("could not start the http client: {e}"))
-        }
-        other => Err(unknown_provider(other)),
     }
 }
 

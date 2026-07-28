@@ -23,7 +23,7 @@ pub(crate) async fn probe(resolved: &Resolved) -> u8 {
     let cfg = resolved.config();
     print_notices(resolved);
 
-    let provider = match surfaces::build_provider(resolved) {
+    let provider = match provider::build_provider(resolved) {
         Ok(provider) => provider,
         Err(message) => {
             eprintln!("axio: {message}");
@@ -157,6 +157,7 @@ pub(crate) fn endpoint(cfg: &axio_core::config::Config) -> String {
     cfg.model.base_url.clone().unwrap_or_else(|| {
         match cfg.model.provider.as_str() {
             "anthropic" => axio_provider::API_URL,
+            "openai-codex" => axio_provider::CODEX_BASE,
             _ => OLLAMA_BASE,
         }
         .to_owned()

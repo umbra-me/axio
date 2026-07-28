@@ -8,9 +8,11 @@ mod catalog;
 pub mod client;
 pub mod oauth;
 pub mod openai;
+pub mod responses;
 pub mod sse;
 
 pub use anthropic::{API_URL, DEFAULT_MODEL, build_body, classify};
 pub use client::AnthropicProvider;
 pub use openai::{OLLAMA_BASE, OpenAiProvider};
+pub use responses::{CODEX_BASE, CodexProvider};
 pub use sse::{SseDecoder, SseFrame};

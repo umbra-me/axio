@@ -11,6 +11,7 @@ mod credentials;
 mod doctor;
 mod paths;
 mod probe;
+mod provider;
 mod render;
 mod sandbox;
 mod sessions;

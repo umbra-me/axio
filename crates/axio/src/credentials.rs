@@ -55,6 +55,25 @@ pub(crate) fn credential(provider: &str) -> Result<(auth::Credential, auth::Sour
     Err(message)
 }
 
+/// Where a renewed token pair goes.
+///
+/// The binary owns this rather than the transport, which produces tokens and
+/// has no business knowing where credentials live. A failure to write is
+/// swallowed on purpose: the token in hand is good and the turn should run, and
+/// the cost of not persisting is one extra refresh next time rather than
+/// anything the user can act on mid-request.
+pub(crate) struct StoreTokens;
+
+impl axio_core::auth::TokenSink for StoreTokens {
+    fn store(&self, provider: &str, tokens: &axio_core::auth::OAuthTokens) {
+        let _ = auth::save(
+            &axio_home(),
+            provider,
+            auth::Credential::OAuth(tokens.clone()),
+        );
+    }
+}
+
 pub(crate) fn unknown_provider(provider: &str) -> String {
     format!(
         "unknown provider `{provider}`; expected one of {}",

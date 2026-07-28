@@ -401,6 +401,22 @@ What the second provider cannot do is price itself. `ModelInfo` reports zeros,
 so cost is reported as zero rather than invented — a made-up price would make
 the budget check silently wrong rather than visibly absent.
 
+A **third** provider is where "two implementations, not an extension point"
+stopped holding. A subscription token is accepted by exactly one endpoint, and
+that endpoint speaks the Responses dialect — so the alternative to a third arm
+was not having it. The seam took it without changing: the differences are all
+inside the transport. `instructions` is a field rather than a message; a tool
+is flat where chat-completions nests it under `function`; a finished tool call
+arrives complete in one event and is expanded here into the start, delta and
+end the loop expects, rather than the loop learning a second shape.
+
+It is also the first provider whose credential **expires**. It renews before a
+request rather than failing one, re-checks under the write lock so two requests
+cannot spend two refreshes — some issuers answer the second by invalidating the
+first — and hands the renewed pair to a `TokenSink`. The sink is a trait
+because writing credentials is not the transport's job: a refresh nobody
+persists is one that every later process repeats.
+
 ## Credentials
 
 `axio auth login` reads a credential from stdin — never from an argument, which

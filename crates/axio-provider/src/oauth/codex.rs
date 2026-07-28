@@ -247,7 +247,7 @@ pub(super) fn account_id(access: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub(super) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
