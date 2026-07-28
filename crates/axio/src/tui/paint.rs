@@ -220,8 +220,13 @@ impl Tui {
                 Style::default().add_modifier(Modifier::DIM),
             )),
             Mode::PickingModel(picker) => {
+                let stage = if picker.offers().is_some() {
+                    "provider"
+                } else {
+                    "model"
+                };
                 let mut spans = vec![Span::styled(
-                    format!("model  {} listed  ", picker.len()),
+                    format!("{stage}  {} listed  ", picker.len()),
                     Style::default().fg(Color::Yellow),
                 )];
                 spans.extend(key("↑↓", "move"));

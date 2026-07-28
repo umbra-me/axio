@@ -18,9 +18,49 @@ pub struct Picker {
     /// hand, or one withdrawn since the session started — and the mark is then
     /// simply absent rather than wrong.
     current: String,
+    /// Set only for the provider stage, and what tells the painter and the key
+    /// handler which stage this is. One field rather than an enum: the two
+    /// stages differ in what a row means, not in how a list behaves.
+    offers: Option<Vec<Offer>>,
+}
+
+/// A provider as the first stage of the picker shows it.
+#[derive(Debug, Clone)]
+pub struct Offer {
+    pub name: String,
+    /// Whether there is a credential for it. Listed either way — a provider
+    /// missing from the list looks like one axio cannot reach, when the answer
+    /// is a sign-in away — but not choosable, and the row says which it is.
+    pub ready: bool,
 }
 
 impl Picker {
+    /// The providers, for the first stage.
+    ///
+    /// Model and provider are chosen in one flow rather than by two commands,
+    /// because changing the provider alone leaves the session holding a model
+    /// its new endpoint has never heard of. Two commands make that state
+    /// reachable; one flow does not.
+    pub fn providers(offers: Vec<Offer>, current: &str) -> Self {
+        let models = offers.iter().map(|o| o.name.clone()).collect::<Vec<_>>();
+        let mut picker = Self::new(models, current);
+        picker.offers = Some(offers);
+        picker
+    }
+
+    /// Whether the highlighted entry can be chosen.
+    pub fn selectable(&self) -> bool {
+        match (&self.offers, self.index()) {
+            (Some(offers), at) => offers.get(at).is_some_and(|o| o.ready),
+            (None, _) => true,
+        }
+    }
+
+    /// What each row is, for the painter: `None` when this stage is models.
+    pub fn offers(&self) -> Option<&[Offer]> {
+        self.offers.as_deref()
+    }
+
     /// Open on the model in use, or at the top when it is not listed.
     ///
     /// Opening at the top regardless would put the highlight on a different
@@ -33,6 +73,7 @@ impl Picker {
             models,
             selected,
             current,
+            offers: None,
         }
     }
 
@@ -160,6 +201,55 @@ mod tests {
         assert_eq!(shown.len(), 2);
         assert_eq!(first + shown.len(), 4, "the last entry must be on screen");
         assert_eq!(shown.last().map(String::as_str), Some("delta"));
+    }
+
+    fn offers() -> Vec<Offer> {
+        vec![
+            Offer {
+                name: "ollama".into(),
+                ready: true,
+            },
+            Offer {
+                name: "anthropic".into(),
+                ready: false,
+            },
+            Offer {
+                name: "openai-codex".into(),
+                ready: true,
+            },
+        ]
+    }
+
+    /// A provider with no credential stays listed. Dropping it reads as one
+    /// axio cannot reach, when the answer is a sign-in away.
+    #[test]
+    fn a_provider_without_a_credential_is_shown_but_not_choosable() {
+        let mut picker = Picker::providers(offers(), "ollama");
+        assert_eq!(picker.len(), 3, "all of them are listed");
+        assert!(picker.selectable(), "it opens on the one in use");
+
+        picker.choose_digit(2);
+        assert_eq!(picker.selection(), Some("anthropic"));
+        assert!(!picker.selectable(), "no credential, no choosing");
+
+        picker.choose_digit(3);
+        assert!(picker.selectable());
+    }
+
+    /// The stages differ in what a row means, and the painter and the key
+    /// handler both need to tell them apart.
+    #[test]
+    fn only_the_provider_stage_carries_offers() {
+        assert!(Picker::providers(offers(), "ollama").offers().is_some());
+        assert!(Picker::new(models(), "alpha").offers().is_none());
+        // A model row is always choosable; there is nothing to be unready.
+        assert!(Picker::new(models(), "alpha").selectable());
+    }
+
+    #[test]
+    fn the_provider_stage_opens_on_the_one_in_use() {
+        let picker = Picker::providers(offers(), "openai-codex");
+        assert_eq!(picker.selection(), Some("openai-codex"));
     }
 
     #[test]

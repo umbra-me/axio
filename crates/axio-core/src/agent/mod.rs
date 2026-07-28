@@ -212,6 +212,30 @@ impl Agent {
         self.session.model()
     }
 
+    /// Which provider this session is talking to.
+    ///
+    /// Asked of the provider rather than of the configuration, so the answer
+    /// is what a request would actually reach after [`Agent::adopt`] has moved
+    /// the session somewhere the configuration does not name.
+    pub fn id_of_provider(&self) -> &str {
+        self.provider.id()
+    }
+
+    /// Move the session to a different provider.
+    ///
+    /// Taken together with a model, never alone: a provider serves its own
+    /// models, so changing one without the other leaves the session naming a
+    /// model the new endpoint has never heard of — a state that cannot work and
+    /// that nothing downstream would flag until the next request failed.
+    ///
+    /// The transcript is kept. What was said survives a change of endpoint;
+    /// what does not is reasoning, which the projection already drops when the
+    /// model differs from the one that minted it.
+    pub fn adopt(&mut self, provider: Arc<dyn Provider>, model: impl Into<String>) {
+        self.provider = provider;
+        self.cfg.model = model.into();
+    }
+
     /// Point the next request at a different model.
     ///
     /// The provider is untouched. This is the name in the request body, so it

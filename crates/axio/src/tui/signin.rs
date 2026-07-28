@@ -83,3 +83,37 @@ pub(super) fn finish_signin(result: Result<axio_core::auth::OAuthTokens, String>
         Err(e) => vec![format!("signed in, but could not store the tokens: {e}")],
     }
 }
+
+/// Ask a provider what it serves, off the loop.
+///
+/// The provider is built by name rather than taken from the agent, because the
+/// point of the first stage is to reach one the session is not using yet.
+pub(super) fn list_models(
+    app: &mut Tui,
+    agent: Option<&Agent>,
+    name: &str,
+    tx: mpsc::UnboundedSender<Result<Vec<String>, String>>,
+) {
+    app.pending_provider = Some(name.to_owned());
+    app.status = format!("listing {name} models");
+
+    // Reuse the running provider when it is already the one asked about: it
+    // holds a live token, and building a second would refresh separately and
+    // leave two of them disagreeing about which pair is current.
+    let built = match agent {
+        Some(agent) if agent.id_of_provider() == name => Ok(agent.provider()),
+        _ => (app.factory)(name),
+    };
+
+    match built {
+        Ok(provider) => {
+            let token = CancellationToken::new();
+            tokio::spawn(async move {
+                let _ = tx.send(provider.models(token).await.map_err(|e| e.to_string()));
+            });
+        }
+        Err(why) => {
+            let _ = tx.send(Err(why));
+        }
+    }
+}

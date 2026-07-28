@@ -10,13 +10,52 @@
 use super::*;
 
 /// Construct the provider the configuration names.
-///
-/// Two implementations selected by name. Adding a third would be the moment to
-/// ask for a registry; two is not.
 pub(crate) fn build_provider(
     resolved: &Resolved,
 ) -> Result<Arc<dyn axio_core::provider::Provider>, String> {
-    let model = &resolved.config().model;
+    let cfg = resolved.config();
+    build_named(cfg, &cfg.model.provider)
+}
+
+/// A way to build any provider, for a surface that has no configuration.
+///
+/// The interface can move a session to another provider, and doing that needs
+/// a credential looked up and a transport constructed — neither of which it
+/// should know how to do. It gets this instead.
+#[cfg(feature = "tui")]
+pub(crate) type Factory =
+    Arc<dyn Fn(&str) -> Result<Arc<dyn axio_core::provider::Provider>, String> + Send + Sync>;
+
+#[cfg(feature = "tui")]
+pub(crate) fn factory(resolved: &Resolved) -> Factory {
+    let cfg = resolved.config().clone();
+    Arc::new(move |name: &str| build_named(&cfg, name))
+}
+
+/// Construct a named provider against the resolved configuration.
+///
+/// Named separately from the configured one so a session can be moved to
+/// another provider without restarting. `base_url` still comes from the
+/// configuration, which is right for an override aimed at the provider being
+/// built and wrong for one aimed at the provider being left — so it is ignored
+/// unless the two agree, rather than pointing a new transport at an endpoint
+/// meant for the old one.
+pub(crate) fn build_named(
+    cfg: &axio_core::config::Config,
+    name: &str,
+) -> Result<Arc<dyn axio_core::provider::Provider>, String> {
+    let configured = &cfg.model;
+    let base_url = if configured.provider == name {
+        configured.base_url.clone()
+    } else {
+        None
+    };
+    let model = axio_core::config::ModelSection {
+        provider: name.to_owned(),
+        base_url,
+        ..configured.clone()
+    };
+    let model = &model;
     // One lookup for every provider: the environment, then the store. A second
     // resolution path is how the two disagree about which key is in use.
     let (found, _source) = credential(&model.provider)?;

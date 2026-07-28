@@ -124,6 +124,23 @@ pub(crate) fn prepare(
     })
 }
 
+/// Every provider, and whether it has a credential.
+///
+/// Listed even when it does not: a provider missing from the list reads as one
+/// axio cannot reach, when the answer is a sign-in away.
+#[cfg(feature = "tui")]
+fn offers() -> Vec<tui::Offer> {
+    let env: Vec<(String, String)> = std::env::vars().collect();
+    let home = axio_home();
+    axio_core::auth::PROVIDERS
+        .iter()
+        .map(|name| tui::Offer {
+            name: (*name).to_owned(),
+            ready: axio_core::auth::resolve(name, &home, &env).is_some(),
+        })
+        .collect()
+}
+
 /// The interactive surface.
 ///
 /// `--yes` is honoured here too, and it is the only way an action goes
@@ -152,10 +169,14 @@ pub(crate) async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
         prepared.agent,
         prepared.events,
         asks,
-        prepared.resumed,
-        prepared.notices,
-        prepared.model,
-        prepared.facts,
+        tui::Setup {
+            resumed: prepared.resumed,
+            notices: prepared.notices,
+            model: prepared.model,
+            facts: prepared.facts,
+            factory: crate::provider::factory(resolved),
+            offers: offers(),
+        },
     )
     .await
     {

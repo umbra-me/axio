@@ -110,8 +110,6 @@ pub fn parse(text: &str) -> Option<(Command, &str)> {
 pub(super) enum After {
     Stay,
     Leave,
-    /// Ask the provider what it serves, then open the picker.
-    ListModels,
 }
 
 /// Where the highlight is, and how it moves.
@@ -255,21 +253,44 @@ impl super::Tui {
             return Ok(After::Stay);
         };
 
-        // Bare `/model` offers the models rather than reporting one. What
-        // someone wants from a picker they opened by accident is Esc, which is
-        // cheaper than reading a name and then typing it back.
+        // Bare `/model` opens the provider stage. Provider and model are
+        // chosen in one flow because changing the provider alone leaves the
+        // session holding a model its new endpoint has never heard of — a
+        // state two separate commands would make reachable.
         if argument.is_empty() {
-            self.status = "listing models…".into();
-            return Ok(After::ListModels);
+            self.pending_provider = None;
+            let offers = self.offers.clone();
+            let current = agent.id_of_provider().to_owned();
+            self.mode = super::Mode::PickingModel(super::Picker::providers(offers, &current));
+            return Ok(After::Stay);
         }
 
         let previous = agent.model().to_owned();
-        if argument == previous {
+        let was = agent.id_of_provider().to_owned();
+        // Applied together, or not at all. A provider that changed while the
+        // model did not is a session pointed at an endpoint that has never
+        // heard of what it is about to ask for.
+        let moving = match self.pending_provider.take() {
+            Some(name) if name != was => Some(name),
+            _ => None,
+        };
+
+        if moving.is_none() && argument == previous {
             self.status = format!("already using {previous}");
             return Ok(After::Stay);
         }
 
-        agent.set_model(argument);
+        if let Some(name) = &moving {
+            match (self.factory)(name) {
+                Ok(provider) => agent.adopt(provider, argument),
+                Err(why) => {
+                    self.status = format!("staying on {was}: {why}");
+                    return Ok(After::Stay);
+                }
+            }
+        } else {
+            agent.set_model(argument);
+        }
         // The frame's title reads this, so leaving it stale would put the old
         // name above every answer the new model gives.
         self.model = argument.to_owned();

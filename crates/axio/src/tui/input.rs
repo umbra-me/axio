@@ -145,11 +145,21 @@ impl Tui {
                 picker.choose_digit(c.to_digit(10).unwrap_or(0));
             }
             KeyCode::Enter => {
+                let choosing_provider = picker.offers().is_some();
+                // A provider with no credential stays on screen and stays
+                // unchoosable: removing it would read as one axio cannot reach,
+                // when the answer is a sign-in away.
+                if choosing_provider && !picker.selectable() {
+                    let name = picker.selection().unwrap_or_default().to_owned();
+                    self.status = format!("{name} has no credential — /login first");
+                    return Action::None;
+                }
                 let chosen = picker.selection().map(str::to_owned);
                 self.mode = Mode::Idle;
-                return match chosen {
-                    Some(name) => Action::Run(Command::Model, name),
-                    None => Action::None,
+                return match (chosen, choosing_provider) {
+                    (Some(name), true) => Action::ListModels(name),
+                    (Some(name), false) => Action::Run(Command::Model, name),
+                    (None, _) => Action::None,
                 };
             }
             KeyCode::Esc => {

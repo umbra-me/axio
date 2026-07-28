@@ -25,6 +25,7 @@ mod paint;
 mod picker;
 mod scrollback;
 mod signin;
+mod state;
 mod terminal;
 
 use std::io::Write;
@@ -51,8 +52,11 @@ use commands::{After, Command, Menu};
 use composer::{Composer, Edit};
 use input::next_input;
 use login::{Login, Outcome as LoginOutcome, Stage as LoginStage};
+pub use picker::Offer;
 use picker::Picker;
-use signin::{SignIn, finish_signin, sign_in};
+use signin::{SignIn, finish_signin, list_models, sign_in};
+use state::Mode;
+pub use state::Tui;
 use terminal::{install_panic_hook, restore_terminal};
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
@@ -81,64 +85,22 @@ const COMPOSER_ROWS: usize = 3;
 /// keeps time whether the model is flooding the surface or saying nothing.
 const SPINNER: [&str; 4] = ["·", "∙", "•", "∙"];
 
-/// What the interface is doing, and therefore what a keystroke means.
-enum Mode {
-    Idle,
-    Running,
-    Approving(Box<ApprovalRequest>, tokio::sync::oneshot::Sender<Decision>),
-    /// Storing a credential. Its own mode rather than a flag, because while it
-    /// is on every keystroke belongs to it — a character typed here must not
-    /// also reach the composer, where it would be drawn.
-    LoggingIn(Login),
-    /// Choosing a model from what the provider listed.
-    PickingModel(Picker),
-}
-
-pub struct Tui {
-    /// Call ids whose terminal status has been printed, so a status reached
-    /// through both `ItemUpdated` and `ItemCompleted` prints one line.
-    reported: std::collections::HashSet<String>,
-    composer: Composer,
-    /// Where the highlight is in the slash menu. Kept across openings so the
-    /// menu is not the only widget on screen with amnesia; the filter clamps
-    /// it, so a stale index can never select something that is not shown.
-    menu: Menu,
-    mode: Mode,
-    /// The part of the streaming message that has no newline after it yet, so
-    /// the tail can be shown live before it can be rendered and committed.
-    live: String,
-    /// Markdown state carried across the lines of the message being streamed —
-    /// an open code fence is the only thing that outlives a line.
-    md: markdown::Renderer,
-    /// Whether any of the current message has already reached scrollback, which
-    /// is what decides whether a discarded stream has to warn that the text
-    /// above may repeat.
-    flushed: bool,
-    /// Whether the renderer has already been fed this message's deltas. It is
-    /// not the same question as `flushed`: a message whose lines are all still
-    /// held back — a table, whose columns are only known at its last row — has
-    /// been consumed without anything reaching the screen, and rendering the
-    /// completed item again would draw it twice.
-    streamed: bool,
-    /// What the turn is doing right now — thinking, writing, or the subject of
-    /// the tool it is waiting on.
-    status: String,
-    /// The turn's cumulative usage, kept apart from `status` so a token count
-    /// arriving does not overwrite what the turn was doing.
-    tokens: Option<(u64, u64)>,
-    interrupt_armed: bool,
-    model: String,
-    /// What `/status` reports besides the model: provider, endpoint, where the
-    /// credential came from, the permission rules, the workspace root.
-    ///
-    /// Rendered once, before the surface starts, because none of it can change
-    /// while a session runs — the model is the one part that can, and it is
-    /// read live from the field above rather than kept here.
-    facts: Vec<String>,
-    /// When the running turn started, which is what the status counts up from.
-    /// A turn that has produced nothing for thirty seconds looks identical to a
-    /// hung one unless something on screen is still moving.
-    started: Option<Instant>,
+/// What the surface is told about the session it is showing.
+///
+/// A struct because these arrived as six more parameters and the signature had
+/// stopped saying anything: `run(agent, events, asks, false, vec![], model, …)`
+/// is a call nobody can read, and a bool in the middle of it is a bug waiting
+/// for a reorder.
+pub struct Setup {
+    pub resumed: bool,
+    pub notices: Vec<axio_core::protocol::Notice>,
+    pub model: String,
+    pub facts: Vec<String>,
+    /// How to build a provider by name, so a session can be moved to one the
+    /// configuration does not name.
+    pub factory: crate::provider::Factory,
+    /// Every provider and whether it has a credential.
+    pub offers: Vec<Offer>,
 }
 
 /// Run the interactive surface until the user leaves.
@@ -149,11 +111,16 @@ pub async fn run(
     agent: Agent,
     mut events: mpsc::UnboundedReceiver<Event>,
     mut asks: mpsc::UnboundedReceiver<Ask>,
-    resumed: bool,
-    notices: Vec<axio_core::protocol::Notice>,
-    model: String,
-    facts: Vec<String>,
+    setup: Setup,
 ) -> std::io::Result<u8> {
+    let Setup {
+        resumed,
+        notices,
+        model,
+        facts,
+        factory,
+        offers,
+    } = setup;
     crossterm::terminal::enable_raw_mode()?;
     install_panic_hook();
     // Without this a pasted paragraph arrives as keystrokes, and its first
@@ -179,6 +146,9 @@ pub async fn run(
 
     let mut app = Tui {
         facts,
+        factory,
+        offers,
+        pending_provider: None,
         reported: std::collections::HashSet::new(),
         composer: Composer::default(),
         menu: Menu::default(),
@@ -295,10 +265,21 @@ pub async fn run(
                         app.status = "the provider listed no models".into();
                     }
                     Some(Ok(models)) => {
-                        let current = agent
-                            .as_ref()
-                            .map(|a| a.model().to_owned())
-                            .unwrap_or_else(|| app.model.clone());
+                        // Marked against the running model only when the
+                        // provider did not change; a tick beside a name the new
+                        // endpoint merely happens to share would be a lie.
+                        let staying = app
+                            .pending_provider
+                            .as_deref()
+                            .is_none_or(|p| agent.as_ref().is_none_or(|a| a.id_of_provider() == p));
+                        let current = if staying {
+                            agent
+                                .as_ref()
+                                .map(|a| a.model().to_owned())
+                                .unwrap_or_else(|| app.model.clone())
+                        } else {
+                            String::new()
+                        };
                         app.mode = Mode::PickingModel(Picker::new(models, current));
                     }
                     Some(Err(why)) => app.status = format!("could not list models: {why}"),
@@ -345,6 +326,9 @@ pub async fn run(
                             break;
                         }
                     }
+                    Action::ListModels(name) => {
+                        list_models(&mut app, agent.as_ref(), &name, models_tx.clone());
+                    }
                     Action::SignIn(provider) => {
                         let tx = signin_tx.clone();
                         let token = cancel.clone();
@@ -367,20 +351,7 @@ pub async fn run(
                                     break;
                                 }
                             }
-                            After::ListModels => {
-                                if let Some(running) = agent.as_ref() {
-                                    let provider = running.provider();
-                                    let tx = models_tx.clone();
-                                    let token = CancellationToken::new();
-                                    tokio::spawn(async move {
-                                        let listed = provider
-                                            .models(token)
-                                            .await
-                                            .map_err(|e| e.to_string());
-                                        let _ = tx.send(listed);
-                                    });
-                                }
-                            }
+
                         }
                     }
                     Action::Submit(prompt) => {
@@ -421,6 +392,8 @@ enum Action {
     /// Its own action rather than something the login flow does, because the
     /// flow is a round trip and the loop is what may await one.
     SignIn(&'static str),
+    /// A provider was chosen; ask it what it serves.
+    ListModels(String),
     /// A slash command. Separate from `Submit` because it never becomes a
     /// turn: no prompt is sent, nothing is recorded, and the agent is not
     /// taken — so a command works during a turn as readily as between them.
@@ -456,6 +429,9 @@ mod tests {
         .expect("a terminal");
         let app = Tui {
             facts: Vec::new(),
+            factory: std::sync::Arc::new(|_| Err("no provider in a test".to_owned())),
+            offers: Vec::new(),
+            pending_provider: None,
             reported: std::collections::HashSet::new(),
             composer: Composer::default(),
             menu: Menu::default(),

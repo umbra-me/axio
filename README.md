@@ -183,17 +183,25 @@ answering a typo.
 | `/clear` | discard what is in the composer |
 | `/quit` | leave |
 
-Bare `/model` asks the provider what it serves and offers the answer:
-`↑` `↓` move, `1`–`9` jump, `enter` uses the highlighted one, `esc` leaves it
-alone. The list is fetched, never compiled in — a name missing from a built-in
-catalogue looks exactly like a name the provider refuses. The one in use is
-ticked, and the highlight opens on it, so the reflex Enter changes nothing.
+Bare `/model` asks which provider first, then what to run on it:
 
 ```
-› 3. kimi-k2.7-code  ✓
-  4. minimax-m3
-  5. qwen3.5:397b
+›  1. ollama          ✓
+   2. anthropic         not configured
+   3. openai-codex
 ```
+
+Both stages take `↑` `↓`, `1`–`9`, `enter` and `esc`. Provider and model are
+chosen together rather than by two commands, because changing the provider on
+its own would leave the session holding a model its new endpoint has never
+heard of. A provider with no credential stays on the list and cannot be
+chosen — removing it would read as one axio cannot reach, when the answer is
+`/login` away.
+
+The model list is fetched from the provider, never compiled in: a name missing
+from a built-in catalogue looks exactly like a name the provider refuses. The
+one in use is ticked and the highlight opens on it, so the reflex Enter changes
+nothing.
 
 `/model` changes the name in the request body and nothing else, so it reaches
 only models the configured provider already serves. Moving away from the model

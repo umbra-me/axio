@@ -203,7 +203,18 @@ that proves it, being the only one that touches the agent at all — and because
 the agent is moved into a running turn and handed back at its end, `/model` is
 refused while one is in flight rather than arranging to mutate it underneath.
 
-Bare `/model` offers a list, and the list is **asked of the provider** rather
+Bare `/model` runs in two stages — provider, then model — and they are one
+flow rather than two commands for a reason: a provider changed on its own
+leaves the session naming a model its new endpoint has never heard of. Two
+commands make that state reachable; one flow does not. `Agent::adopt` takes
+both together for the same reason, and the transcript survives the move because
+what was said does not depend on who is asked next.
+
+The surface has no configuration, so it cannot build a provider. It is given a
+factory instead — a closure over the resolved config — which keeps credential
+lookup and transport construction where they already live.
+
+The second stage's list is **asked of the provider** rather
 than compiled in — the second method on the seam exists for this. A catalogue
 in the binary is wrong the first time either side ships a model, and wrong
 where nobody looks: a name missing from a picker is indistinguishable from a

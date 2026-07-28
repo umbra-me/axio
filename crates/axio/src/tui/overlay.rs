@@ -110,6 +110,15 @@ impl Tui {
                         if running { "  ✓" } else { "" },
                         Style::default().fg(Color::Green),
                     ),
+                    // Only on the provider stage, and only when it is the
+                    // reason a row cannot be chosen.
+                    Span::styled(
+                        match picker.offers().and_then(|o| o.get(at)) {
+                            Some(offer) if !offer.ready => "  not configured",
+                            _ => "",
+                        },
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
                 ])
             })
             .collect::<Vec<_>>();
