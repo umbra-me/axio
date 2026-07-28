@@ -17,6 +17,16 @@ pub struct AnthropicStream {
     saw_message_stop: bool,
 }
 
+impl crate::body::EventDecoder for AnthropicStream {
+    fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
+        AnthropicStream::push(self, chunk)
+    }
+
+    fn finish(&mut self) -> Result<Vec<StreamEvent>, ProviderError> {
+        AnthropicStream::finish(self)
+    }
+}
+
 impl AnthropicStream {
     pub fn new() -> Self {
         Self::default()

@@ -22,8 +22,6 @@ mod stream;
 pub use request::build_body;
 pub use stream::OpenAiStream;
 
-use std::pin::Pin;
-
 use axio_core::protocol::Usage;
 use axio_core::provider::{
     BlockKind, BoxStream, Effort, ModelInfo, ModelRequest, Provider, ProviderError, Role,
@@ -123,9 +121,6 @@ impl Provider for OpenAiProvider {
         req: ModelRequest,
         cancel: CancellationToken,
     ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
-        use futures_core::Stream;
-        use std::task::{Context, Poll};
-
         let body = build_body(&req);
         let url = format!("{}/chat/completions", self.base_url);
 
@@ -140,81 +135,9 @@ impl Provider for OpenAiProvider {
                 .send() => r.map_err(|e| transport_error(e, &self.base_url))?,
         };
 
-        let status = response.status().as_u16();
-        if !(200..300).contains(&status) {
-            let retry_after = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned);
-            let body = response.text().await.unwrap_or_default();
-            return Err(crate::anthropic::classify(
-                status,
-                retry_after.as_deref(),
-                &body,
-            ));
-        }
+        let response = crate::body::check_status(response).await?;
 
-        struct Body {
-            inner: Pin<Box<dyn Stream<Item = reqwest::Result<bytes::Bytes>> + Send>>,
-            decoder: OpenAiStream,
-            pending: std::collections::VecDeque<StreamEvent>,
-            cancel: CancellationToken,
-            finished: bool,
-        }
-
-        impl Stream for Body {
-            type Item = Result<StreamEvent, ProviderError>;
-
-            fn poll_next(
-                mut self: Pin<&mut Self>,
-                cx: &mut Context<'_>,
-            ) -> Poll<Option<Self::Item>> {
-                loop {
-                    if let Some(ev) = self.pending.pop_front() {
-                        return Poll::Ready(Some(Ok(ev)));
-                    }
-                    if self.finished {
-                        return Poll::Ready(None);
-                    }
-                    if self.cancel.is_cancelled() {
-                        self.finished = true;
-                        return Poll::Ready(Some(Err(ProviderError::Cancelled)));
-                    }
-                    match self.inner.as_mut().poll_next(cx) {
-                        Poll::Ready(Some(Ok(chunk))) => match self.decoder.push(&chunk) {
-                            Ok(events) => self.pending.extend(events),
-                            Err(e) => {
-                                self.finished = true;
-                                return Poll::Ready(Some(Err(e)));
-                            }
-                        },
-                        Poll::Ready(Some(Err(e))) => {
-                            self.finished = true;
-                            return Poll::Ready(Some(Err(ProviderError::Transport(
-                                Redacted::new(e.to_string()),
-                            ))));
-                        }
-                        Poll::Ready(None) => {
-                            self.finished = true;
-                            match self.decoder.finish() {
-                                Ok(events) => self.pending.extend(events),
-                                Err(e) => return Poll::Ready(Some(Err(e))),
-                            }
-                        }
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-            }
-        }
-
-        Ok(Box::pin(Body {
-            inner: Box::pin(response.bytes_stream()),
-            decoder: OpenAiStream::new(),
-            pending: std::collections::VecDeque::new(),
-            cancel,
-            finished: false,
-        }))
+        Ok(crate::body::events(response, OpenAiStream::new(), cancel))
     }
 }
 

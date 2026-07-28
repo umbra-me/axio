@@ -16,6 +16,16 @@ pub struct OpenAiStream {
     next_index: u32,
 }
 
+impl crate::body::EventDecoder for OpenAiStream {
+    fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
+        OpenAiStream::push(self, chunk)
+    }
+
+    fn finish(&mut self) -> Result<Vec<StreamEvent>, ProviderError> {
+        OpenAiStream::finish(self)
+    }
+}
+
 impl OpenAiStream {
     pub fn new() -> Self {
         Self::default()

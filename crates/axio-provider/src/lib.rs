@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
+mod body;
 mod catalog;
 pub mod client;
 pub mod oauth;

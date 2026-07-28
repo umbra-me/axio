@@ -25,6 +25,16 @@ pub struct ResponsesStream {
     done: bool,
 }
 
+impl crate::body::EventDecoder for ResponsesStream {
+    fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
+        ResponsesStream::push(self, chunk)
+    }
+
+    fn finish(&mut self) -> Result<Vec<StreamEvent>, ProviderError> {
+        ResponsesStream::finish(self)
+    }
+}
+
 impl ResponsesStream {
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
         let mut out = Vec::new();
