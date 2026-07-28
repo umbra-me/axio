@@ -193,16 +193,28 @@ pub(super) fn backup(path: &Path, notices: &mut Vec<Notice>) {
 }
 
 /// Find the nearest project config at or above `start`, without escaping into
-/// a parent of `boundary`.
+/// a parent of `boundary`, and never returning the user's own config.
 ///
 /// The boundary matters: walking to the filesystem root would pick up a
 /// `.axio/config.toml` in a home directory or in `/tmp` and apply it to an
 /// unrelated project.
-pub fn find_project_config(start: &Path, boundary: Option<&Path>) -> Option<PathBuf> {
+///
+/// `user` matters for a sharper reason. The user's configuration lives in a
+/// directory of the same name — `~/.axio/config.toml` — so a session running
+/// anywhere beneath the home directory would find it on the way up and load it
+/// a second time, as a *project*. That layer may only add restrictions, so a
+/// person's own settings would come back as a restriction-only copy of
+/// themselves. One file cannot be two layers, and the check is against the
+/// path rather than the boundary because `AXIO_HOME` can put it anywhere.
+pub fn find_project_config(
+    start: &Path,
+    boundary: Option<&Path>,
+    user: Option<&Path>,
+) -> Option<PathBuf> {
     let mut dir = Some(start);
     while let Some(current) = dir {
         let candidate = current.join(".axio").join("config.toml");
-        if candidate.is_file() {
+        if candidate.is_file() && Some(candidate.as_path()) != user {
             return Some(candidate);
         }
         if boundary == Some(current) {

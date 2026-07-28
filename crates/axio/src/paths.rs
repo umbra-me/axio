@@ -10,7 +10,7 @@ pub(crate) fn resolve_config(cli: &Cli) -> Resolved {
     let user = Some(config_file_path());
     // Bounded at the home directory so the walk cannot reach into an unrelated
     // parent and apply someone else's project settings.
-    let project = config::find_project_config(&cwd, home_dir().as_deref());
+    let project = config::find_project_config(&cwd, home_dir().as_deref(), user.as_deref());
     let env: Vec<(String, String)> = std::env::vars().collect();
     config::resolve(
         &Paths { user, project },
@@ -61,11 +61,16 @@ pub(crate) fn axio_home() -> PathBuf {
     default_config_dir().unwrap_or_else(|| PathBuf::from(".axio"))
 }
 
+/// `~/.axio`, on every platform.
+///
+/// Not the platform's configuration directory. This is one path on Windows,
+/// WSL, Linux and macOS — one thing to document, to sync between machines, to
+/// back up and to name in a bug report — and the same shape as the other
+/// per-tool homes that sit beside it. A dotfile home is a deliberate departure
+/// from XDG, taken because a tool that follows someone across four platforms is
+/// worth more consistent than conventional.
 pub(crate) fn default_config_dir() -> Option<PathBuf> {
-    use etcetera::BaseStrategy;
-    etcetera::choose_base_strategy()
-        .ok()
-        .map(|s| s.config_dir().join("axio"))
+    home_dir().map(|home| home.join(".axio"))
 }
 
 /// Where axio keeps state that is not the user's to curate.

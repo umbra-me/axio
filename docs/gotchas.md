@@ -397,6 +397,16 @@ Grant the rest of the system and forget these two and every command fails with
 
 ## Sessions, config and compaction
 
+**One file must not be two layers.** The user's configuration lives in
+`~/.axio/config.toml` and a project's in `<project>/.axio/config.toml` — the
+same directory name — so the walk that looks for a project config finds the
+user's own on the way up from anywhere beneath the home directory, and loads it
+a second time as a layer that may only *restrict*. A person's settings coming
+back as a restricted copy of themselves, and only on the machines where they
+work under `$HOME`. The lookup is given the user's path and refuses to return
+it; the check is on the path rather than the boundary because `AXIO_HOME` can
+put it anywhere.
+
 **A configuration file is something a person wrote.** Serialising `Config` back
 out is a few lines and deletes every comment, the ordering, the blank lines and
 every section axio does not use. Writing a default is a line edit that touches

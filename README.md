@@ -90,8 +90,11 @@ was accepted. A model can serve chat perfectly and reject every request that
 offers it a tool; nothing in the configuration is wrong when that happens, so
 only asking the model finds it.
 
-Configuration is layered — defaults, then `~/.config/axio/config.toml`, then the
-nearest `.axio/config.toml`, then `AXIO_*` variables, then flags:
+Configuration is layered — defaults, then `~/.axio/config.toml`, then the
+nearest project `.axio/config.toml`, then `AXIO_*` variables, then flags.
+`~/.axio` is the same path on Windows, WSL, Linux and macOS rather than each
+platform's own configuration directory: one path to document, to sync between
+machines and to name in a bug report. `AXIO_HOME` moves it.
 
 ```toml
 [model]

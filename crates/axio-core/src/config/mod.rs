@@ -577,10 +577,37 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
         write(&root, ".axio/config.toml", "[model]\nname = \"found\"\n");
 
-        assert!(find_project_config(&nested, Some(&root)).is_some());
+        assert!(find_project_config(&nested, Some(&root), None).is_some());
         // Boundary respected: starting below it but bounded at `a` finds
         // nothing, rather than reaching into an unrelated parent.
-        assert!(find_project_config(&nested, Some(&root.join("a"))).is_none());
+        assert!(find_project_config(&nested, Some(&root.join("a")), None).is_none());
+    }
+
+    /// The user's own configuration lives in a directory of the same name, so
+    /// a session anywhere beneath the home directory would find it on the way
+    /// up and load it a second time — as a *project*, a layer that may only add
+    /// restrictions. A person's settings coming back as a restricted copy of
+    /// themselves is the kind of bug that only appears on the machines where
+    /// someone happens to work under their home directory.
+    #[test]
+    fn the_users_own_config_is_never_also_a_project_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let nested = home.join("work/thing");
+        std::fs::create_dir_all(&nested).unwrap();
+        let user = write(&home, ".axio/config.toml", "[model]\nname = \"mine\"\n");
+
+        assert_eq!(
+            find_project_config(&nested, Some(&home), Some(&user)),
+            None,
+            "the user config must not be found as a project config"
+        );
+        // Still found when it is genuinely a different file.
+        let project = write(&nested, ".axio/config.toml", "[model]\nname = \"theirs\"\n");
+        assert_eq!(
+            find_project_config(&nested, Some(&home), Some(&user)),
+            Some(project)
+        );
     }
 
     #[test]
