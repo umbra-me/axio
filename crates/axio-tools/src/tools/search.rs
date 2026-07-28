@@ -185,7 +185,10 @@ impl Grep {
         Self {
             schema: schema::object(
                 &[
-                    ("pattern", schema::string("A regular expression")),
+                    (
+                        "pattern",
+                        schema::string("Literal text to find, not a regular expression"),
+                    ),
                     (
                         "glob",
                         schema::string("Restrict to files matching this glob"),

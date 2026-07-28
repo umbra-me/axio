@@ -1,8 +1,9 @@
-Search file contents with a regular expression.
+Search file contents for literal text.
 
-Takes `pattern` (a regular expression, required), `glob` to restrict which
-files are searched, and `hidden` to include hidden ones. It takes no other
-arguments: there is no `query`, no `path` and no result limit.
+Takes `pattern` (literal text, required — not a regular expression: `\b`, `.*`
+and `[a-z]` match themselves and nothing else), `glob` to restrict which files
+are searched, and `hidden` to include hidden ones. It takes no other arguments:
+there is no `query`, no `path` and no result limit.
 
 Returns matching lines with their file and line number. Respects `.gitignore`.
 Narrow the search with `glob` to a subset of files when you can — it is faster
