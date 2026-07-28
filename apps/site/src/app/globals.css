@@ -226,6 +226,43 @@ hr {
   color: var(--term-accent);
 }
 
+/* ---- the hero turn, played once on load ----
+ * Height is reserved for the finished turn so nothing below shifts as lines
+ * arrive. Lines occupy their space from the start and only their opacity
+ * changes, which is also what keeps the monospace grid from reflowing. */
+
+.term--hero pre .out {
+  opacity: 0;
+}
+
+.term--hero pre .in {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .term--hero pre .out,
+  .term--hero pre .in {
+    transition: opacity 220ms ease;
+  }
+  .term--hero .caret {
+    animation: caret 1s steps(2, start) infinite;
+  }
+}
+
+/* Without the motion query the caret would sit as a solid block forever, which
+ * reads as a rendering artifact rather than a cursor — so it is hidden instead. */
+@media (prefers-reduced-motion: reduce) {
+  .term--hero .caret {
+    display: none;
+  }
+}
+
+@keyframes caret {
+  to {
+    opacity: 0;
+  }
+}
+
 @media (min-width: 60rem) {
   .term--wide {
     margin-right: -6rem;

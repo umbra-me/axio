@@ -1,3 +1,4 @@
+import HeroTranscript from "./HeroTranscript";
 import ThemeToggle from "./ThemeToggle";
 
 const REPO = "https://github.com/umbra-me/axio";
@@ -58,36 +59,7 @@ export default function Page() {
           </p>
         </Row>
         <Row>
-          <div className="term term--wide">
-            <pre>
-              {"  "}
-              <span className="acc">⏺</span>
-              {" read    src/parse.rs                              "}
-              <span className="dim">3ms</span>
-              {"\n  "}
-              <span className="acc">⏺</span>
-              {" edit    src/parse.rs  "}
-              <span className="dim">+12 −4</span>
-              {"                     "}
-              <span className="dim">18ms</span>
-              {"\n\n  Done — the lexer now owns the span table.\n\n"}
-              <span className="dim">╭─</span>
-              {" claude-opus-5 "}
-              <span className="dim">───────────── 4s · 1.2k in / 340 out ─╮</span>
-              {"\n"}
-              <span className="dim">│</span>
-              {" › explain the change                                 "}
-              <span className="dim">│</span>
-              {"\n"}
-              <span className="dim">
-                ╰──────────────────────────────────────────────────────╯
-              </span>
-              {"\n  "}
-              <span className="dim">
-                · thinking                        ctrl-c to interrupt
-              </span>
-            </pre>
-          </div>
+          <HeroTranscript />
         </Row>
       </section>
 
@@ -325,45 +297,6 @@ export default function Page() {
         </Row>
       </section>
 
-      <hr />
-
-      <section>
-        <Row mark="Shape">
-          <p>
-            Four crates, one binary serving both surfaces. The core emits a
-            stream of events and knows nothing about rendering, so each surface
-            is a consumer of the same channel — <code>--json</code> is a second
-            renderer, never a second loop.
-          </p>
-          <dl className="pairs">
-            <div>
-              <dt>axio-core</dt>
-              <dd>
-                Conversation state, turn loop, <code>Tool</code> and{" "}
-                <code>Provider</code> traits
-              </dd>
-            </div>
-            <div>
-              <dt>axio-provider</dt>
-              <dd>Provider HTTP client, streaming, request/response types</dd>
-            </div>
-            <div>
-              <dt>axio-tools</dt>
-              <dd>
-                <code>read</code>, <code>write</code>, <code>edit</code>,{" "}
-                <code>bash</code>, <code>glob</code>, <code>grep</code>
-              </dd>
-            </div>
-            <div>
-              <dt>axio</dt>
-              <dd>
-                The binary — one-shot when piped or given <code>-p</code>,
-                interactive on a TTY
-              </dd>
-            </div>
-          </dl>
-        </Row>
-      </section>
 
       <hr />
 
