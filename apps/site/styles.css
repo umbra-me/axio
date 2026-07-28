@@ -1,0 +1,400 @@
+/* axio — site styles.
+ *
+ * The page is light and the terminal block is dark, and in dark mode the page
+ * inverts while the block does not. That is not a styling accident: axio
+ * renders in the terminal's own colours rather than a bundled theme, so the
+ * one element representing it looks the same whatever the page is doing.
+ *
+ * No external fonts, no external anything. The repo is public and the site is
+ * served as static files; a webfont request would be the only network call on
+ * the page and would buy nothing a good monospace stack does not already give.
+ */
+
+:root {
+  --paper: #edefea;
+  --ink: #16181c;
+  --muted: #565b52;
+  --rule: #c8cdc2;
+  --signal: #0b5f4f;
+  --unmet: #6b4e14;
+
+  /* Constant across colour schemes. */
+  --term-bg: #101216;
+  --term-fg: #d7dbd4;
+  --term-dim: #7d857b;
+  --term-accent: #6fc9b0;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
+  --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    serif;
+
+  --measure: 34rem;
+  --gutter: 7.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Deliberately a clear step lighter than --term-bg. The terminal block is
+     * the one element that does not change between schemes, so the page has to
+     * move far enough away from it to keep it legible as a distinct artifact —
+     * at #14161a the two were within four points and the block disappeared. */
+    --paper: #1e2126;
+    --ink: #e6e8e2;
+    --muted: #9aa196;
+    --rule: #343943;
+    --signal: #6fc9b0;
+    --unmet: #d9ae5c;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #14161a;
+  --ink: #e6e8e2;
+  --muted: #9aa196;
+  --rule: #2c3038;
+  --signal: #6fc9b0;
+  --unmet: #d9ae5c;
+}
+
+:root[data-theme="light"] {
+  --paper: #edefea;
+  --ink: #16181c;
+  --muted: #565b52;
+  --rule: #c8cdc2;
+  --signal: #0b5f4f;
+  --unmet: #6b4e14;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: calc(var(--gutter) + var(--measure) + 2rem);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* The left gutter carries utility markers the way a terminal carries a status
+ * column. Below the breakpoint it becomes a normal stacked label. */
+.row {
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, var(--measure));
+  gap: 0 2rem;
+}
+
+.mark {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0.45rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 46rem) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .mark {
+    padding-top: 0;
+    margin-bottom: 0.5rem;
+  }
+  :root {
+    --gutter: 0rem;
+  }
+}
+
+/* ---- masthead ---- */
+
+.masthead {
+  padding: 4.5rem 0 0;
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-size: clamp(3.5rem, 13vw, 6.5rem);
+  font-weight: 600;
+  letter-spacing: -0.055em;
+  line-height: 0.9;
+  margin: 0;
+}
+
+.standfirst {
+  font-size: clamp(1.25rem, 3.2vw, 1.6rem);
+  line-height: 1.35;
+  margin: 1.5rem 0 0;
+  max-width: 26ch;
+  text-wrap: balance;
+}
+
+.status-line {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--muted);
+  margin: 2rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+}
+
+.status-line b {
+  font-weight: 600;
+  color: var(--unmet);
+}
+
+/* ---- sections ---- */
+
+section {
+  padding: 4.5rem 0 0;
+}
+
+h2 {
+  font-family: var(--mono);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 1rem;
+}
+
+h3 {
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 2rem 0 0.5rem;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+p.lead {
+  font-size: 1.1875rem;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-color: var(--signal);
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 4.5rem 0 0;
+}
+
+/* ---- terminal blocks ----
+ * These break out past the text measure: the transcript is the artifact and
+ * the prose is commentary on it, which is the same relationship axio has with
+ * the scrollback it prints into. */
+
+.term {
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  padding: 1.25rem 1.35rem;
+  margin: 1.5rem 0 0;
+  overflow-x: auto;
+  border-radius: 3px;
+  tab-size: 2;
+}
+
+.term pre {
+  margin: 0;
+}
+
+.term .dim {
+  color: var(--term-dim);
+}
+.term .acc {
+  color: var(--term-accent);
+}
+
+@media (min-width: 60rem) {
+  .term--wide {
+    margin-right: -6rem;
+  }
+}
+
+/* The install command is the one string on the page that must be copied
+ * whole. In a scrolling block its tail sits behind the edge, and a reader who
+ * does not notice the scrollbar copies a truncated command — so this one wraps
+ * instead. `anywhere` rather than `break-word` because the long token is a URL
+ * and the flags after it must stay intact. */
+.term--cmd pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the ledger: the one thing this page is for ---- */
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  margin-top: 1.5rem;
+}
+
+.ledger caption {
+  text-align: left;
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
+  max-width: var(--measure);
+}
+
+.ledger th,
+.ledger td {
+  text-align: left;
+  padding: 0.7rem 0.75rem 0.7rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+/* Scoped to the header row only. Unscoped, this also hit the row headers in
+ * tbody and rendered "Chat-completions transport" as three lines of uppercase
+ * micro-type. */
+.ledger thead th {
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ledger tbody th {
+  font-weight: 600;
+  min-width: 11rem;
+  padding-right: 1.5rem;
+}
+
+.state {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.state--met {
+  color: var(--signal);
+}
+.state--unmet {
+  color: var(--unmet);
+}
+
+.ledger td:last-child {
+  font-family: var(--serif);
+  font-size: 0.9375rem;
+  color: var(--muted);
+  padding-right: 0;
+}
+
+@media (min-width: 60rem) {
+  .ledger {
+    margin-right: -6rem;
+  }
+}
+
+/* ---- key/value lists ---- */
+
+.pairs {
+  margin: 1.5rem 0 0;
+  font-size: 0.9375rem;
+}
+
+.pairs div {
+  display: grid;
+  grid-template-columns: 10.5rem minmax(0, 1fr);
+  gap: 0 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.pairs dt {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  padding-top: 0.1rem;
+}
+
+.pairs dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 34rem) {
+  .pairs div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- footer ---- */
+
+footer {
+  padding: 4.5rem 0 5rem;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+footer a {
+  margin-right: 1.5rem;
+  display: inline-block;
+  padding: 0.2rem 0;
+}
+
+.theme-toggle {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  background: none;
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  padding: 0.3rem 0.7rem;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  border-color: var(--signal);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a,
+  .theme-toggle {
+    transition: color 120ms ease, border-color 120ms ease,
+      text-decoration-color 120ms ease;
+  }
+}
