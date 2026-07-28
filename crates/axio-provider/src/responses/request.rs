@@ -34,7 +34,11 @@ pub fn build_body(req: &ModelRequest) -> Value {
     // asking again; several calls in one turn would arrive with nowhere to put
     // the ones it did not run yet.
     body.insert("parallel_tool_calls".into(), json!(false));
-    body.insert("max_output_tokens".into(), json!(req.max_tokens));
+    // No output cap is sent. `max_output_tokens` is part of the Responses API
+    // and this endpoint answers `400 Unsupported parameter` for it — a
+    // subscription is metered by the subscription, not per request. It was
+    // sent here for one commit because the field exists in the dialect, which
+    // is not the same as the endpoint accepting it.
 
     if !req.tools.is_empty() {
         let tools: Vec<Value> = req
@@ -167,6 +171,16 @@ mod tests {
     #[test]
     fn store_is_always_false() {
         assert_eq!(build_body(&request())["store"], false);
+    }
+
+    /// The regression: `max_output_tokens` is a real field of this dialect and
+    /// this endpoint rejects it outright, which took a live 400 to learn. A
+    /// field existing in the API is not the same as the endpoint taking it.
+    #[test]
+    fn no_output_cap_is_sent() {
+        let body = build_body(&request());
+        assert!(body.get("max_output_tokens").is_none(), "{body}");
+        assert!(body.get("max_tokens").is_none(), "{body}");
     }
 
     /// A tool nested under `function`, as the other dialect wants, is accepted

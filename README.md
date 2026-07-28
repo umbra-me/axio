@@ -19,6 +19,12 @@ out of both the answer and the transcript, sessions on disk, and resume carrying
 its history. It can read, search, edit and run commands in a workspace, and pick
 up where it left off.
 
+The Responses transport has met its endpoint too: signed in through the
+browser flow, a turn answered, and `--probe` reporting a tool called. Its
+request body took two live 400s to settle — a field that exists in the dialect
+and is refused by the endpoint, and a model catalogue that had to be asked for
+rather than assumed.
+
 The Anthropic transport has not had that run against it: there has been no
 credential to run it with. It is built from the documented wire format and
 snapshot-tested against it, which is not the same as having met the endpoint.
