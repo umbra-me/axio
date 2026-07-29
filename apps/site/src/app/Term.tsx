@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import CopyButton from "./CopyButton";
 
 // Artifacts are written as plain strings so they stay legible in source and can
 // be diffed against the README they came from. Two inline marks:
@@ -40,13 +41,21 @@ export default function Term({
   children,
   label,
   wrap = false,
+  copy,
 }: {
   children: string;
   label?: string;
   /** For the install commands, whose tail must never hide behind a scrollbar. */
   wrap?: boolean;
+  /**
+   * Offer a copy button, named for what it copies so the accessible name tells
+   * the three install commands apart. Omitted for the played transcript, which
+   * is an artifact to read rather than a command to run.
+   */
+  copy?: string;
 }) {
-  const lines = children.replace(/^\n/, "").replace(/\n$/, "").split("\n");
+  const body = children.replace(/^\n/, "").replace(/\n$/, "");
+  const lines = body.split("\n");
   return (
     <figure className={`terminal${wrap ? " terminal--wrap" : ""}`}>
       <figcaption className="terminal__bar">
@@ -56,6 +65,9 @@ export default function Term({
           <i />
         </span>
         {label}
+        {/* Copies what is displayed, not what is written here: the marks are
+            presentation and would otherwise be pasted into a shell. */}
+        {copy ? <CopyButton text={body.replace(/[«»‹›]/g, "")} what={copy} /> : null}
       </figcaption>
       <pre>{lines.map(render)}</pre>
     </figure>

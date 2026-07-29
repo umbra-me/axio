@@ -6,6 +6,12 @@ const REPO = "https://github.com/umbra-me/axio";
 export default function Page() {
   return (
     <>
+      {/* Four header links and a nav stand between a keyboard or screen-reader
+          visitor and the page. Hidden until focused, first in the tab order. */}
+      <a className="skip-link" href="#content">
+        Skip to content
+      </a>
+
       <header className="header">
         <div className="container header__row">
           <a className="wordmark" href="/">
@@ -34,7 +40,10 @@ export default function Page() {
         </div>
       </header>
 
-      <main>
+      {/* tabIndex -1 so the skip link actually moves focus here rather than
+          only scrolling, which is the difference between the link working for a
+          screen reader and appearing to. */}
+      <main id="content" tabIndex={-1}>
         <section className="hero">
           <div className="hero__glow" aria-hidden="true">
             <span />
@@ -260,13 +269,13 @@ export default function Page() {
               </p>
             </div>
             <div className="install">
-              <Term label="macOS · Linux · WSL" wrap>{`
+              <Term label="macOS · Linux · WSL" wrap copy="macOS, Linux and WSL install">{`
 curl -fsSL https://axio.sh/install | sh
 `}</Term>
-              <Term label="Windows · PowerShell" wrap>{`
+              <Term label="Windows · PowerShell" wrap copy="Windows PowerShell install">{`
 irm https://axio.sh/install.ps1 | iex
 `}</Term>
-              <Term label="or drive cargo yourself" wrap>{`
+              <Term label="or drive cargo yourself" wrap copy="cargo install">{`
 cargo install --git ${REPO} --locked axio
 `}</Term>
             </div>

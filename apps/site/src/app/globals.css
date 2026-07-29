@@ -180,6 +180,46 @@ button:focus-visible {
   border-radius: 3px;
 }
 
+/* Off-screen rather than display:none — a hidden element is not focusable, and
+ * the whole point is that it can be reached by Tab. */
+.skip-link {
+  position: absolute;
+  left: 50%;
+  top: 0.75rem;
+  transform: translate(-50%, -200%);
+  z-index: 10;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  transform: translate(-50%, 0);
+}
+
+/* The skip link's target is focused programmatically; the ring belongs to the
+ * control that was tabbed to, not to the region that received focus. */
+main:focus {
+  outline: none;
+}
+
+/* Announced, never shown. Not `display: none`, which is not announced either. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- hero ---- */
 
 .hero {
@@ -481,6 +521,32 @@ button:focus-visible {
   height: 0.55rem;
   border-radius: 50%;
   background: #2e2e33;
+}
+
+/* Sits in the bar rather than floating over the command, so it never covers the
+ * thing it copies and needs no hover to be discoverable. */
+.terminal__copy {
+  margin-left: auto;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.terminal__copy:hover {
+  color: var(--fg);
+  border-color: #3f3f46;
+}
+
+.terminal__copy[data-copied] {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .terminal pre {
