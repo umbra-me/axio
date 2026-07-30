@@ -38,6 +38,22 @@ a minor bump may break things.
   resolves to, because an older copy earlier on `PATH` would otherwise let the
   script confirm a build that never took effect.
 
+- **The site generates its own icons and social card.** It had neither: the tab
+  showed the browser's generic globe, `/favicon.ico` was a 404, and a pasted link
+  unfurled as a bare title with no image — which for a pre-release whose only
+  distribution is someone posting the URL was the whole first impression. A
+  32×32 icon, a 180×180 home-screen icon and a 1200×630 card are now rendered at
+  build time from the header wordmark and the hero headline, in real Geist, with
+  no binary asset committed and no dependency added. `robots.txt` disallows the
+  two install routes, which stay reachable for a shell but should not become a
+  search result whose entire content is a script, and `sitemap.xml` exists so
+  `robots.txt` points at something real. See `apps/site/README.md` for the three
+  things in `brand.ts` that are easy to get wrong.
+- **A copy button on each install command, and a skip link.** The page's primary
+  call to action had been three commands you selected by hand. The button lives
+  in the terminal bar rather than over the command, and renders only where the
+  Clipboard API exists, so it is never a control that silently does nothing.
+
 ### Fixed
 
 - **The README said three providers over two implementations.** There are four

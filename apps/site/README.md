@@ -53,6 +53,70 @@ material and never as content.
 
 Geist is self-hosted through `next/font`. The page makes no external request.
 
+Two affordances rather than decoration. Each install block carries a copy button
+in its terminal bar — in the bar so it never covers the command it copies and
+needs no hover to be found. It renders only after mount and only where the
+Clipboard API exists, because that API is absent on plain http and in older
+browsers and a button that silently does nothing is worse than none; the command
+is still there to select. A skip link precedes the header, and its target takes
+`tabindex="-1"` so focus actually moves rather than the page merely scrolling.
+
+Motion is opt-out throughout: the drifting scrollback sits behind a
+`prefers-reduced-motion: no-preference` query, the caret hides under `reduce`,
+and `HeroTranscript` checks the same query in JS and jumps straight to its
+settled state.
+
+## Metadata and generated images
+
+`layout.tsx` sets `metadataBase`, a canonical URL, Open Graph and card metadata.
+`metadataBase` is the load-bearing one: without it Next emits `og:image` as a
+relative path, every scraper resolves that against its own host, and the unfurl
+arrives with no image and nothing anywhere to say why.
+
+Four images are generated at build time rather than committed. No binary asset
+lives in this repository and no dependency was added for them.
+
+| File | Emits | Is |
+| --- | --- | --- |
+| `icon.tsx` | `/icon` | 32×32 tab icon |
+| `apple-icon.tsx` | `/apple-icon` | 180×180 home-screen icon, on the ground rather than bleeding to the edge |
+| `opengraph-image.tsx` | `/opengraph-image` | the 1200×630 card, reused for `twitter:image` |
+| `robots.ts`, `sitemap.ts` | `/robots.txt`, `/sitemap.xml` | — |
+
+The mark is Geist Mono's `a` on the product gradient, which is what the header
+wordmark is. It is drawn rather than hand-authored as an SVG path because an SVG
+favicon would have to name a font the browser has no reason to have, and would
+fall back to whatever the platform calls monospace.
+
+`brand.ts` holds the tokens and loads the fonts. Three things there are easy to
+get wrong:
+
+- **The renderer never sees the stylesheet.** The tokens are restated in
+  `brand.ts`, and nothing checks that they still match `globals.css`. This is the
+  same trade the site already makes against web-stack's Tailwind config, and it
+  drifts the same way.
+- **woff2 is unreadable to the image renderer**, and geist ships both formats.
+  `brand.ts` loads the `.ttf` twins of the faces `next/font` serves the browser,
+  so the images render in the same typeface the page does rather than a fallback.
+- **The fonts are found by walking up for `node_modules/geist/dist/fonts`, not
+  by resolving the package.** geist's `exports` map publishes only `./font/*`, so
+  neither the `.ttf` files nor its own `package.json` can be resolved by
+  specifier — and a `require.resolve` here is rewritten by webpack into one of
+  its own numeric module ids, which fails the build with a type error rather than
+  a missing file. Walking up also survives a hoisted install.
+
+`robots.ts` disallows `/install` and `/install.ps1`. They stay reachable — a
+shell still fetches them — but a crawler that indexes them turns a search result
+into a page whose entire content is a script.
+
+The card repeats the mark, the headline and the install command, so someone who
+sees it and never clicks still knows what axio is and how to install it. Its
+headline is set the way `.hero h1` sets it, 700 at -0.045em over 1.03, rather
+than approximately. The gradient word fades toward pale violet at its tail; the
+page does that too, because `.gradient-text` puts the gradient box around the
+word itself. If that is ever changed, change it in both places — the card is
+meant to match the page, not improve on it.
+
 ## Install scripts
 
 `scripts/install.sh` and `scripts/install.ps1` are served at `/install` and
