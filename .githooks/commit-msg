@@ -1,0 +1,89 @@
+#!/usr/bin/env sh
+# Reject AI attribution in commit messages and in branch names.
+#
+# The patterns are attribution-SHAPED rather than a list of tool names, and that
+# is deliberate. These repositories legitimately contain `cursor` (a terminal
+# redraws one), `openai-codex` (a provider axio speaks), `agent` (the product
+# itself), and CLAUDE.md / AGENTS.md as tracked files named in commit subjects.
+# A bare name list would reject real work, so a tool name only trips this hook
+# when it sits inside an attribution construct.
+#
+# Branch names are matched on their FIRST path segment, because that is how
+# these tools name branches — `claude/issue-12`, `cursor/fix-foo`,
+# `copilot/fix-1`. It means `feat/openai-codex-provider` is untouched.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypassing this with --no-verify defeats the point; fix the message instead.
+
+set -eu
+
+msg_file="${1:?no commit message file given}"
+status=0
+
+reject() {
+  printf '\ncommit rejected: %s\n' "$1" >&2
+  shift
+  for line in "$@"; do printf '  %s\n' "$line" >&2; done
+  status=1
+}
+
+# Ignore comment lines git will strip anyway, so a commented-out example in the
+# template never trips the hook.
+body=$(grep -v '^#' "$msg_file" || true)
+
+# --- attribution trailers ----------------------------------------------------
+
+hit=$(printf '%s\n' "$body" | grep -inE '^[[:space:]]*(co-authored-by|assisted-by|generated-by|coauthored-by)[[:space:]]*:' || true)
+if [ -n "$hit" ]; then
+  reject "attribution trailer" "$hit" \
+    "This estate credits no tool as an author. Delete the trailer."
+fi
+
+# Anchored at line start AND required to name a tool or carry a link. An
+# earlier version matched `(generated|created) (with|by)` anywhere, which
+# rejected two real commits in services/platform — "An account created by
+# invite exists..." and "created with a password hash nobody holds". Ordinary
+# English uses those words constantly; a trailer is its own line and always
+# names what produced it.
+TOOLS='claude|anthropic|cursor|copilot|codex|chatgpt|openai|gemini|bard|devin|aider|windsurf|cline|roo|cody|tabnine|codewhisperer|amazon q|replit|bolt|lovable|jules|junie|supermaven|augment|sweep|mentat|openhands|swe-agent|goose|llm|gpt|\bai\b'
+hit=$(printf '%s\n' "$body" \
+  | grep -inE '^[[:space:]]*(.{0,4})?generated (with|by) ' \
+  | grep -iE "http|\[|$TOOLS" || true)
+if [ -n "$hit" ]; then
+  reject "generated-with line" "$hit" \
+    "If a human decided it, a human wrote it. Say what changed instead."
+fi
+
+hit=$(printf '%s\n' "$body" | grep -n '🤖' || true)
+if [ -n "$hit" ]; then
+  reject "bot marker" "$hit"
+fi
+
+hit=$(printf '%s\n' "$body" | grep -inE 'noreply@(anthropic|openai|google|githubcopilot)\.com|@users\.noreply\.github\.com>.*\b(bot|\[bot\])' || true)
+if [ -n "$hit" ]; then
+  reject "AI vendor address" "$hit"
+fi
+
+hit=$(printf '%s\n' "$body" | grep -inE '\bai[- ](generated|assisted|authored|written)\b|\b(generated|written|authored) by an? (ai|llm|model|assistant)\b|\bwith (the )?(help|assistance) of (an? )?(ai|llm)\b' || true)
+if [ -n "$hit" ]; then
+  reject "AI authorship claim" "$hit"
+fi
+
+# --- branch name -------------------------------------------------------------
+
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+if [ -n "$branch" ]; then
+  first=$(printf '%s\n' "$branch" | cut -d/ -f1 | tr '[:upper:]' '[:lower:]')
+  case "$first" in
+    claude|claude-code|anthropic|cursor|copilot|githubcopilot|codex|chatgpt|openai\
+    |gemini|bard|devin|aider|windsurf|cline|roo|cody|tabnine|codewhisperer\
+    |amazonq|replit|bolt|lovable|jules|junie|supermaven|augment|sweep|mentat\
+    |openhands|swe-agent|goose|continue|llm|gpt|gpt4|gpt5|bot|ai)
+      reject "AI-named branch: $branch" \
+        "The first segment names a tool. Rename the branch after the change." \
+        "  git branch -m <type>/<what-it-does>"
+      ;;
+  esac
+fi
+
+exit "$status"
