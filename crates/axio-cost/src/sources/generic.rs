@@ -49,7 +49,7 @@ pub struct GenericAgent {
 }
 
 /// Keys whose value is a usage object.
-const USAGE_KEYS: &[&str] = &[
+pub(super) const USAGE_KEYS: &[&str] = &[
     "usage",
     "tokens",
     "tokenUsage",
@@ -60,7 +60,7 @@ const USAGE_KEYS: &[&str] = &[
 ];
 
 /// Keys whose value names the model.
-const MODEL_KEYS: &[&str] = &["model", "modelId", "model_id", "modelName", "model_slug"];
+pub(super) const MODEL_KEYS: &[&str] = &["model", "modelId", "model_id", "modelName", "model_slug"];
 
 /// Keys whose value is when the turn happened.
 const TIME_KEYS: &[&str] = &[
@@ -74,7 +74,7 @@ const TIME_KEYS: &[&str] = &[
 ];
 
 /// Keys that identify the underlying API call.
-const ID_KEYS: &[&str] = &["requestId", "request_id", "messageId", "message_id", "id", "uuid"];
+pub(super) const ID_KEYS: &[&str] = &["requestId", "request_id", "messageId", "message_id", "id", "uuid"];
 
 impl Source for GenericAgent {
     fn client(&self) -> &'static str {
@@ -153,7 +153,7 @@ impl Source for GenericAgent {
 }
 
 impl GenericAgent {
-    fn message(
+    pub(super) fn message(
         &self,
         document: &Value,
         session_id: &str,
@@ -188,7 +188,7 @@ impl GenericAgent {
 /// Breadth-first, so a usage object at the top of a turn is preferred to one buried in a
 /// nested sub-agent record. Depth-first would find whichever branch happened to sort
 /// first, which is not a property any of these formats guarantee.
-fn find_usage(document: &Value) -> Option<&Value> {
+pub(super) fn find_usage(document: &Value) -> Option<&Value> {
     let mut queue = std::collections::VecDeque::from([document]);
     while let Some(value) = queue.pop_front() {
         match value {
@@ -212,7 +212,7 @@ fn find_usage(document: &Value) -> Option<&Value> {
 /// Objects are also accepted: several agents write `model: {"id": "..."}` rather than a
 /// bare string, and taking the `id` out of one is the difference between attributing the
 /// turn and dropping it.
-fn find_string(document: &Value, keys: &[&str]) -> Option<String> {
+pub(super) fn find_string(document: &Value, keys: &[&str]) -> Option<String> {
     let mut queue = std::collections::VecDeque::from([document]);
     while let Some(value) = queue.pop_front() {
         match value {
@@ -244,7 +244,7 @@ fn find_string(document: &Value, keys: &[&str]) -> Option<String> {
 }
 
 /// A timestamp in any of the three shapes these logs use.
-fn find_time(document: &Value) -> Option<time::OffsetDateTime> {
+pub(super) fn find_time(document: &Value) -> Option<time::OffsetDateTime> {
     let mut queue = std::collections::VecDeque::from([document]);
     while let Some(value) = queue.pop_front() {
         match value {

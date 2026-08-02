@@ -16,6 +16,9 @@ name = "axio"
 path = "src/main.rs"
 
 [features]
+# Read the agents whose session store is a database. Off by default: it compiles
+# SQLite's C source, and `cargo install axio` must not need a C toolchain.
+sqlite = ["axio-cost/sqlite"]
 default = ["tui"]
 # ratatui and crossterm link into every install unless this is turned off. CI
 # builds --no-default-features so the headless path cannot rot.

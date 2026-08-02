@@ -11,6 +11,13 @@ keywords.workspace = true
 categories.workspace = true
 description = "What each AI coding agent's sessions cost, read from the logs they already write."
 
+[features]
+default = []
+# The agents whose session store is a database rather than a file. Off by default because
+# rusqlite compiles SQLite's own C source, and a default `cargo install axio` must not
+# need a C toolchain — the same hazard the workspace already refuses aws-lc-rs over.
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -27,6 +34,9 @@ thiserror.workspace = true
 # Directory walking. Chosen over walkdir because it is already resolved in the lockfile
 # for the tools crate, so it costs no new package.
 ignore.workspace = true
+# `bundled` compiles SQLite's own C source rather than linking a system copy, so the
+# feature behaves the same on a machine that has never heard of libsqlite3.
+rusqlite = { version = "0.40.1", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

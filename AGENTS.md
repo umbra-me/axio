@@ -34,7 +34,7 @@ Six crates and two binaries. The dependency graph is a tree rooted at
 | `axio-core` | `protocol`, the `Provider` / `Tool` / `Approver` traits, the turn loop, `Session` and its JSONL records, layered `config`, `compact`, `policy`, output `truncate`, credential storage, `Workspace`, `Redacted` |
 | `axio-provider` | All three transports — the Messages dialect, chat-completions, and Responses — plus the OAuth flows: SSE decoder, request builders, block state machines, error classification. The only crate linking HTTP or TLS |
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
-| `axio-cost` | What the coding agents on this machine have spent, read from the session transcripts they already write. Token normalization, deduplication, a bundled price table, and one parser per agent. Depends on nothing else in the workspace |
+| `axio-cost` | What the coding agents on this machine have spent, read from the session transcripts they already write. Token normalization, deduplication, a bundled price table, and one parser per agent — three hand-written, the rest table-driven. Behind the `sqlite` feature it also reads the agents whose store is a database. Depends on nothing else in the workspace |
 | `axio-quota` | Provider quota probes — the credential files `codex` and `claude` wrote, and the usage endpoints behind them — plus local history, and behind the `app` feature the Tauri desktop surface: tray icon, HTML flyout, window. Depends on nothing else in the workspace |
 | `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations, `axio quota`, `axio cost` |
 

@@ -19,6 +19,8 @@ use crate::message::{CostMessage, DedupLedger};
 
 pub mod catalog;
 pub mod claude_code;
+#[cfg(feature = "sqlite")]
+pub mod database;
 pub mod codex;
 pub mod generic;
 pub mod grok;
@@ -128,6 +130,12 @@ pub fn registry() -> Vec<Box<dyn Source>> {
     // must be suppressed, which vendor reports its own cost. The catalog covers the rest.
     sources.extend(
         catalog::CATALOG
+            .iter()
+            .map(|agent| Box::new(*agent) as Box<dyn Source>),
+    );
+    #[cfg(feature = "sqlite")]
+    sources.extend(
+        database::CATALOG
             .iter()
             .map(|agent| Box::new(*agent) as Box<dyn Source>),
     );

@@ -14,12 +14,18 @@ a minor bump may break things.
   No network, no credentials. Group with `--by model|client|session|day|workspace`,
   `--json` for scripting, `--diagnose` for what each parser found and skipped.
 
-  Fifteen agents are covered. Three have hand-written parsers — Claude Code,
+  Twenty-two agents are covered. Three have hand-written parsers — Claude Code,
   Codex and Grok — because each carries knowledge a generic walk cannot infer:
   which of two token figures is cumulative, which repeated events must be
   suppressed, which vendor reports its own cost. The other twelve are rows in
   `sources::catalog`, driven by one table-driven parser, because these formats
   log the same event and differ only in where they put it.
+
+  Seven of them keep sessions in SQLite rather than files and sit behind the
+  non-default `sqlite` feature, because reaching them means compiling SQLite's C
+  source and `cargo install axio` must not need a C toolchain. They reuse the
+  same walker: nearly every one keeps a JSON blob in a column, so the database
+  part is only getting to the JSON.
 
   An agent whose directory is absent reports *not installed*, which is a
   different answer from *recorded nothing* and is what `--diagnose` prints.
