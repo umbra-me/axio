@@ -56,6 +56,9 @@ a minor bump may break things.
 
 ### Fixed
 
+- **Relocating `AXIO_HOME` no longer reclassifies `~/.axio/config.toml`.** Both
+  the active user configuration and the canonical default location are
+  excluded from the project-config walk.
 - **The site dependency graph is clear of the reported PostCSS and Sharp
   advisories.** Overrides keep Next.js 16.2.12 on patched transitive releases
   until its own dependency ranges catch up.

@@ -8,9 +8,15 @@ use super::*;
 pub(crate) fn resolve_config(cli: &Cli) -> Resolved {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let user = Some(config_file_path());
+    let mut excluded = user.iter().cloned().collect::<Vec<_>>();
+    if let Some(default) = default_config_dir().map(|dir| dir.join("config.toml"))
+        && !excluded.contains(&default)
+    {
+        excluded.push(default);
+    }
     // Bounded at the home directory so the walk cannot reach into an unrelated
     // parent and apply someone else's project settings.
-    let project = config::find_project_config(&cwd, home_dir().as_deref(), user.as_deref());
+    let project = config::find_project_config(&cwd, home_dir().as_deref(), &excluded);
     let env: Vec<(String, String)> = std::env::vars().collect();
     config::resolve(
         &Paths { user, project },

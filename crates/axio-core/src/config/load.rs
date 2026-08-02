@@ -199,22 +199,24 @@ pub(super) fn backup(path: &Path, notices: &mut Vec<Notice>) {
 /// `.axio/config.toml` in a home directory or in `/tmp` and apply it to an
 /// unrelated project.
 ///
-/// `user` matters for a sharper reason. The user's configuration lives in a
+/// `excluded` matters for a sharper reason. The user's configuration lives in a
 /// directory of the same name — `~/.axio/config.toml` — so a session running
 /// anywhere beneath the home directory would find it on the way up and load it
 /// a second time, as a *project*. That layer may only add restrictions, so a
 /// person's own settings would come back as a restriction-only copy of
 /// themselves. One file cannot be two layers, and the check is against the
-/// path rather than the boundary because `AXIO_HOME` can put it anywhere.
+/// paths rather than the boundary because `AXIO_HOME` can put it anywhere. The
+/// list includes both the active home and the canonical `~/.axio`: relocating
+/// Axio must not turn a previous user config into a project config.
 pub fn find_project_config(
     start: &Path,
     boundary: Option<&Path>,
-    user: Option<&Path>,
+    excluded: &[PathBuf],
 ) -> Option<PathBuf> {
     let mut dir = Some(start);
     while let Some(current) = dir {
         let candidate = current.join(".axio").join("config.toml");
-        if candidate.is_file() && Some(candidate.as_path()) != user {
+        if candidate.is_file() && !excluded.iter().any(|path| path == &candidate) {
             return Some(candidate);
         }
         if boundary == Some(current) {

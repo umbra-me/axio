@@ -577,10 +577,10 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
         write(&root, ".axio/config.toml", "[model]\nname = \"found\"\n");
 
-        assert!(find_project_config(&nested, Some(&root), None).is_some());
+        assert!(find_project_config(&nested, Some(&root), &[]).is_some());
         // Boundary respected: starting below it but bounded at `a` finds
         // nothing, rather than reaching into an unrelated parent.
-        assert!(find_project_config(&nested, Some(&root.join("a")), None).is_none());
+        assert!(find_project_config(&nested, Some(&root.join("a")), &[]).is_none());
     }
 
     /// The user's own configuration lives in a directory of the same name, so
@@ -598,15 +598,31 @@ mod tests {
         let user = write(&home, ".axio/config.toml", "[model]\nname = \"mine\"\n");
 
         assert_eq!(
-            find_project_config(&nested, Some(&home), Some(&user)),
+            find_project_config(&nested, Some(&home), std::slice::from_ref(&user)),
             None,
             "the user config must not be found as a project config"
         );
         // Still found when it is genuinely a different file.
         let project = write(&nested, ".axio/config.toml", "[model]\nname = \"theirs\"\n");
         assert_eq!(
-            find_project_config(&nested, Some(&home), Some(&user)),
+            find_project_config(&nested, Some(&home), std::slice::from_ref(&user)),
             Some(project)
+        );
+    }
+
+    #[test]
+    fn relocating_axio_home_does_not_turn_the_default_home_into_a_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let nested = home.join("work/thing");
+        std::fs::create_dir_all(&nested).unwrap();
+        let default = write(&home, ".axio/config.toml", "[model]\nname = \"old\"\n");
+        let relocated = home.join("elsewhere/config.toml");
+
+        assert_eq!(
+            find_project_config(&nested, Some(&home), &[relocated, default]),
+            None,
+            "neither user-config location is a project layer"
         );
     }
 
