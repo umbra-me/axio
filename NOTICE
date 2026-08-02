@@ -1,0 +1,18 @@
+axio
+Copyright 2026 Umbra
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+
+crates/axio-quota
+
+The provider protocol knowledge in this crate — which file each vendor's CLI
+writes its credentials to, which endpoint reports usage, what those responses
+contain, and the defensive parsing they require — was derived by reading
+CodexBar by Peter Steinberger (https://github.com/steipete/codexbar), MIT
+licensed.
+
+No CodexBar source is included. The crate is an independent Rust implementation
+and shares no lines with it. The attribution is recorded because the knowledge,
+not the code, was the expensive part.

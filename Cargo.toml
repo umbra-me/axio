@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/axio-core",
     "crates/axio-provider",
+    "crates/axio-quota",
     "crates/axio-tools",
     "crates/axio",
 ]
@@ -24,6 +25,7 @@ categories = ["command-line-utilities", "development-tools"]
 # it is for a registry dependency, just harder to see.
 axio-core = { path = "crates/axio-core", version = "0.1.0" }
 axio-provider = { path = "crates/axio-provider", version = "0.1.0" }
+axio-quota = { path = "crates/axio-quota", version = "0.1.0" }
 axio-tools = { path = "crates/axio-tools", version = "0.1.0" }
 
 anyhow = "1.0.104"
@@ -33,10 +35,30 @@ futures-core = "0.3.33"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 thiserror = "2.0.19"
+# Already resolved in the lockfile behind the `tui` feature (ratatui-widgets pulls it), so
+# `axio-quota` naming it adds no lockfile entry — only the parsing and formatting features.
+# Preferred over chrono for exactly that reason.
+time = { version = "0.3.54", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", default-features = false }
 tokio-util = { version = "0.7.19", default-features = false }
 toml = "1.1.3"
 tracing = "0.1.44"
+# Already resolved in the lockfile, so the tray costs no new package. Only the modules
+# the notification-area surface actually calls are enabled.
+# The desktop app: tray, HTML flyout and window, all one Tauri process. Behind the `app`
+# feature so a default `cargo install axio` links none of it. The frontend is React and
+# TypeScript, matching apps/site, built by Vite rather than Next — a desktop app has no
+# server to render on.
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri-build = { version = "2.6.3" }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 ulid = { version = "3.0.0", features = ["serde"] }
 
 # rustls WITHOUT a crypto provider, so we install `ring` ourselves. The default

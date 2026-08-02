@@ -24,11 +24,13 @@ tui = ["dep:ratatui", "dep:crossterm", "dep:syntect", "dep:two-face"]
 [dependencies]
 axio-core.workspace = true
 axio-provider.workspace = true
+axio-quota.workspace = true
 axio-tools.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 etcetera.workspace = true
 serde_json.workspace = true
+time = { workspace = true, features = ["formatting"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 ratatui = { workspace = true, optional = true }
 crossterm = { workspace = true, optional = true }

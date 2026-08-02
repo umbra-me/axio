@@ -9,6 +9,26 @@ a minor bump may break things.
 
 ### Added
 
+- **`axio quota`, and a desktop app behind it.** How much of each provider's
+  limit is left and when it resets, for Codex, Claude and OpenRouter. It reads
+  the credential files those vendors' own CLIs already wrote — never axio's own
+  stored credentials — so it cannot sign you in to anything and needs no
+  configuration before it works. `--json` emits one object per provider,
+  `--diagnose` prints where each probe looks and whether the credential is
+  there.
+
+  `crates/axio-quota` is the fifth workspace member, and the reason is
+  dependency isolation rather than size. Behind its `app` feature it also
+  carries a Tauri desktop surface — tray icon, HTML flyout and window in one
+  process, with a React and TypeScript frontend built by Vite — which pulls 189
+  packages and a webview runtime. None of that may reach a default `cargo
+  install axio`: the feature is off, and `cargo tree -p axio -e normal` names
+  no tauri, wry or webview2. The crate is a leaf, depending on no other crate
+  in the workspace, and it reads *other tools'* credentials rather than axio's,
+  which is a different trust boundary and belongs behind a different name.
+
+  Provider protocol knowledge was derived by reading CodexBar (MIT). No CodexBar
+  source is included; see `NOTICE`.
 - **A website, at `apps/site`.** Next.js 16, deployed to axio.sh by the Umbra
   control plane as the `axio-site` stack. Built in the Umbra design language
   with amber as axio's product accent — that system already gives each product

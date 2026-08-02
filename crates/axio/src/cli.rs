@@ -16,6 +16,23 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: AuthAction,
     },
+    /// Show how much of each provider's limit is left, and when it resets.
+    ///
+    /// Reads the credentials the providers' own CLIs already wrote; it does not use
+    /// axio's stored credentials and cannot sign you in to anything.
+    Quota {
+        /// Only this provider. Defaults to every provider enabled in the quota config.
+        #[arg(long, short)]
+        provider: Option<String>,
+
+        /// Emit one JSON object per provider instead of a table.
+        #[arg(long)]
+        json: bool,
+
+        /// Print where each probe looks for credentials, and whether it is there.
+        #[arg(long, conflicts_with_all = ["provider", "json"])]
+        diagnose: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

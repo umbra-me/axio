@@ -254,7 +254,14 @@ the shell. What is typed is never
 drawn — only how many characters there are — and never reaches scrollback,
 which outlives the process. A pasted key loses its trailing newline, because a
 credential with one in it is rejected as simply wrong. The session keeps the
-credential it started with; the stored one is for the next.
+credential it started with until bare `/model` replaces the provider. The newly
+stored credential appears in that picker immediately.
+
+A fresh install can open the interface without a credential. `/login` remains
+available there; after it stores or obtains one, bare `/model` refreshes the
+provider list and moves the same session onto a provider and model it can use.
+No restart is required. `/model NAME` still changes only the model on the
+provider already in use.
 
 When an action needs approval the diff or the command lands in scrollback and
 the viewport asks:
@@ -309,15 +316,48 @@ reaching for it.
 carries a `protocol` version so a consumer can refuse a stream it does not
 understand.
 
+## Quota
+
+`axio quota` reports how much of each provider's limit is left and when it
+resets. It reads the credentials the providers' own CLIs already wrote — it does
+not use axio's stored credentials and cannot sign you in to anything.
+
+```
+> axio quota
+Codex (pro)
+  Weekly                        22% used  resets in 5d
+Claude (max)
+  5h                             8% used  resets in 2h
+  Weekly                         2% used  resets in 6d
+  Weekly (Fable)                 0% used
+```
+
+`--json` for one object per provider, `--diagnose` to see where each probe looks
+and whether the credential is there.
+
+There is also a desktop app — tray icon, a flyout panel against it, and a window
+with detail, history, cost and settings. It is behind a feature so a default
+install compiles none of it:
+
+```sh
+npm --prefix crates/axio-quota/ui run build
+cargo build --release -p axio-quota --features app
+```
+
+Provider knowledge was derived by reading
+[CodexBar](https://github.com/steipete/codexbar) (MIT); no source is included.
+See [`crates/axio-quota/README.md`](crates/axio-quota/README.md) and `NOTICE`.
+
 ## Shape
 
-Four crates, and one binary serving both surfaces:
+Five crates, and one binary serving both surfaces:
 
 | Crate           | Contains                                                        |
 | --------------- | --------------------------------------------------------------- |
 | `axio-core`     | Conversation state, turn loop, `Tool` and `Provider` traits      |
 | `axio-provider` | Provider HTTP client, streaming, request/response types          |
 | `axio-tools`    | `read`, `write`, `edit`, `bash`, `glob`, `grep`                  |
+| `axio-quota`    | Provider limit probes, local history, and the desktop app behind `app` |
 | `axio`          | The binary — one-shot CLI when piped or given `-p`, interactive on a TTY |
 
 The core emits a stream of events and knows nothing about rendering, so each

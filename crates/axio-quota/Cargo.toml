@@ -1,0 +1,65 @@
+[package]
+name = "axio-quota"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Provider quota probes, and the desktop app over them."
+# Only ever runs Tauri's build step, and only when the `app` feature is on — see build.rs.
+build = "build.rs"
+
+# The desktop app — tray icon, HTML flyout and window in one process. Off by default so a
+# headless `cargo install axio` compiles none of it, the same way `axio`'s `tui` feature
+# keeps ratatui out of a headless build.
+[features]
+default = []
+# `tauri/custom-protocol` is what makes the app serve the frontend it was built with.
+# Tauri decides dev-versus-production from that feature, NOT from the cargo profile: its
+# build script emits `cfg(dev)` whenever the feature is absent, so a `--release` build
+# without it still points the webview at `devUrl` and shows ERR_CONNECTION_REFUSED. The
+# Tauri CLI adds the feature during `tauri build`; we build with plain cargo, so it has to
+# be named here.
+app = [
+    "dep:tauri",
+    "dep:tauri-build",
+    "dep:windows-sys",
+    "tauri/custom-protocol",
+]
+
+[[bin]]
+name = "axio-quota"
+path = "src/bin/axio-quota.rs"
+required-features = ["app"]
+
+[dependencies]
+async-trait.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { workspace = true, optional = true }
+thiserror.workspace = true
+# `time` rather than `chrono`: it is already in `Cargo.lock` behind the `tui` feature, so
+# naming it adds no lockfile entry, only the parsing and formatting features. Reset
+# timestamps arrive as RFC 3339 strings from one provider and epoch seconds from another,
+# and both have to be compared to now.
+time = { workspace = true, features = ["parsing", "formatting", "serde-well-known"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing.workspace = true
+
+# Target-gated as well as feature-gated: a Linux build of the workspace must not so much
+# as resolve a Windows dependency. Used only to rasterise the number into the tray icon —
+# Tauri takes an RGBA buffer and has no opinion about how it was drawn.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, optional = true }
+
+[build-dependencies]
+tauri-build = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

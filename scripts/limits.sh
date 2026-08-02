@@ -44,6 +44,7 @@ crate_budget() {
   case "$1" in
     axio-core) echo 6000 ;;      # the loop, protocol, session, config, policy
     axio-provider) echo 5000 ;;  # one block per transport
+    axio-quota) echo 3000 ;;     # probes, plus the Windows tray surface
     axio-tools) echo 4000 ;;     # one module per tool
     axio) echo 10000 ;;          # every surface
     *) echo '' ;;

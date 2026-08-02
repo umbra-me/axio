@@ -16,6 +16,7 @@ mod doctor;
 mod paths;
 mod probe;
 mod provider;
+mod quota;
 mod render;
 mod sandbox;
 mod sessions;
@@ -112,6 +113,14 @@ async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
 
     if let Some(Command::Auth { action }) = &cli.command {
         return auth_command(action);
+    }
+    if let Some(Command::Quota {
+        provider,
+        json,
+        diagnose,
+    }) = &cli.command
+    {
+        return quota::quota_command(provider.as_deref(), *json, *diagnose).await;
     }
 
     // Local modes answer from configuration alone and must never touch stdin,
