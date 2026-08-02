@@ -56,6 +56,9 @@ a minor bump may break things.
 
 ### Fixed
 
+- **The site dependency graph is clear of the reported PostCSS and Sharp
+  advisories.** Overrides keep Next.js 16.2.12 on patched transitive releases
+  until its own dependency ranges catch up.
 - **The README said three providers over two implementations.** There are four
   over three — `PROVIDERS` in `crates/axio-core/src/auth.rs` — and has been
   since `openai-codex` landed. The Responses transport was documented elsewhere
