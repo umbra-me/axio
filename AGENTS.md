@@ -26,7 +26,7 @@ git config core.hooksPath .githooks                 # one-time, per clone
 
 ## Architecture
 
-Five crates and two binaries. The dependency graph is a tree rooted at
+Six crates and two binaries. The dependency graph is a tree rooted at
 `axio-core`, so there are no cycles and no cycle-breaker crates.
 
 | Crate | Owns |
@@ -34,10 +34,25 @@ Five crates and two binaries. The dependency graph is a tree rooted at
 | `axio-core` | `protocol`, the `Provider` / `Tool` / `Approver` traits, the turn loop, `Session` and its JSONL records, layered `config`, `compact`, `policy`, output `truncate`, credential storage, `Workspace`, `Redacted` |
 | `axio-provider` | All three transports — the Messages dialect, chat-completions, and Responses — plus the OAuth flows: SSE decoder, request builders, block state machines, error classification. The only crate linking HTTP or TLS |
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
+| `axio-cost` | What the coding agents on this machine have spent, read from the session transcripts they already write. Token normalization, deduplication, a bundled price table, and one parser per agent. Depends on nothing else in the workspace |
 | `axio-quota` | Provider quota probes — the credential files `codex` and `claude` wrote, and the usage endpoints behind them — plus local history, and behind the `app` feature the Tauri desktop surface: tray icon, HTML flyout, window. Depends on nothing else in the workspace |
-| `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations, `axio quota` |
+| `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations, `axio quota`, `axio cost` |
 
 ### Workspace member justification
+
+`axio-cost` is the sixth member, and like the fifth the reason is isolation
+rather than size. It is one parser per agent over a shared normalization layer,
+and the agent list only grows — a shape that would swamp `axio-quota`'s budget
+in `scripts/limits.sh` and bury the probe layer it shares a hat with.
+
+The two are different problems wearing that similar hat. Quota asks each
+vendor's API what is left; cost reads transcripts other programs wrote and adds
+them up. Different inputs, different failure modes — a quota probe fails with an
+HTTP status, a cost parser fails with a line it cannot understand — and one
+crate each keeps both budgets in `scripts/limits.sh` meaningful.
+
+It is a leaf, like `axio-quota`: it depends on no other crate here, and only
+`axio` depends on it.
 
 `axio-quota` is the fifth member, and the reason is dependency isolation rather
 than size. Its `app` feature carries the desktop surface — tray icon, HTML

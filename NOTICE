@@ -16,3 +16,16 @@ licensed.
 No CodexBar source is included. The crate is an independent Rust implementation
 and shares no lines with it. The attribution is recorded because the knowledge,
 not the code, was the expensive part.
+
+--------------------------------------------------------------------------------
+
+crates/axio-cost
+
+Which file each coding agent writes its session transcript to, and what those
+transcripts contain, was derived by reading tokscale by Junho Yeo
+(https://github.com/junhoyeo/tokscale), MIT licensed.
+
+No tokscale source is included. The crate is an independent Rust implementation
+and shares no lines with it. Every token-accounting rule in it was additionally
+verified against real transcripts on the machine it was written on, and several
+differ from what a reading of tokscale alone would have produced.

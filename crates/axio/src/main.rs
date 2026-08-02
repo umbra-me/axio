@@ -12,6 +12,7 @@ mod credentials;
 // has a default to save.
 #[cfg(feature = "tui")]
 mod defaults;
+mod cost;
 mod doctor;
 mod paths;
 mod probe;
@@ -113,6 +114,9 @@ async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
 
     if let Some(Command::Auth { action }) = &cli.command {
         return auth_command(action);
+    }
+    if let Some(Command::Cost { by, json, diagnose, limit }) = &cli.command {
+        return cost::cost_command(*by, *json, *diagnose, *limit);
     }
     if let Some(Command::Quota {
         provider,

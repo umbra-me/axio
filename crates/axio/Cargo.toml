@@ -23,6 +23,7 @@ tui = ["dep:ratatui", "dep:crossterm", "dep:syntect", "dep:two-face"]
 
 [dependencies]
 axio-core.workspace = true
+axio-cost.workspace = true
 axio-provider.workspace = true
 axio-quota.workspace = true
 axio-tools.workspace = true

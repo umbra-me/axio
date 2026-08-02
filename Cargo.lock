@@ -130,6 +130,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axio-core",
+ "axio-cost",
  "axio-provider",
  "axio-quota",
  "axio-tools",
@@ -164,6 +165,18 @@ dependencies = [
  "toml 1.1.3+spec-1.1.0",
  "tracing",
  "ulid",
+]
+
+[[package]]
+name = "axio-cost"
+version = "0.1.0"
+dependencies = [
+ "ignore",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "time",
 ]
 
 [[package]]

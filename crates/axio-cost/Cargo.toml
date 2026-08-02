@@ -1,0 +1,32 @@
+[package]
+name = "axio-cost"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "What each AI coding agent's sessions cost, read from the logs they already write."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+# Already in the tree for the probe layer. `serde-well-known` is what supplies the
+# rfc3339 (de)serializer that every session log's timestamps are written in.
+time = { workspace = true, features = [
+    "parsing",
+    "formatting",
+    "macros",
+    "serde",
+    "serde-well-known",
+] }
+thiserror.workspace = true
+# Directory walking. Chosen over walkdir because it is already resolved in the lockfile
+# for the tools crate, so it costs no new package.
+ignore.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

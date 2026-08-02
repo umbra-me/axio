@@ -9,6 +9,44 @@ a minor bump may break things.
 
 ### Added
 
+- **`axio cost`, and the `axio-cost` crate behind it.** What the coding agents on
+  this machine have spent, read from the session transcripts they already write.
+  No network, no credentials. Group with `--by model|client|session|day|workspace`,
+  `--json` for scripting, `--diagnose` for what each parser found and skipped.
+
+  Three parsers ship — Claude Code, Codex and Grok — which is every agent on the
+  machine it was written on whose file-based transcripts record usage. Coverage
+  was measured rather than assumed: Copilot's local store has no tables, Zed's
+  has no rows, and Cursor records no per-message usage at all, so parsers for
+  them would have been untestable code.
+
+  Every token rule in it was verified against real transcripts, and three of them
+  contradict what the formats look like at a glance:
+
+  - Codex reports `input_tokens` **including** cached reads. One real turn is
+    71,375 input of which 67,456 is cache — billing the reported figure at the
+    fresh rate overcharges eighteenfold.
+  - Codex's `total_token_usage` is **cumulative for the session**; only
+    `last_token_usage` may be summed, and consecutive repeats must be dropped.
+    Across the 396 local sessions with usage, the deduplicated sum reproduces the
+    session's own final total exactly in 390 and within 1% in 4 more.
+  - Claude Code writes `requestId: null` on proxied turns, so the deduplication
+    key falls back to the message id alone rather than collapsing every
+    null-request line in a file into one row.
+
+  Prices are a compiled-in table with a documented source per vendor, and a
+  refresh overlay for the caller to populate. Anthropic's cache rates derive from
+  the input price by fixed multipliers (0.1x read, 1.25x and 2x write) and
+  OpenAI's tier above 272K input tokens is honoured per request. Grok records what a turn
+  cost it, and that figure is preferred over the table wherever it appears — it is the only number here computed by the party doing
+  the charging.
+
+  **A model with no known rate is reported unpriced, never as zero**, and no total
+  is printed without the share of tokens it accounts for. That rule has teeth: an
+  early build summed the one Codex message in 77,525 whose model it knew and
+  printed `$0.30` next to the word *Codex*. `Totals` now hands back a `Cost` that
+  cannot be formatted without confronting its own coverage.
+
 - **`axio quota`, and a desktop app behind it.** How much of each provider's
   limit is left and when it resets, for Codex, Claude and OpenRouter. It reads
   the credential files those vendors' own CLIs already wrote — never axio's own

@@ -16,6 +16,28 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: AuthAction,
     },
+    /// Show what the coding agents on this machine have spent.
+    ///
+    /// Reads session transcripts the agents already wrote to disk. Opens no socket and
+    /// uses no credential. Every figure states how much of the volume it accounts for;
+    /// a model with no known rate is reported unpriced rather than as zero.
+    Cost {
+        /// What to group rows by.
+        #[arg(long, value_enum, default_value_t = crate::cost::GroupBy::Model)]
+        by: crate::cost::GroupBy,
+
+        /// Emit JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+
+        /// Print what was found per agent, including skipped and unreadable files.
+        #[arg(long, conflicts_with = "json")]
+        diagnose: bool,
+
+        /// Maximum rows to print before summarising the remainder.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+    },
     /// Show how much of each provider's limit is left, and when it resets.
     ///
     /// Reads the credentials the providers' own CLIs already wrote; it does not use
