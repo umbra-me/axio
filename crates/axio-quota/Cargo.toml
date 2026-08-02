@@ -24,7 +24,7 @@ default = []
 # without it still points the webview at `devUrl` and shows ERR_CONNECTION_REFUSED. The
 # Tauri CLI adds the feature during `tauri build`; we build with plain cargo, so it has to
 # be named here.
-app = [
+app = ["dep:axio-cost", 
     "dep:tauri",
     "dep:tauri-build",
     "dep:windows-sys",
@@ -37,6 +37,8 @@ path = "src/bin/axio-quota.rs"
 required-features = ["app"]
 
 [dependencies]
+# Only the desktop surface shows cost, so the headless probe build links none of it.
+axio-cost = { workspace = true, optional = true }
 async-trait.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

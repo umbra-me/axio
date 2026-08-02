@@ -291,3 +291,41 @@ input[type="text"] {
 .found {
   color: var(--ok);
 }
+
+/* The Cost table. Numbers are tabular so columns line up when they change on rescan —
+   proportional digits make a settled figure look like it is still moving. */
+table.cost {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+table.cost th,
+table.cost td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  text-align: left;
+}
+table.cost th {
+  font-weight: 500;
+  opacity: 0.6;
+  text-transform: lowercase;
+}
+table.cost .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Keys are session ids and directory paths: long, and distinguished at the end. Ellipsis
+   goes on the left so what survives is the half that differs. */
+table.cost .key {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+table.cost tfoot td {
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.18));
+  border-bottom: none;
+  font-weight: 600;
+}

@@ -13,7 +13,6 @@ use super::state::{AppState, refresh};
 use crate::config::{Config, ProviderConfig};
 use crate::history::Reading;
 use crate::model::{ProviderId, UsageSnapshot};
-use crate::paths::home_dir;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,33 +142,23 @@ pub fn save_settings(
     Ok(path.display().to_string())
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CostSource {
-    pub name: String,
-    pub path: String,
-    pub exists: bool,
+/// The Cost view's table, grouped as the window asks.
+///
+/// The scan behind it is cached in [`super::cost::CostCache`]: grouping is cheap and
+/// happens per call, scanning is not and happens once. That module explains why a few
+/// minutes of staleness beats a window that blocks for thirty seconds.
+#[tauri::command]
+pub fn cost_report(
+    group: String,
+    cost: State<'_, Arc<super::cost::CostCache>>,
+) -> super::cost::CostReport {
+    cost.report(&group)
 }
 
-/// The local transcript directories a cost scanner would walk.
-///
-/// The Cost view is not built. Listing these means it answers a real question today — is
-/// the data even on this machine — rather than showing a zero, which would be
-/// indistinguishable from a quiet week.
+/// Drop the cached scan so the next `cost_report` reads the transcripts again.
 #[tauri::command]
-pub fn cost_sources(state: State<'_, Arc<AppState>>) -> Vec<CostSource> {
-    let home = home_dir(&state.env);
-    [
-        ("Codex", home.join(".codex").join("sessions")),
-        ("Claude", home.join(".claude").join("projects")),
-    ]
-    .into_iter()
-    .map(|(name, path)| CostSource {
-        name: name.to_string(),
-        exists: path.exists(),
-        path: path.display().to_string(),
-    })
-    .collect()
+pub fn refresh_cost(cost: State<'_, Arc<super::cost::CostCache>>) {
+    cost.invalidate();
 }
 
 #[tauri::command]

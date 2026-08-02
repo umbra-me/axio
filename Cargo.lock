@@ -204,6 +204,7 @@ name = "axio-quota"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axio-cost",
  "reqwest",
  "rustls",
  "serde",

@@ -30,6 +30,12 @@ a minor bump may break things.
   An agent whose directory is absent reports *not installed*, which is a
   different answer from *recorded nothing* and is what `--diagnose` prints.
 
+  The desktop app's Cost tab shows the same table, grouped by model, agent, day,
+  workspace or session. The scan is cached because reading every transcript takes
+  tens of seconds; regrouping is instant, and a `rescan` button drops the cache
+  when a figure needs to be current. The view distinguishes an unpriced row from
+  a cheap one exactly as the CLI does.
+
   Every token rule in it was verified against real transcripts, and three of them
   contradict what the formats look like at a glance:
 

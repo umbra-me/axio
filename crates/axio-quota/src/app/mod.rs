@@ -5,6 +5,7 @@
 //! icon. The CLI (`axio quota`) stays entirely separate and shares only the probe layer.
 
 mod commands;
+mod cost;
 mod icon;
 mod state;
 mod tray;
@@ -26,13 +27,18 @@ pub fn run() -> Result<(), String> {
             commands::history,
             commands::settings,
             commands::save_settings,
-            commands::cost_sources,
+            commands::cost_report,
+            commands::refresh_cost,
             commands::open_main_window,
             commands::hide_flyout,
             commands::quit,
         ])
         .setup(|app| {
             app.manage(Arc::new(AppState::new()));
+            // Separate from AppState: the quota probes refresh on a timer, the cost scan
+            // is expensive and refreshes only when asked. One lock each keeps a slow
+            // scan from blocking the tray's next update.
+            app.manage(Arc::new(cost::CostCache::default()));
             let handle = app.handle().clone();
 
             // Both windows exist from the start and are only shown on demand. Creating a

@@ -58,10 +58,31 @@ export interface ProviderSetting {
   hint: string;
 }
 
-export interface CostSource {
+export type CostGroup = "model" | "client" | "session" | "day" | "workspace";
+
+export interface CostRow {
+  key: string;
+  messages: number;
+  tokens: number;
+  /** null when too little of the row could be priced for a number to mean anything. */
+  costUsd: number | null;
+  /** Share of this row's tokens carrying a price, 0..1. */
+  coverage: number;
+}
+
+export interface AgentRow {
   name: string;
-  path: string;
-  exists: boolean;
+  present: boolean;
+  files: number;
+  messages: number;
+}
+
+export interface CostReport {
+  rows: CostRow[];
+  total: CostRow;
+  unpricedModels: string[];
+  agents: AgentRow[];
+  loading: boolean;
 }
 
 export const api = {
@@ -71,7 +92,8 @@ export const api = {
   settings: () => invoke<ProviderSetting[]>("settings"),
   saveSettings: (settings: ProviderSetting[]) =>
     invoke<string>("save_settings", { settings }),
-  costSources: () => invoke<CostSource[]>("cost_sources"),
+  costReport: (group: CostGroup) => invoke<CostReport>("cost_report", { group }),
+  refreshCost: () => invoke<void>("refresh_cost"),
   openMainWindow: () => invoke<void>("open_main_window"),
   hideFlyout: () => invoke<void>("hide_flyout"),
   quit: () => invoke<void>("quit"),
