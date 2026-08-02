@@ -17,9 +17,12 @@ use std::path::{Path, PathBuf};
 
 use crate::message::{CostMessage, DedupLedger};
 
+pub mod catalog;
 pub mod claude_code;
 pub mod codex;
+pub mod generic;
 pub mod grok;
+pub mod usage;
 
 /// An agent whose sessions can be read from disk.
 pub trait Source: Send + Sync {
@@ -115,11 +118,20 @@ impl ScanReport {
 /// Ordered so the output is stable between runs; a cost table that reorders itself is one
 /// nobody can diff against yesterday's.
 pub fn registry() -> Vec<Box<dyn Source>> {
-    vec![
+    let mut sources: Vec<Box<dyn Source>> = vec![
         Box::new(claude_code::ClaudeCode),
         Box::new(codex::Codex),
         Box::new(grok::Grok),
-    ]
+    ];
+    // The hand-written three come first because they carry format knowledge the
+    // table-driven walk cannot: which of two token figures is cumulative, which repeats
+    // must be suppressed, which vendor reports its own cost. The catalog covers the rest.
+    sources.extend(
+        catalog::CATALOG
+            .iter()
+            .map(|agent| Box::new(*agent) as Box<dyn Source>),
+    );
+    sources
 }
 
 /// Walk every agent's log directories under `home`.

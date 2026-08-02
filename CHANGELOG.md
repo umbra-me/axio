@@ -14,11 +14,15 @@ a minor bump may break things.
   No network, no credentials. Group with `--by model|client|session|day|workspace`,
   `--json` for scripting, `--diagnose` for what each parser found and skipped.
 
-  Three parsers ship — Claude Code, Codex and Grok — which is every agent on the
-  machine it was written on whose file-based transcripts record usage. Coverage
-  was measured rather than assumed: Copilot's local store has no tables, Zed's
-  has no rows, and Cursor records no per-message usage at all, so parsers for
-  them would have been untestable code.
+  Fifteen agents are covered. Three have hand-written parsers — Claude Code,
+  Codex and Grok — because each carries knowledge a generic walk cannot infer:
+  which of two token figures is cumulative, which repeated events must be
+  suppressed, which vendor reports its own cost. The other twelve are rows in
+  `sources::catalog`, driven by one table-driven parser, because these formats
+  log the same event and differ only in where they put it.
+
+  An agent whose directory is absent reports *not installed*, which is a
+  different answer from *recorded nothing* and is what `--diagnose` prints.
 
   Every token rule in it was verified against real transcripts, and three of them
   contradict what the formats look like at a glance:
