@@ -17,6 +17,87 @@ pub(crate) fn build_provider(
     build_named(cfg, &cfg.model.provider)
 }
 
+/// Build what the interactive surface starts with.
+///
+/// A one-shot run cannot do anything without a credential, so it fails before
+/// opening a session. The interactive surface is also where credentials are
+/// stored: refusing to open it makes `/login` unreachable on a fresh install.
+/// Keep an agent present with a provider that explains what is missing, then
+/// let `/model` replace it after login through the ordinary factory seam.
+#[cfg(feature = "tui")]
+pub(crate) fn build_for_tui(
+    resolved: &Resolved,
+) -> (Arc<dyn axio_core::provider::Provider>, Option<String>) {
+    match build_provider(resolved) {
+        Ok(provider) => (provider, None),
+        Err(why) => {
+            let cfg = resolved.config();
+            let info = doctor::provider_prices(cfg).unwrap_or(axio_core::provider::ModelInfo {
+                context_window: 1,
+                max_output_tokens: 1,
+                input_price: 0.0,
+                output_price: 0.0,
+                cache_read_price: 0.0,
+                cache_write_price: 0.0,
+            });
+            (
+                Arc::new(UnavailableProvider {
+                    id: cfg.model.provider.clone(),
+                    info,
+                    why: why.clone(),
+                }),
+                Some(why),
+            )
+        }
+    }
+}
+
+#[cfg(feature = "tui")]
+struct UnavailableProvider {
+    id: String,
+    info: axio_core::provider::ModelInfo,
+    why: String,
+}
+
+#[cfg(feature = "tui")]
+#[async_trait::async_trait]
+impl axio_core::provider::Provider for UnavailableProvider {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn model_info(&self, _model: &str) -> axio_core::provider::ModelInfo {
+        self.info.clone()
+    }
+
+    async fn stream(
+        &self,
+        _req: axio_core::provider::ModelRequest,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<
+        axio_core::provider::BoxStream<
+            'static,
+            Result<axio_core::provider::StreamEvent, axio_core::provider::ProviderError>,
+        >,
+        axio_core::provider::ProviderError,
+    > {
+        Err(axio_core::provider::ProviderError::Configuration(format!(
+            "{} Run /login, then bare /model to use it.",
+            self.why
+        )))
+    }
+
+    async fn models(
+        &self,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Vec<String>, axio_core::provider::ProviderError> {
+        Err(axio_core::provider::ProviderError::Configuration(format!(
+            "{} Run /login first.",
+            self.why
+        )))
+    }
+}
+
 /// A way to build any provider, for a surface that has no configuration.
 ///
 /// The interface can move a session to another provider, and doing that needs
@@ -99,5 +180,36 @@ pub(crate) fn build_named(
             .map_err(|e| format!("could not start the http client: {e}"))
         }
         other => Err(unknown_provider(other)),
+    }
+}
+
+#[cfg(all(test, feature = "tui"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_tui_gets_an_explanatory_provider_when_configuration_cannot_start() {
+        let resolved = config::resolve(
+            &Paths::default(),
+            &[("AXIO_PROVIDER".into(), "not-a-provider".into())],
+            &Flags::default(),
+        );
+
+        assert!(
+            build_provider(&resolved).is_err(),
+            "one-shot still fails closed"
+        );
+        let (provider, why) = build_for_tui(&resolved);
+        assert_eq!(provider.id(), "not-a-provider");
+        assert!(why.is_some(), "the surface needs a startup notice");
+
+        let error = provider
+            .models(tokio_util::sync::CancellationToken::new())
+            .await
+            .expect_err("the placeholder never opens a socket");
+        assert!(
+            error.to_string().contains("/login"),
+            "the next action is explicit: {error}"
+        );
     }
 }

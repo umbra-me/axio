@@ -77,7 +77,7 @@ pub(super) fn finish_signin(result: Result<axio_core::auth::OAuthTokens, String>
             }
             said.push(format!("  {}", path.display()));
             said.push(format!("  {}", auth::protection_note()));
-            said.push("  this session keeps the credential it started with".into());
+            said.push("  run bare `/model` to use it in this session".into());
             said
         }
         Err(e) => vec![format!("signed in, but could not store the tokens: {e}")],
@@ -107,6 +107,7 @@ pub(super) fn on_signin_step<B: Backend>(
         Some(SignIn::Done(result)) => {
             app.status.clear();
             let said = finish_signin(result);
+            app.offers = crate::surfaces::offers();
             app.push_command_output(terminal, &said)?;
         }
         None => {}

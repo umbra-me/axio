@@ -145,11 +145,10 @@ impl Login {
                         "  note: {var} is set in this shell and takes precedence"
                     ));
                 }
-                // Said plainly, because it is the difference between a
-                // credential that fixed something and one that appears to have
-                // done nothing. The provider was built when the session opened
-                // and is holding the key it was given then.
-                said.push("  this session keeps the credential it started with".into());
+                // The provider was built when the session opened. Bare
+                // `/model` goes through the factory and replaces it; the named
+                // form changes only the model on the provider already in use.
+                said.push("  run bare `/model` to use it in this session".into());
                 Outcome::Stored(said)
             }
             Err(e) => Outcome::Failed(format!("could not store the credential: {e}")),
@@ -278,7 +277,7 @@ mod tests {
     /// when it opened. Saying nothing invites the reasonable conclusion that
     /// the new one is now in use.
     #[test]
-    fn the_running_session_is_said_to_keep_its_own_credential() {
+    fn a_stored_credential_names_how_to_use_it_now() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let mut login = Login::default();
         login.confirm_provider();
@@ -286,9 +285,6 @@ mod tests {
         let Outcome::Stored(said) = login.save(dir.path(), &[]) else {
             panic!("it should have stored");
         };
-        assert!(
-            said.iter().any(|l| l.contains("this session keeps")),
-            "{said:?}"
-        );
+        assert!(said.iter().any(|l| l.contains("bare `/model`")), "{said:?}");
     }
 }

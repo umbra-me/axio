@@ -56,6 +56,12 @@ a minor bump may break things.
 
 ### Fixed
 
+- **A fresh install can reach `/login`.** The interactive surface used to build
+  its provider before drawing the first frame, so an empty `~/.axio` failed for
+  the missing credential and exited before the command that stores one could
+  be typed. It now starts with an explicit unavailable-provider state; login
+  refreshes the provider picker, and bare `/model` replaces that state in the
+  same session. One-shot runs still fail closed.
 - **Shell scripts stay LF on Windows checkouts.** Every documented Bash gate
   and the POSIX installer arrived as CRLF under the common `core.autocrlf`
   setting and failed at `set -o pipefail`. `.gitattributes` now makes their

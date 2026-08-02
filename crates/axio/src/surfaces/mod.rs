@@ -39,7 +39,16 @@ pub(crate) fn prepare(
 ) -> Result<Prepared, String> {
     let provider: Arc<dyn axio_core::provider::Provider> =
         crate::provider::build_provider(resolved)?;
+    prepare_with_provider(cli, resolved, label, approver, provider)
+}
 
+fn prepare_with_provider(
+    cli: &Cli,
+    resolved: &Resolved,
+    label: Option<&str>,
+    approver: Arc<dyn axio_core::approver::Approver>,
+    provider: Arc<dyn axio_core::provider::Provider>,
+) -> Result<Prepared, String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut cfg = resolved.runtime();
     cfg.spill_dir = Some(state_dir().join("outputs"));
@@ -132,7 +141,7 @@ pub(crate) fn prepare(
 /// Listed even when it does not: a provider missing from the list reads as one
 /// axio cannot reach, when the answer is a sign-in away.
 #[cfg(feature = "tui")]
-fn offers() -> Vec<tui::Offer> {
+pub(crate) fn offers() -> Vec<tui::Offer> {
     let env: Vec<(String, String)> = std::env::vars().collect();
     let home = axio_home();
     axio_core::auth::PROVIDERS
@@ -157,7 +166,8 @@ pub(crate) async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
         Arc::new(tui_approver)
     };
 
-    let prepared = match prepare(cli, resolved, None, approver) {
+    let (provider, unavailable) = crate::provider::build_for_tui(resolved);
+    let mut prepared = match prepare_with_provider(cli, resolved, None, approver, provider) {
         Ok(prepared) => prepared,
         Err(message) => {
             for notice in resolved.notices() {
@@ -167,6 +177,11 @@ pub(crate) async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
             return 1;
         }
     };
+    if let Some(why) = unavailable {
+        prepared.notices.push(Notice::warn(format!(
+            "the configured provider is unavailable ({why}); use /login, then bare /model"
+        )));
+    }
 
     match tui::run(
         prepared.agent,

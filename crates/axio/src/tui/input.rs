@@ -228,7 +228,10 @@ impl Tui {
                     };
                     let env: Vec<(String, String)> = std::env::vars().collect();
                     let said = match login.save(&crate::paths::axio_home(), &env) {
-                        LoginOutcome::Stored(lines) => lines,
+                        LoginOutcome::Stored(lines) => {
+                            self.offers = crate::surfaces::offers();
+                            lines
+                        }
                         LoginOutcome::Failed(why) => vec![why],
                     };
                     self.push_command_output(terminal, &said)?;
