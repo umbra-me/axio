@@ -56,6 +56,10 @@ a minor bump may break things.
 
 ### Fixed
 
+- **Shell scripts stay LF on Windows checkouts.** Every documented Bash gate
+  and the POSIX installer arrived as CRLF under the common `core.autocrlf`
+  setting and failed at `set -o pipefail`. `.gitattributes` now makes their
+  line ending part of the repository contract.
 - **Relocating `AXIO_HOME` no longer reclassifies `~/.axio/config.toml`.** Both
   the active user configuration and the canonical default location are
   excluded from the project-config walk.
