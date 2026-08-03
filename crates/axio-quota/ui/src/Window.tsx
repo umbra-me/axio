@@ -511,6 +511,9 @@ function Connect({
     if (!waiting) return;
     let live = true;
     const started = Date.now();
+    // Each check now costs a real request to the provider, because a cookie's name is not
+    // proof that it works. Backing off keeps a slow sign-in from becoming a burst of them.
+    let delay = 2000;
 
     // Sequential, not an interval. Each check waits on the sign-in window's own event
     // loop, so a timer would stack requests on top of a page that is still loading — which
@@ -529,12 +532,13 @@ function Connect({
       }
       // A window left open forever should not be polled forever.
       if (live && Date.now() - started < 5 * 60 * 1000) {
-        setTimeout(tick, 2000);
+        delay = Math.min(delay + 1000, 8000);
+        setTimeout(tick, delay);
       } else {
         setWaiting(false);
       }
     };
-    const first = setTimeout(tick, 2000);
+    const first = setTimeout(tick, delay);
 
     return () => {
       live = false;

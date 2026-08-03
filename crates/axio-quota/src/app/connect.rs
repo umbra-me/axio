@@ -121,6 +121,16 @@ fn capture(app: &AppHandle, id: ProviderId) -> Result<String, String> {
         });
     }
 
+    // A name is not proof. opencode sets a cookie called `auth` while the OAuth handshake
+    // is still in flight, so the name check passed on a pre-sign-in artifact: the window
+    // captured it, saved it and closed itself before anyone had signed in to anything.
+    //
+    // So the candidate is used, once, against the provider's own endpoint. Only a
+    // credential that actually authenticates is accepted.
+    if let Err(reason) = proves_signed_in(app, id, &header) {
+        return Err(reason);
+    }
+
     let state = app.state::<Arc<AppState>>();
     let path = Config::default_path(&state.env);
     let mut config = Config::load(&path).unwrap_or_default();
@@ -140,6 +150,40 @@ fn capture(app: &AppHandle, id: ProviderId) -> Result<String, String> {
     config.save(&path).map_err(|err| err.to_string())?;
 
     Ok(format!("Connected to {}.", id.display_name()))
+}
+
+/// Ask the provider whether this credential is actually signed in.
+///
+/// Only `Unauthorized` means "keep waiting". Every other outcome — success, a missing
+/// workspace, a network blip — means the session was recognised, which is the single thing
+/// being established here. Treating any failure as "not yet" would leave the window open
+/// forever on an account that is signed in but has nothing to report.
+///
+/// One request, and only once the cheap name check has already passed, so this does not run
+/// on every poll.
+fn proves_signed_in(app: &AppHandle, id: ProviderId, header: &str) -> Result<(), String> {
+    let state = app.state::<Arc<AppState>>();
+    let stored = Config::load(&Config::default_path(&state.env)).unwrap_or_default();
+
+    let mut candidate = stored.provider_or_default(id);
+    candidate.cookie_header = Some(header.to_string());
+
+    let context = crate::provider::FetchContext::new(id)
+        .map_err(|err| format!("Could not check the session: {err}"))?
+        .with_env(state.env.clone())
+        .with_config(candidate);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("Could not check the session: {err}"))?;
+
+    match runtime.block_on(crate::providers::by_id(id).fetch(&context)) {
+        Err(crate::error::ProbeError::Unauthorized(detail)) => {
+            Err(format!("Signed in page not finished yet — {detail}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Open the provider's own page so the user can sign in.
