@@ -529,6 +529,13 @@ input[type="checkbox"] {
   gap: 0.5rem;
 }
 
+.connect {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 11px;
+}
+
 /* Indented under their provider, so a key field is visibly subordinate to the toggle that
  * decides whether it is used at all. */
 .fields {

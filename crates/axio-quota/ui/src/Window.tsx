@@ -335,9 +335,10 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
           </div>
           {entry.takesCookie ? (
             <div className="fields">
+              {entry.connectable && <Connect entry={entry} onStatus={onStatus} />}
               <input
                 type="password"
-                placeholder="Cookie: …"
+                placeholder="…or paste: cookie: name=value; name=value"
                 value={entry.cookieHeader ?? ""}
                 onChange={(event) =>
                   update(entry.id, { cookieHeader: event.target.value })
@@ -491,6 +492,55 @@ const CADENCES: [string, string][] = [
   ["1800", "Every 30 min"],
   ["manual", "Manual"],
 ];
+
+/// Sign in to a provider in its own window, and wait for the session to appear.
+///
+/// Polls rather than waits for an event: a site can set its session cookie on a redirect,
+/// on a background request after the page settles, or after a second factor, and none of
+/// those is a navigation. The cookie existing is the only signal that means what it says.
+function Connect({
+  entry,
+  onStatus,
+}: {
+  entry: ProviderSetting;
+  onStatus: (text: string) => void;
+}) {
+  const [waiting, setWaiting] = useState(false);
+
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(async () => {
+      try {
+        onStatus(await api.captureProvider(entry.id));
+        setWaiting(false);
+      } catch {
+        // Not signed in yet. Expected on every tick until they are, so it is not an
+        // error to report — the window being open is the status.
+      }
+    }, 1500);
+    // A window left open forever should not poll forever.
+    const stop = setTimeout(() => setWaiting(false), 5 * 60 * 1000);
+    return () => {
+      clearInterval(timer);
+      clearTimeout(stop);
+    };
+  }, [waiting, entry.id, onStatus]);
+
+  return (
+    <div className="connect">
+      <button
+        onClick={async () => {
+          await api.connectProvider(entry.id);
+          setWaiting(true);
+          onStatus(`Sign in to ${entry.name} in the window that opened.`);
+        }}
+      >
+        {waiting ? "Waiting for sign-in…" : `Sign in to ${entry.name}`}
+      </button>
+      {entry.cookieHeader && !waiting && <span className="muted">Connected</span>}
+    </div>
+  );
+}
 
 function megabytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;

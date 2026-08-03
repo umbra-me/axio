@@ -62,6 +62,8 @@ export interface ProviderSetting {
   /// A pasted Cookie header, for providers whose usage is only on the dashboard.
   cookieHeader: string | null;
   takesCookie: boolean;
+  /// Can be signed in through a window instead of a pasted header.
+  connectable: boolean;
   hint: string;
 }
 
@@ -169,6 +171,10 @@ export const api = {
   refreshCost: () => invoke<void>("refresh_cost"),
   costStats: () => invoke<Stats>("cost_stats"),
   storage: () => invoke<Storage>("storage"),
+  connectProvider: (provider: string) =>
+    invoke<void>("connect_provider", { provider }),
+  captureProvider: (provider: string) =>
+    invoke<string>("capture_provider", { provider }),
   refreshCadence: () => invoke<string>("refresh_cadence"),
   setRefreshCadence: (cadence: string) =>
     invoke<string>("set_refresh_cadence", { cadence }),

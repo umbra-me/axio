@@ -36,8 +36,25 @@ use crate::provider::default_http_client;
 /// different question and keeps its error. This lives here rather than in either surface
 /// because the CLI and the tray must not disagree about what counts as a failure — they
 /// did, briefly, and the tray was the one shouting.
+/// Started is not the same as never set up.
+///
+/// A provider that has a credential and is still missing something — opencode signed in but
+/// with no workspace id — was disappearing from the view entirely, which is the worst of
+/// both answers: the user did the work and got no acknowledgement and no instruction. Half
+/// configured keeps its error; untouched is still dropped.
 pub fn drop_unconfigured(results: &mut Results) {
-    results.retain(|(_, outcome)| !matches!(outcome, Err(ProbeError::NotConfigured(_))));
+    let config = Config::load(&Config::default_path(&current_env())).unwrap_or_default();
+    results.retain(|(id, outcome)| {
+        if !matches!(outcome, Err(ProbeError::NotConfigured(_))) {
+            return true;
+        }
+        config.provider(*id).is_some_and(|entry| {
+            [&entry.api_key, &entry.cookie_header, &entry.workspace_id]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.trim().is_empty())
+        })
+    });
 }
 
 /// One refresh's worth of answers, successes and failures together.

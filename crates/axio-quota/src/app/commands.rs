@@ -84,6 +84,8 @@ pub struct ProviderSetting {
     /// A pasted `Cookie:` header, for providers whose usage is only on the dashboard.
     pub cookie_header: Option<String>,
     pub takes_cookie: bool,
+    /// Whether this provider can be signed in through a window instead of a paste.
+    pub connectable: bool,
     pub hint: String,
 }
 
@@ -105,6 +107,7 @@ pub fn settings(state: State<'_, Arc<AppState>>) -> Vec<ProviderSetting> {
                 workspace_hint: workspace_hint(*id).to_string(),
                 cookie_header: entry.cookie_header.clone(),
                 takes_cookie: takes_cookie(*id),
+                connectable: super::connect::is_connectable(*id),
                 hint: hint(*id).to_string(),
             }
         })
@@ -212,6 +215,27 @@ pub async fn set_refresh_cadence(
     config.refresh = Some(super::schedule::Cadence::parse(Some(&cadence)).as_str());
     config.save(&path).map_err(|err| err.to_string())?;
     Ok(config.refresh.unwrap_or_default())
+}
+
+/// Open a window on the provider's own sign-in page.
+#[tauri::command]
+pub fn connect_provider(app: AppHandle, provider: String) -> Result<(), String> {
+    let id = ProviderId::parse(&provider).ok_or("Unknown provider")?;
+    super::connect::open(&app, id)
+}
+
+/// Ask whether the sign-in window has a session yet.
+///
+/// Polled rather than pushed: a site can set its session cookie on a redirect, on a
+/// background request after the page settles, or after a second factor, and no navigation
+/// event marks all three. The cookie itself is the only reliable signal.
+#[tauri::command]
+pub fn capture_provider(app: AppHandle, provider: String) -> Result<String, String> {
+    let id = ProviderId::parse(&provider).ok_or("Unknown provider")?;
+    let message = super::connect::try_capture(&app, id)?;
+    // The credential just changed, so the figures on screen are about to be wrong.
+    refresh(&app);
+    Ok(message)
 }
 
 /// Where axio keeps its files, and how big the largest of them is.

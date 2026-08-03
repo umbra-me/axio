@@ -5,6 +5,7 @@
 //! icon. The CLI (`axio quota`) stays entirely separate and shares only the probe layer.
 
 mod commands;
+mod connect;
 mod cost;
 mod icon;
 mod schedule;
@@ -35,6 +36,8 @@ pub fn run() -> Result<(), String> {
             commands::storage,
             commands::refresh_cadence,
             commands::set_refresh_cadence,
+            commands::connect_provider,
+            commands::capture_provider,
             commands::open_main_window,
             commands::minimize_window,
             commands::close_window,

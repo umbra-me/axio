@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the webview is allowed to ask the window to do.",
+  "description": "What the webview is allowed to ask the window to do. Named windows only: the sign-in window loads a provider's own page, and a third-party page must not reach axio's commands. Adding \"connect\" here would hand a remote site the IPC surface.",
   "windows": ["main", "flyout"],
   "permissions": ["core:window:allow-start-dragging"]
 }
