@@ -294,9 +294,11 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
   const [dirty, setDirty] = useState(false);
   const [storage, setStorage] = useState<Storage | null>(null);
   const [agents, setAgents] = useState<CostReport["agents"]>([]);
+  const [cadence, setCadence] = useState("adaptive");
 
   useEffect(() => {
     api.settings().then(setSettings);
+    api.refreshCadence().then(setCadence);
     const load = () => {
       api.storage().then(setStorage);
       api.costReport("harness").then((report) => setAgents(report.agents));
@@ -383,6 +385,28 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
         {dirty && <span className="muted">Unsaved changes</span>}
       </div>
 
+      <h4 className="section">How often to check</h4>
+      <p className="note">
+        Adaptive tightens to a minute as a window nears its reset or its limit, and relaxes
+        to half an hour when nothing is happening. A fixed interval never goes below a
+        minute — the providers rate-limit the usage endpoint itself.
+      </p>
+      <div className="choices">
+        {CADENCES.map(([value, label]) => (
+          <button
+            key={value}
+            className="choice"
+            aria-pressed={cadence === value}
+            onClick={async () => {
+              setCadence(await api.setRefreshCadence(value));
+              onStatus(`Checking ${label.toLowerCase()}`);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <h4 className="section">Agents read for cost</h4>
       <p className="note">
         Found by walking each agent's own log directory. Nothing is configured here —
@@ -446,6 +470,15 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
     </>
   );
 }
+
+const CADENCES: [string, string][] = [
+  ["adaptive", "Adaptive"],
+  ["60", "Every minute"],
+  ["300", "Every 5 min"],
+  ["900", "Every 15 min"],
+  ["1800", "Every 30 min"],
+  ["manual", "Manual"],
+];
 
 function megabytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;

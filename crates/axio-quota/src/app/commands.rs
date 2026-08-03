@@ -179,6 +179,30 @@ pub async fn cost_stats(
     Ok(cost.stats())
 }
 
+/// Read and write the refresh cadence.
+///
+/// Its own pair of commands rather than a field on the settings list: the list is per
+/// provider and this is one setting for the app, and folding it in would mean every
+/// provider row carrying a copy of it.
+#[tauri::command]
+pub async fn refresh_cadence(state: State<'_, Arc<AppState>>) -> Result<String, ()> {
+    Ok(super::state::cadence_of(&state.env).as_str())
+}
+
+#[tauri::command]
+pub async fn set_refresh_cadence(
+    state: State<'_, Arc<AppState>>,
+    cadence: String,
+) -> Result<String, String> {
+    let path = Config::default_path(&state.env);
+    let mut config = Config::load(&path).unwrap_or_default();
+    // Round-tripped through the parser so an unusable value never reaches the file: the
+    // loop reads this on every pass and a bad one would be read forever.
+    config.refresh = Some(super::schedule::Cadence::parse(Some(&cadence)).as_str());
+    config.save(&path).map_err(|err| err.to_string())?;
+    Ok(config.refresh.unwrap_or_default())
+}
+
 /// Where axio keeps its files, and how big the largest of them is.
 ///
 /// Shown rather than hidden because both answers are things people ask: settings live in

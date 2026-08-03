@@ -7,6 +7,7 @@
 mod commands;
 mod cost;
 mod icon;
+mod schedule;
 mod state;
 mod view;
 mod tray;
@@ -32,6 +33,8 @@ pub fn run() -> Result<(), String> {
             commands::cost_stats,
             commands::refresh_cost,
             commands::storage,
+            commands::refresh_cadence,
+            commands::set_refresh_cadence,
             commands::open_main_window,
             commands::minimize_window,
             commands::close_window,

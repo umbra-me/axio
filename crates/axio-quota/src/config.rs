@@ -22,6 +22,10 @@ pub struct Config {
     pub version: u32,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
+    /// How often to re-probe: `adaptive`, `manual`, or a number of seconds. Absent means
+    /// adaptive, which is the right answer for anyone who never opened Settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<String>,
     /// Fields owned by other CodexBar-family clients. Round-tripped untouched.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -35,6 +39,7 @@ impl Default for Config {
                 .iter()
                 .map(|id| ProviderConfig::new(*id))
                 .collect(),
+            refresh: None,
             extra: Map::new(),
         }
     }

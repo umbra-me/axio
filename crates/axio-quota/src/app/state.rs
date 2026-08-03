@@ -76,19 +76,43 @@ pub fn refresh(app: &AppHandle) {
     });
 }
 
-/// How often the app re-probes in the background.
+/// Re-probe on the schedule the last probe implies.
 ///
-/// Five minutes is a compromise, and a poor one at both ends: far more often than a weekly
-/// window needs, too slow to watch a session window drain under heavy use. Upstream solves
-/// this with a schedule that tightens near a reset; this constant is the placeholder.
-pub const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
-
+/// The interval is recomputed after each pass rather than fixed, so the loop tightens as a
+/// window nears its reset or its limit and relaxes when nothing is happening — see
+/// [`super::schedule`] for why a constant is wrong at both ends.
+///
+/// Manual mode still runs the loop, parked on a poll: the setting can change while the app
+/// is running, and a thread that exited on "manual" would need the app restarted to notice
+/// it had been switched back.
 pub fn spawn_refresh_loop(app: &AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
         loop {
             refresh(&handle);
-            std::thread::sleep(REFRESH_INTERVAL);
+
+            // After the probe, so the decision is made on what it just returned. The probe
+            // is asynchronous, so this reads the previous pass's results — one interval
+            // behind, which for a cadence rather than a deadline is close enough.
+            let state = handle.state::<Arc<AppState>>();
+            let cadence = cadence_of(&state.env);
+            let results = state.results.lock().unwrap_or_else(|err| err.into_inner());
+            let wait = super::schedule::interval(
+                cadence,
+                &results,
+                time::OffsetDateTime::now_utc().unix_timestamp(),
+            );
+            drop(results);
+
+            std::thread::sleep(wait.unwrap_or(MANUAL_POLL));
         }
     });
+}
+
+/// How often a manual-mode loop wakes to notice the setting has changed back.
+const MANUAL_POLL: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn cadence_of(env: &Env) -> super::schedule::Cadence {
+    let config = Config::load(&Config::default_path(env)).unwrap_or_default();
+    super::schedule::Cadence::parse(config.refresh.as_deref())
 }

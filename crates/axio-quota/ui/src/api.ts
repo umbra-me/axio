@@ -166,6 +166,9 @@ export const api = {
   refreshCost: () => invoke<void>("refresh_cost"),
   costStats: () => invoke<Stats>("cost_stats"),
   storage: () => invoke<Storage>("storage"),
+  refreshCadence: () => invoke<string>("refresh_cadence"),
+  setRefreshCadence: (cadence: string) =>
+    invoke<string>("set_refresh_cadence", { cadence }),
   openMainWindow: () => invoke<void>("open_main_window"),
   minimizeWindow: () => invoke<void>("minimize_window"),
   closeWindow: () => invoke<void>("close_window"),
