@@ -169,7 +169,10 @@ fn row(key: String, totals: &Totals) -> CostRow {
 
 fn key_of(message: &CostMessage, group: &str) -> String {
     match group {
-        "client" => message.client.to_string(),
+        // The provider is derived from the model, never from the directory the log sits
+        // in: a Claude Code transcript here bills OpenAI, DeepSeek and Z.ai as well.
+        "provider" => axio_cost::provider_of(&message.model).to_string(),
+        "harness" | "client" => message.client.to_string(),
         "session" => message.session_id.clone(),
         "day" => message.timestamp.date().to_string(),
         "workspace" => message
@@ -239,15 +242,15 @@ mod tests {
     /// The view must be able to tell "we could not price this" from "$0.00".
     #[test]
     fn an_unpriced_row_carries_no_number() {
-        let scanned = report_of(vec![message("glm-5.2", "a")]);
+        let scanned = report_of(vec![message("unlisted-model-1", "a")]);
         let report = group_report(&scanned, "model");
         assert_eq!(report.rows[0].cost_usd, None);
-        assert_eq!(report.unpriced_models, vec!["glm-5.2".to_string()]);
+        assert_eq!(report.unpriced_models, vec!["unlisted-model-1".to_string()]);
     }
 
     #[test]
     fn a_partly_priced_total_reports_its_coverage() {
-        let scanned = report_of(vec![message("claude-opus-5", "a"), message("glm-5.2", "a")]);
+        let scanned = report_of(vec![message("claude-opus-5", "a"), message("unlisted-model-1", "a")]);
         let report = group_report(&scanned, "model");
         assert!((report.total.coverage - 0.5).abs() < 1e-9);
         assert_eq!(report.total.cost_usd, Some(5.0));
@@ -264,10 +267,19 @@ mod tests {
         assert_eq!(report.rows[0].messages, 2);
     }
 
+    /// The harness is the tool that ran; the provider is the company that charged. They
+    /// are different answers, and for a proxied session they are different companies.
+    #[test]
+    fn harness_and_provider_are_separate_cuts() {
+        let scanned = report_of(vec![message("gpt-5.6-sol", "claude-code")]);
+        assert_eq!(group_report(&scanned, "harness").rows[0].key, "claude-code");
+        assert_eq!(group_report(&scanned, "provider").rows[0].key, "OpenAI");
+    }
+
     #[test]
     fn grouping_switches_without_rescanning() {
         let scanned = report_of(vec![message("claude-opus-5", "codex")]);
-        assert_eq!(group_report(&scanned, "client").rows[0].key, "codex");
+        assert_eq!(group_report(&scanned, "harness").rows[0].key, "codex");
         assert_eq!(group_report(&scanned, "day").rows[0].key, "2026-08-02");
         assert_eq!(group_report(&scanned, "workspace").rows[0].key, "(none)");
     }

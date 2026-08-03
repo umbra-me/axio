@@ -62,6 +62,13 @@ a minor bump may break things.
   than derived: the tenth-of-input that Anthropic and OpenAI share is nowhere
   near right for DeepSeek (2% of input), Z.ai (19%) or xAI (25%).
 
+  Every total is broken down by **provider** and by **harness**, whichever the
+  table is grouped by. The two are different questions — who is going to invoice
+  me, and which tool spent it — and they genuinely diverge: $449 of the Claude
+  Code usage on this machine was billed by OpenAI, because the CLI was pointed at
+  a proxy. The provider is derived from the model, never from the directory the
+  log sits in.
+
   `--import-prices` takes a models.dev-shaped feed so a model the bundled table
   has never heard of can still be costed. It is a file rather than a fetch:
   `axio-provider` is the only crate here that links HTTP, and one convenience is

@@ -58,7 +58,13 @@ export interface ProviderSetting {
   hint: string;
 }
 
-export type CostGroup = "model" | "client" | "session" | "day" | "workspace";
+export type CostGroup =
+  | "model"
+  | "provider"
+  | "harness"
+  | "session"
+  | "day"
+  | "workspace";
 
 export interface CostRow {
   key: string;

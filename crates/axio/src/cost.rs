@@ -20,8 +20,11 @@ use axio_cost::{CostMessage, ScanReport};
 pub(crate) enum GroupBy {
     /// Which model was billed. The default, because it is what the money follows.
     Model,
-    /// Which agent was run.
-    Client,
+    /// Which company charged — derived from the model, not from the directory.
+    Provider,
+    /// Which agent was run. `client` is accepted as the older name for it.
+    #[value(alias = "client")]
+    Harness,
     /// One row per session.
     Session,
     /// One row per calendar day, UTC.
@@ -38,7 +41,8 @@ impl GroupBy {
             // billable model, as are `claude-fable-5` and `anthropic/claude-fable-5` —
             // and grouping on them raw splits one model's spend across several lines.
             GroupBy::Model => axio_cost::pricing::normalize(&message.model),
-            GroupBy::Client => message.client.to_string(),
+            GroupBy::Provider => axio_cost::provider_of(&message.model).to_string(),
+            GroupBy::Harness => message.client.to_string(),
             GroupBy::Session => message.session_id.clone(),
             GroupBy::Day => message.timestamp.date().to_string(),
             GroupBy::Workspace => message
@@ -51,7 +55,8 @@ impl GroupBy {
     fn heading(self) -> &'static str {
         match self {
             GroupBy::Model => "model",
-            GroupBy::Client => "agent",
+            GroupBy::Provider => "provider",
+            GroupBy::Harness => "harness",
             GroupBy::Session => "session",
             GroupBy::Day => "day",
             GroupBy::Workspace => "workspace",
@@ -156,7 +161,7 @@ pub(crate) fn cost_command(by: GroupBy, json: bool, diagnose: bool, limit: usize
     }
 
     if json {
-        return emit_json(by, &groups, &grand);
+        return emit_json(by, &groups, &grand, &report, &prices);
     }
 
     // Sorted by spend rather than by name: the row someone is looking for is nearly
@@ -198,11 +203,58 @@ pub(crate) fn cost_command(by: GroupBy, json: bool, diagnose: bool, limit: usize
         grand.tokens.total(),
         render(&grand.cost()),
     );
+
+    // The two questions a total prompts — who is going to invoice me, and which tool spent
+    // it — are different cuts of the same money, and neither is answerable from a table
+    // grouped by the other. Printing both under every total saves running this three times.
+    if by != GroupBy::Provider {
+        summarise("by provider", GroupBy::Provider, report.messages(), &prices);
+    }
+    if by != GroupBy::Harness {
+        summarise("by harness", GroupBy::Harness, report.messages(), &prices);
+    }
+
     if !grand.unpriced_models.is_empty() {
         let names: Vec<_> = grand.unpriced_models.iter().map(String::as_str).collect();
-        println!("unpriced models: {}", names.join(", "));
+        println!("\nunpriced models: {}", names.join(", "));
     }
     0
+}
+
+/// A compact breakdown under the total, so provider and harness are always visible.
+fn summarise<'a>(
+    heading: &str,
+    by: GroupBy,
+    messages: impl Iterator<Item = &'a CostMessage>,
+    prices: &Prices,
+) {
+    let mut groups: BTreeMap<String, Totals> = BTreeMap::new();
+    for message in messages {
+        groups.entry(by.key(message)).or_default().add(message, prices);
+    }
+    if groups.len() < 2 {
+        // One row would only restate the total in different words.
+        return;
+    }
+
+    let mut rows: Vec<_> = groups.into_iter().collect();
+    rows.sort_by(|a, b| {
+        spend(&b.1)
+            .partial_cmp(&spend(&a.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    println!("
+{heading}");
+    for (key, totals) in rows {
+        println!(
+            "  {:<32} {:>10} {:>16}  {}",
+            truncate(&key, 32),
+            totals.messages,
+            totals.tokens.total(),
+            render(&totals.cost()),
+        );
+    }
 }
 
 /// What a group cost, for sorting. Unpriced groups sort by tokens instead so they do not
@@ -247,7 +299,31 @@ fn diagnose_report(report: &ScanReport, prices: &Prices) -> u8 {
     0
 }
 
-fn emit_json(by: GroupBy, groups: &BTreeMap<String, Totals>, grand: &Totals) -> u8 {
+fn emit_json(
+    by: GroupBy,
+    groups: &BTreeMap<String, Totals>,
+    grand: &Totals,
+    report: &ScanReport,
+    prices: &Prices,
+) -> u8 {
+    let breakdown = |by: GroupBy| {
+        let mut totals: BTreeMap<String, Totals> = BTreeMap::new();
+        for message in report.messages() {
+            totals.entry(by.key(message)).or_default().add(message, prices);
+        }
+        totals
+            .into_iter()
+            .map(|(key, totals)| {
+                serde_json::json!({
+                    "key": key,
+                    "messages": totals.messages,
+                    "tokens": totals.tokens.total(),
+                    "costUsd": totals.cost().partial().map(|(dollars, _)| dollars),
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+
     let rows: Vec<_> = groups
         .iter()
         .map(|(key, totals)| {
@@ -269,6 +345,8 @@ fn emit_json(by: GroupBy, groups: &BTreeMap<String, Totals>, grand: &Totals) -> 
     let document = serde_json::json!({
         "groupedBy": by.heading(),
         "rows": rows,
+        "byProvider": breakdown(GroupBy::Provider),
+        "byHarness": breakdown(GroupBy::Harness),
         "total": {
             "messages": grand.messages,
             "tokens": grand.tokens,
@@ -337,7 +415,13 @@ mod tests {
             "claude-haiku-4-5",
             "one model is one row, however the log spelled it"
         );
-        assert_eq!(GroupBy::Client.key(&one), "claude-code");
+        assert_eq!(GroupBy::Harness.key(&one), "claude-code");
+        // The harness is the directory the log came from; the provider is who charged.
+        // For a proxied model those are different companies.
+        assert_eq!(GroupBy::Provider.key(&one), "Anthropic");
+        let proxied = message("gpt-5.6-sol", "claude-code", "s1");
+        assert_eq!(GroupBy::Harness.key(&proxied), "claude-code");
+        assert_eq!(GroupBy::Provider.key(&proxied), "OpenAI");
         assert_eq!(GroupBy::Session.key(&one), "s1");
         assert_eq!(GroupBy::Day.key(&one), "2026-08-02");
         assert_eq!(GroupBy::Workspace.key(&one), "(none)");

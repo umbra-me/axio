@@ -18,7 +18,9 @@
 
 mod table;
 pub mod feed;
+pub mod provider;
 
+pub use provider::provider_of;
 pub use table::normalize;
 
 use serde::{Deserialize, Serialize};

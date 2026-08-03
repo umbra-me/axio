@@ -111,7 +111,14 @@ function Cost() {
     );
   }
 
-  const groups: CostGroup[] = ["model", "client", "day", "workspace", "session"];
+  const groups: CostGroup[] = [
+    "model",
+    "provider",
+    "harness",
+    "day",
+    "workspace",
+    "session",
+  ];
 
   return (
     <>
