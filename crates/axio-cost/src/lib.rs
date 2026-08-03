@@ -28,6 +28,7 @@ pub mod message;
 pub mod pricing;
 pub mod sources;
 pub mod stats;
+pub mod store;
 pub mod tokens;
 pub mod totals;
 
