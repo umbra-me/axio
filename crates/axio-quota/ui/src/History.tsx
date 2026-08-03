@@ -27,20 +27,24 @@ export function History() {
 
   // Series keyed by provider and window, in first-seen order so the charts appear in the
   // same order as the Providers view.
-  const keys: string[] = [];
+  //
+  // The pair is kept as a pair. Joining it into one string and splitting on a space —
+  // which is what this did — silently truncated every label containing one: "Weekly
+  // (Fable)" became a second "Weekly" and drew a duplicate chart, and
+  // "GPT-5.3-Codex-Spark Weekly" matched no reading at all and vanished.
+  const bySeries = new Map<string, Reading[]>();
   for (const reading of readings) {
-    const key = `${reading.provider} ${reading.label}`;
-    if (!keys.includes(key)) keys.push(key);
+    const key = JSON.stringify([reading.provider, reading.label]);
+    const existing = bySeries.get(key);
+    if (existing) existing.push(reading);
+    else bySeries.set(key, [reading]);
   }
 
   return (
     <>
       <p className="muted">{readings.length} readings</p>
-      {keys.map((key) => {
-        const [provider, label] = key.split(" ");
-        const series = readings.filter(
-          (reading) => reading.provider === provider && reading.label === label,
-        );
+      {[...bySeries.entries()].map(([key, series]) => {
+        const { provider, label } = series[0];
         // A single point is a dot, not a trend; drawing it invites reading meaning into
         // one sample.
         if (series.length < 2) return null;
