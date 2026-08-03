@@ -2,16 +2,22 @@
 //!
 //! Two layers, in priority order:
 //!
-//! 1. an **overlay** refreshed from a public price feed and cached on disk, when the user
-//!    has opted in and a refresh has succeeded;
-//! 2. the **bundled table** in [`table`], which is compiled in and always available.
+//! 1. the **bundled table** in [`table`], compiled in and always available;
+//! 2. an **overlay** parsed from a refreshed price feed by [`feed`], for models the bundle
+//!    has never heard of.
 //!
-//! The bundled layer is the floor rather than a fallback of last resort. A quota tool that
-//! reports nothing until it has reached the network is a tool that reports nothing on the
-//! aeroplane, and a first run with no cache would otherwise show every session at $0.00 —
-//! which reads as *cheap*, not as *unknown*.
+//! The bundle ranks first, which is the opposite of what "newer data wins" suggests. Its
+//! rows carry structure a flat feed row cannot express — OpenAI's rate doubling past 272K
+//! input, an introductory window closing on a date, cache ratios checked against each
+//! vendor's own page — and letting a feed row replace one drops that structure silently.
+//! The overlay answers for what the bundle does not know, which is the problem it exists
+//! to solve.
+//!
+//! Nothing here opens a socket. The feed is fetched by whoever calls this crate and handed
+//! in already read, so pricing stays testable without a network and usable without one.
 
 mod table;
+pub mod feed;
 
 pub use table::normalize;
 
@@ -207,10 +213,19 @@ impl Prices {
         Prices::default()
     }
 
-    /// Add refreshed rates on top of the bundled table.
+    /// Add refreshed rates beneath the bundled table.
     ///
-    /// The overlay wins where the two disagree: it is newer by construction, and a vendor
-    /// price change reaches the feed long before it reaches a compiled-in constant.
+    /// The **bundle wins** where the two know the same model, which is the opposite of
+    /// what "newer data is better" suggests and is deliberate. A feed row is four numbers.
+    /// A bundled row is four numbers plus structure a flat feed cannot express: OpenAI's
+    /// rate doubling past 272K input, Sonnet 5's introductory window closing on a date,
+    /// cache ratios checked against each vendor's own page. Letting a flat row replace a
+    /// tiered one drops the tier silently and under-bills every long request.
+    ///
+    /// So the overlay answers for models the bundle has never heard of — the problem it
+    /// exists to solve — and the bundle keeps what it has verified. A stale bundled price
+    /// is a visible edit to a table with a cited source; a tier lost to an overlay is
+    /// invisible.
     pub fn with_overlay(
         mut self,
         feed: impl Into<String>,
@@ -226,19 +241,19 @@ impl Prices {
     pub fn resolve(&self, raw_model: &str, date: &str) -> Resolved {
         let id = normalize(raw_model);
 
-        if let Some(pricing) = self.overlay.get(&id) {
+        if let Some(pricing) = table::lookup(&id, date) {
             return Resolved {
+                pricing: Some(pricing),
+                source: PriceSource::Bundled,
+            };
+        }
+
+        match self.overlay.get(&id) {
+            Some(pricing) => Resolved {
                 pricing: Some(*pricing),
                 source: PriceSource::Overlay {
                     feed: self.feed.clone().unwrap_or_else(|| "overlay".into()),
                 },
-            };
-        }
-
-        match table::lookup(&id, date) {
-            Some(pricing) => Resolved {
-                pricing: Some(pricing),
-                source: PriceSource::Bundled,
             },
             None => Resolved {
                 pricing: None,
@@ -310,18 +325,17 @@ mod tests {
         assert!(resolved.pricing.is_some());
     }
 
+    /// The bundle wins for a model it knows, because its row carries tier and promotional
+    /// structure a flat feed row would silently discard.
     #[test]
-    fn an_overlay_supersedes_the_bundled_table() {
+    fn the_bundle_outranks_an_overlay_for_a_model_it_knows() {
         let repriced = anthropic_rates(4.0, 20.0);
         let prices = Prices::bundled()
             .with_overlay("models.dev", [("claude-opus-5".to_string(), repriced)]);
 
         let resolved = prices.resolve("claude-opus-5", "2026-08-02");
-        assert_eq!(resolved.pricing, Some(repriced));
-        assert_eq!(
-            resolved.source,
-            PriceSource::Overlay { feed: "models.dev".into() }
-        );
+        assert_eq!(resolved.pricing.map(|p| p.input), Some(5.0));
+        assert_eq!(resolved.source, PriceSource::Bundled);
     }
 
     /// The overlay is the only way a non-Anthropic model gets priced, since the bundled

@@ -62,6 +62,13 @@ a minor bump may break things.
   than derived: the tenth-of-input that Anthropic and OpenAI share is nowhere
   near right for DeepSeek (2% of input), Z.ai (19%) or xAI (25%).
 
+  `--import-prices` takes a models.dev-shaped feed so a model the bundled table
+  has never heard of can still be costed. It is a file rather than a fetch:
+  `axio-provider` is the only crate here that links HTTP, and one convenience is
+  not worth spending that boundary on. The bundle outranks the feed for models it
+  knows, because a bundled row carries tier and promotional structure a flat feed
+  row cannot express and would silently drop.
+
   **A model with no known rate is reported unpriced, never as zero**, and no total
   is printed without the share of tokens it accounts for. That rule has teeth: an
   early build summed the one Codex message in 77,525 whose model it knew and

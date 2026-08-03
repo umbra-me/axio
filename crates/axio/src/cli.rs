@@ -37,6 +37,13 @@ pub(crate) enum Command {
         /// Maximum rows to print before summarising the remainder.
         #[arg(long, default_value_t = 25)]
         limit: usize,
+
+        /// Import a price feed so models the bundled table does not know can be costed.
+        ///
+        /// Takes a models.dev-shaped document; fetch it with whatever already speaks
+        /// HTTP here, for example `curl -fsSL https://models.dev/api.json -o prices.json`.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["json", "diagnose"])]
+        import_prices: Option<std::path::PathBuf>,
     },
     /// Show how much of each provider's limit is left, and when it resets.
     ///

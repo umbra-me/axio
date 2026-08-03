@@ -15,6 +15,8 @@ bash scripts/deps.sh                                # axio-core links no transpo
 bash scripts/check-windows.sh                       # cfg-gated code still compiles for windows
 
 axio quota                                          # provider limits; --json, --diagnose
+axio cost --by model|client|day|workspace|session   # what the agents here have spent
+curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.json
 cargo build --release -p axio-quota --features app              # tray + flyout + window
 npm --prefix crates/axio-quota/ui run build                     # frontend, before that
 node crates/axio-quota/icons/make-icon.mjs                      # regenerate icon.ico

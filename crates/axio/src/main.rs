@@ -115,8 +115,11 @@ async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
     if let Some(Command::Auth { action }) = &cli.command {
         return auth_command(action);
     }
-    if let Some(Command::Cost { by, json, diagnose, limit }) = &cli.command {
-        return cost::cost_command(*by, *json, *diagnose, *limit);
+    if let Some(Command::Cost { by, json, diagnose, limit, import_prices }) = &cli.command {
+        return match import_prices {
+            Some(path) => cost::import_prices(path),
+            None => cost::cost_command(*by, *json, *diagnose, *limit),
+        };
     }
     if let Some(Command::Quota {
         provider,
