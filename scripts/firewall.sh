@@ -12,7 +12,19 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # Word-boundary anchored so ordinary English is not caught. Extend deliberately.
-NAMES='opencode|kilocode|kilo[ -]code|earendil|oh-my-pi|terax|t3code|cmux|odysseus'
+#
+# `opencode` was on this list and is not any more. It names a product axio reads
+# — a session store to cost, and a usage window to probe — the same way `cursor`
+# and `openai-codex` do, and naming a provider you support is not passing its
+# work off as yours. What the list is actually for is provenance: a name here
+# should mean "this repository must not look like that project", not "this
+# repository must not admit that project exists".
+#
+# The attribution concern it was standing in for is a different check in a
+# different place: `.githooks/commit-msg` rejects tool attribution in commit
+# messages and branch names, and matches attribution constructs rather than bare
+# names for exactly this reason.
+NAMES='kilocode|kilo[ -]code|earendil|oh-my-pi|terax|t3code|cmux|odysseus'
 
 # Literals that indicate code lifted from somewhere it should not have been.
 # Their presence is a licensing or impersonation problem, not a naming one.
