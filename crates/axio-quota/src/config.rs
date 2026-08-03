@@ -52,6 +52,11 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cookie_header: Option<String>,
+    /// The team, project or workspace a key is scoped to, where the provider puts that in
+    /// the URL rather than in the credential. `workspaceID` on the wire, which is the
+    /// spelling CodexBar's config uses — the two files stay interchangeable.
+    #[serde(rename = "workspaceID", skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -63,6 +68,7 @@ impl ProviderConfig {
             enabled: Some(true),
             api_key: None,
             cookie_header: None,
+            workspace_id: None,
             extra: Map::new(),
         }
     }

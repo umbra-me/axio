@@ -1,6 +1,9 @@
 pub mod claude;
 pub mod codex;
+pub mod deepseek;
 pub mod openrouter;
+pub mod xai;
+pub mod zai;
 
 use crate::model::ProviderId;
 use crate::provider::Provider;
@@ -11,6 +14,9 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(codex::CodexProvider),
         Box::new(claude::ClaudeProvider),
         Box::new(openrouter::OpenRouterProvider),
+        Box::new(zai::ZaiProvider),
+        Box::new(deepseek::DeepSeekProvider),
+        Box::new(xai::XaiProvider),
     ]
 }
 
@@ -19,6 +25,9 @@ pub fn by_id(id: ProviderId) -> Box<dyn Provider> {
         ProviderId::Codex => Box::new(codex::CodexProvider),
         ProviderId::Claude => Box::new(claude::ClaudeProvider),
         ProviderId::Openrouter => Box::new(openrouter::OpenRouterProvider),
+        ProviderId::Zai => Box::new(zai::ZaiProvider),
+        ProviderId::Deepseek => Box::new(deepseek::DeepSeekProvider),
+        ProviderId::Xai => Box::new(xai::XaiProvider),
     }
 }
 
