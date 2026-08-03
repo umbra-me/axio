@@ -364,7 +364,9 @@ axio's command surface.
 
 Provider knowledge was derived by reading
 [CodexBar](https://github.com/steipete/codexbar) (MIT); no source is included.
-See [`crates/axio-quota/README.md`](crates/axio-quota/README.md) and `NOTICE`.
+See [`crates/axio-quota/README.md`](crates/axio-quota/README.md), `NOTICE`, and
+[`crates/axio-quota/PORTING.md`](crates/axio-quota/PORTING.md) for what the port
+carried over and what it left behind.
 
 ## Cost
 

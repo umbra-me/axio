@@ -12,7 +12,9 @@ Three surfaces over one probe layer:
 
 Provider protocol knowledge was derived by reading
 [CodexBar](https://github.com/steipete/codexbar) (MIT). No CodexBar source is
-included — see `NOTICE` at the repo root.
+included — see `NOTICE` at the repo root. [`PORTING.md`](PORTING.md) records
+what was carried across, what was deliberately left behind, and the
+Windows-specific deltas.
 
 ## Working on it
 
@@ -61,7 +63,7 @@ src/
   config.rs        %APPDATA%\axio\quota\config.json, CodexBar-compatible
   history.rs       JSONL readings, 45-day retention
   focus.rs         which provider the single tray icon shows  <-- unimplemented
-  app/             Tauri: commands, tray, icon rasteriser, state
+  app/             Tauri: commands, tray, icon rasteriser, state, cost, schedule
 ui/                React + TypeScript, Vite. Design tokens from apps/site.
 icons/make-icon.mjs  regenerates icon.ico; tauri-build requires it
 ```
@@ -80,13 +82,10 @@ trimmed, de-identified real responses for that reason, not invented ones.
 
 ## Not built yet
 
-- **Cost.** The tab lists the transcript directories a scanner would walk and
-  says plainly that it is unbuilt. Everything it needs is already on disk.
 - **`focus::tray_focus`.** Which provider the single icon shows when several are
-  enabled. Four candidate policies and three `#[ignore]`d spec tests are in the
-  file; the placeholder returns the first provider.
-- **Adaptive refresh.** Fixed five-minute interval today. Upstream tightens the
-  schedule near a reset, which is the right answer.
+  enabled. Four candidate policies are laid out in the file; the placeholder
+  returns the first provider, ignoring usage entirely.
 - **More providers.** Gemini and Factory have local credentials on this machine
-  already; Cursor and Augment need browser cookies, which Chrome 127+ App-Bound
-  Encryption makes genuinely hard.
+  already. Augment still needs a browser session, which Chrome 127+ App-Bound
+  Encryption makes genuinely hard — Cursor sidesteps that through its own local
+  state database, or a pasted cookie header.
