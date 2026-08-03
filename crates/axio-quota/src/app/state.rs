@@ -16,6 +16,8 @@ pub struct AppState {
     pub env: Env,
     pub results: Mutex<Results>,
     refreshing: Mutex<bool>,
+    /// When the last probe finished, so a burst of triggers becomes one probe.
+    last_finished: Mutex<Option<std::time::Instant>>,
 }
 
 impl AppState {
@@ -24,6 +26,7 @@ impl AppState {
             env: current_env(),
             results: Mutex::new(Vec::new()),
             refreshing: Mutex::new(false),
+            last_finished: Mutex::new(None),
         }
     }
 
@@ -35,12 +38,32 @@ impl AppState {
     }
 }
 
+/// The shortest gap between two probes.
+///
+/// Saving settings triggers a refresh, so does capturing a sign-in, so does the schedule,
+/// and so does the button. Under a run of edits those pile onto vendors that rate-limit
+/// their own usage endpoints — Claude began answering 429, which the view reported as
+/// "rate limited by provider" and which was our doing rather than theirs.
+const MIN_GAP: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Probes on a worker thread, then emits [`EVENT_UPDATED`].
 ///
-/// Never on the UI thread: a webview that stops painting because an HTTP request is slow
-/// is the failure a desktop app most obviously must not have. Re-entry is guarded, so
-/// mashing Refresh queues nothing.
+/// Never on the UI thread: a webview that stops painting because an HTTP request is slow is
+/// the failure a desktop app most obviously must not have. Re-entry is guarded, so mashing
+/// Refresh queues nothing, and [`MIN_GAP`] keeps a burst of triggers to one probe.
 pub fn refresh(app: &AppHandle) {
+    refresh_inner(app, false)
+}
+
+/// Probe regardless of how recently the last one ran — for the Refresh button only.
+///
+/// Someone who presses it is asking a question that the throttle would otherwise decline
+/// to answer, silently, which is the one case where declining is wrong.
+pub fn refresh_now(app: &AppHandle) {
+    refresh_inner(app, true)
+}
+
+fn refresh_inner(app: &AppHandle, forced: bool) {
     let state = app.state::<Arc<AppState>>();
     {
         let mut refreshing = state
@@ -49,6 +72,15 @@ pub fn refresh(app: &AppHandle) {
             .unwrap_or_else(|err| err.into_inner());
         if *refreshing {
             return;
+        }
+        if !forced {
+            let last = state
+                .last_finished
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            if last.is_some_and(|at| at.elapsed() < MIN_GAP) {
+                return;
+            }
         }
         *refreshing = true;
     }
@@ -66,6 +98,10 @@ pub fn refresh(app: &AppHandle) {
             crate::history::record(&shared.env, &fetched);
             *shared.results.lock().unwrap_or_else(|err| err.into_inner()) = fetched;
         }
+        *shared
+            .last_finished
+            .lock()
+            .unwrap_or_else(|err| err.into_inner()) = Some(std::time::Instant::now());
         *shared
             .refreshing
             .lock()

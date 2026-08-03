@@ -509,22 +509,36 @@ function Connect({
 
   useEffect(() => {
     if (!waiting) return;
-    const timer = setInterval(async () => {
+    let live = true;
+    const started = Date.now();
+
+    // Sequential, not an interval. Each check waits on the sign-in window's own event
+    // loop, so a timer would stack requests on top of a page that is still loading — which
+    // is what made the whole app stop painting. The next check is scheduled only once the
+    // previous one has answered.
+    const tick = async () => {
+      if (!live) return;
       try {
         onStatus(await api.captureProvider(entry.id));
         setWaiting(false);
+        return;
       } catch (err) {
-        // Not signed in yet, on almost every tick — but the message says which cookies
-        // the window does hold, and staring at an unchanging "Waiting…" while that is
-        // known and unshown is the whole reason this was hard to diagnose.
+        // Expected on nearly every check until the sign-in completes. The message names
+        // the cookies the window does hold, which is the useful part.
         onStatus(String(err));
       }
-    }, 1500);
-    // A window left open forever should not poll forever.
-    const stop = setTimeout(() => setWaiting(false), 5 * 60 * 1000);
+      // A window left open forever should not be polled forever.
+      if (live && Date.now() - started < 5 * 60 * 1000) {
+        setTimeout(tick, 2000);
+      } else {
+        setWaiting(false);
+      }
+    };
+    const first = setTimeout(tick, 2000);
+
     return () => {
-      clearInterval(timer);
-      clearTimeout(stop);
+      live = false;
+      clearTimeout(first);
     };
   }, [waiting, entry.id, onStatus]);
 

@@ -55,7 +55,7 @@ pub fn overview(state: State<'_, Arc<AppState>>) -> Overview {
 
 #[tauri::command]
 pub fn refresh_now(app: AppHandle) {
-    refresh(&app);
+    super::state::refresh_now(&app);
 }
 
 /// `async` so it runs on a worker rather than the main thread: a sync Tauri command
@@ -218,10 +218,18 @@ pub async fn set_refresh_cadence(
 }
 
 /// Open a window on the provider's own sign-in page.
+///
+/// `async`, and off the main thread, for the same reason the capture is: building a webview
+/// waits on the event loop, and a synchronous command *is* the event loop. Done inline it
+/// froze the whole app the moment the button was pressed — the window appeared and nothing
+/// ever painted again.
 #[tauri::command]
-pub fn connect_provider(app: AppHandle, provider: String) -> Result<(), String> {
+pub async fn connect_provider(app: AppHandle, provider: String) -> Result<(), String> {
     let id = ProviderId::parse(&provider).ok_or("Unknown provider")?;
-    super::connect::open(&app, id)
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || super::connect::open(&handle, id))
+        .await
+        .map_err(|err| format!("The sign-in window did not open: {err}"))?
 }
 
 /// Ask whether the sign-in window has a session yet.

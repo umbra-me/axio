@@ -10,10 +10,15 @@
 //! missing, which is the specific way this kind of extraction goes wrong quietly.
 
 use async_trait::async_trait;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
+
+mod payload;
+
+pub use payload::{error_message, is_signed_out, parse_usage};
+use payload::{dump, signed_out_or_broken};
 
 use crate::error::ProbeError;
-use crate::model::{ProviderId, RateWindow, UsageSnapshot};
+use crate::model::{ProviderId, UsageSnapshot};
 use crate::paths::Env;
 use crate::provider::{FetchContext, Provider, redirect_target};
 
@@ -23,10 +28,6 @@ const SERVER_URL: &str = "https://opencode.ai/_server";
 /// The server function that returns the subscription's usage windows. opencode addresses
 /// its server functions by content hash rather than by name, so this is the name.
 const SUBSCRIPTION_FN: &str = "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4";
-
-/// How far past a label to look for its numbers. Wide enough for the fields between them,
-/// narrow enough that a missing figure cannot borrow the next window's.
-const NEAR: usize = 400;
 
 pub struct OpenCodeProvider;
 
@@ -91,6 +92,13 @@ async fn discover_workspace(ctx: &FetchContext, session: &str) -> Result<String,
              the workspace id in Settings to skip this lookup."
         )));
     }
+    dump("workspaces", &body);
+    // This call fails first when the session is not recognised, so it is where the useful
+    // message lives. Without this the failure surfaces as "no workspace", which sends the
+    // fix in the wrong direction — it is not the workspace that is missing.
+    if let Some(message) = error_message(&body) {
+        return Err(signed_out_or_broken(&message));
+    }
     find_workspace(&body).ok_or_else(|| {
         ProbeError::NotConfigured(
             "Signed in, but this account has no workspace the billing page can report. Put a \
@@ -98,126 +106,6 @@ async fn discover_workspace(ctx: &FetchContext, session: &str) -> Result<String,
                 .to_string(),
         )
     })
-}
-
-/// A number written after `"field":` or `field:`, within `NEAR` bytes of `label`.
-fn number_near(text: &str, label: &str, field: &str) -> Option<f64> {
-    let at = text.find(label)?;
-    let window = &text[at..text.len().min(at + NEAR)];
-    let key = window.find(field)?;
-    let rest = &window[key + field.len()..];
-    let digits: String = rest
-        .chars()
-        .skip_while(|c| !c.is_ascii_digit() && *c != '-')
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
-        .collect();
-    digits.parse().ok()
-}
-
-/// What a window's percentage might be called.
-///
-/// A list rather than a name because the response is not a documented API — it is whatever
-/// the site's own server function returns this week. Spelling it one way and failing on the
-/// others turns a working session into "no rolling usage found", which is what happened.
-const PERCENT_KEYS: &[&str] = &[
-    "usagePercent",
-    "usedPercent",
-    "percentUsed",
-    "usage_percent",
-    "used_percent",
-    "utilizationPercent",
-    "utilization",
-    "percent",
-];
-
-/// What a countdown to the reset might be called.
-const RESET_KEYS: &[&str] = &[
-    "resetInSec",
-    "resetInSeconds",
-    "resetSeconds",
-    "reset_in_sec",
-    "reset_sec",
-    "resetsInSec",
-    "resetIn",
-    "resetSec",
-];
-
-/// What each window might be called.
-const ROLLING_LABELS: &[&str] = &["rollingUsage", "rolling_usage", "rolling"];
-const WEEKLY_LABELS: &[&str] = &["weeklyUsage", "weekly_usage", "weekly"];
-
-/// The first of `fields` that appears near any of `labels`.
-fn first_number(text: &str, labels: &[&str], fields: &[&str]) -> Option<f64> {
-    labels
-        .iter()
-        .find_map(|label| fields.iter().find_map(|field| number_near(text, label, field)))
-}
-
-/// The identifier-like keys in a document, for an error that says what it saw.
-///
-/// Names only. This runs when parsing has already failed, which is exactly when the useful
-/// thing is what the response *does* contain — and exactly when nobody can see it.
-fn keys_in(text: &str) -> Vec<String> {
-    let mut keys: Vec<String> = Vec::new();
-    for (index, _) in text.match_indices('"') {
-        let rest = &text[index + 1..];
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        // A key is a quoted name followed by a colon, allowing for a closing quote.
-        if name.is_empty() || name.len() > 40 {
-            continue;
-        }
-        let after = &rest[name.len()..];
-        if after.starts_with("\":") && !keys.contains(&name) {
-            keys.push(name);
-        }
-    }
-    keys.truncate(40);
-    keys
-}
-
-/// Lift the usage windows out of the serialized response.
-///
-/// `now` is a parameter because the response gives a countdown rather than a timestamp:
-/// resets arrive as seconds remaining, and turning that into a time needs a clock the test
-/// can also hold.
-pub fn parse_usage(text: &str, now: OffsetDateTime) -> Result<UsageSnapshot, ProbeError> {
-    let mut snapshot = UsageSnapshot::new(ProviderId::Opencode);
-
-    for (labels, name, minutes) in [
-        (ROLLING_LABELS, "5h", Some(300u32)),
-        (WEEKLY_LABELS, "Weekly", Some(10_080)),
-    ] {
-        let Some(used) = first_number(text, labels, PERCENT_KEYS) else {
-            continue;
-        };
-        let resets_at = first_number(text, labels, RESET_KEYS)
-            .filter(|seconds| *seconds > 0.0)
-            .map(|seconds| now + Duration::seconds(seconds as i64));
-        snapshot.windows.push(
-            RateWindow::new(name, used.clamp(0.0, 100.0))
-                .with_reset(resets_at)
-                .with_window_minutes(minutes),
-        );
-    }
-
-    // The rolling window is the one opencode always reports; weekly is optional. Missing
-    // both means the response was not the one expected, which is a parse failure and not
-    // an idle account.
-    if snapshot.windows.is_empty() {
-        let keys = keys_in(text);
-        return Err(ProbeError::decode(
-            "opencode subscription response",
-            if keys.is_empty() {
-                format!("no usage in a {}-byte response with no field names", text.len())
-            } else {
-                format!("no usage found. The response has: {}", keys.join(", "))
-            },
-        ));
-    }
-    Ok(snapshot)
 }
 
 #[async_trait]
@@ -265,7 +153,7 @@ impl Provider for OpenCodeProvider {
         let response = ctx
             .http
             .get(&url)
-            .header("Cookie", session)
+            .header("Cookie", &session)
             .header("X-Server-Id", SUBSCRIPTION_FN)
             // The framework tags each call with an instance id. A fixed one is enough —
             // it distinguishes calls, and nothing here makes two at once.
@@ -291,7 +179,19 @@ impl Provider for OpenCodeProvider {
             .map_err(|err| ProbeError::network(PROVIDER, err))?;
 
         match status.as_u16() {
-            200..=299 => parse_usage(&body, OffsetDateTime::now_utc()),
+            200..=299 => {
+                dump("subscription GET", &body);
+                if let Ok(snapshot) = parse_usage(&body, OffsetDateTime::now_utc()) {
+                    return Ok(snapshot);
+                }
+                // The same function answers a GET with an empty payload and a POST with the
+                // real one, depending on how the framework decided to route it that day.
+                // Another client for this endpoint retries the same way rather than
+                // treating the empty GET as the answer.
+                let posted = post_subscription(ctx, &session, &workspace).await?;
+                dump("subscription POST", &posted);
+                parse_usage(&posted, OffsetDateTime::now_utc())
+            }
             300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(format!(
                 "opencode answered {status}{}. Sign in at opencode.ai and paste a fresh Cookie \
                  header, and check the workspace id belongs to that account.",
@@ -309,6 +209,36 @@ impl Provider for OpenCodeProvider {
     }
 }
 
+/// The same call as a POST, with the arguments in the body.
+async fn post_subscription(
+    ctx: &FetchContext,
+    session: &str,
+    workspace: &str,
+) -> Result<String, ProbeError> {
+    let response = ctx
+        .http
+        .post(format!("{SERVER_URL}?id={SUBSCRIPTION_FN}"))
+        .header("Cookie", session)
+        .header("X-Server-Id", SUBSCRIPTION_FN)
+        .header("X-Server-Instance", "server-fn:axio")
+        .header("Origin", "https://opencode.ai")
+        .header(
+            "Referer",
+            format!("https://opencode.ai/workspace/{workspace}/billing"),
+        )
+        .header("Content-Type", "application/json")
+        .header("Accept", "text/javascript, application/json;q=0.9, */*;q=0.8")
+        .body(format!("[\"{workspace}\"]"))
+        .send()
+        .await
+        .map_err(|err| ProbeError::network(PROVIDER, err))?;
+
+    response
+        .text()
+        .await
+        .map_err(|err| ProbeError::network(PROVIDER, err))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,49 +252,6 @@ mod tests {
         "rollingUsage":{"usagePercent":42.5,"resetInSec":3600},
         "weeklyUsage":{"usagePercent":8,"resetInSec":172800}}}"#;
 
-    #[test]
-    fn both_windows_are_lifted_with_their_countdowns() {
-        let snapshot = parse_usage(BODY, now()).expect("parses");
-        assert_eq!(snapshot.windows.len(), 2);
-        assert_eq!(snapshot.windows[0].label, "5h");
-        assert_eq!(snapshot.windows[0].used_percent, 42.5);
-        assert_eq!(
-            snapshot.windows[0].resets_at,
-            Some(now() + Duration::hours(1))
-        );
-        assert_eq!(snapshot.windows[1].label, "Weekly");
-        assert_eq!(snapshot.windows[1].used_percent, 8.0);
-    }
-
-    /// Weekly is optional and the rolling window is not.
-    #[test]
-    fn a_missing_weekly_window_is_simply_absent() {
-        let body = r#"{"rollingUsage":{"usagePercent":10,"resetInSec":60}}"#;
-        let snapshot = parse_usage(body, now()).expect("parses");
-        assert_eq!(snapshot.windows.len(), 1);
-        assert_eq!(snapshot.windows[0].label, "5h");
-    }
-
-    /// The bound is the whole safety property: without it, a rolling window with no
-    /// percentage would silently report the weekly one's.
-    #[test]
-    fn a_label_cannot_borrow_the_next_windows_figure() {
-        let body = format!(
-            r#"{{"rollingUsage":{{}}{},"weeklyUsage":{{"usagePercent":99}}}}"#,
-            ",\"pad\":\"".to_string() + &"x".repeat(NEAR) + "\""
-        );
-        assert!(number_near(&body, "rollingUsage", "usagePercent").is_none());
-    }
-
-    /// A response that carries neither window is an expired session far more often than an
-    /// idle account, so it must not read as 0% used.
-    #[test]
-    fn no_windows_at_all_is_an_error() {
-        assert!(parse_usage(r#"{"subscription":{"plan":"pro"}}"#, now()).is_err());
-    }
-
-    /// The id is found in a document that is not worth modelling, so the shape is the
-    /// whole check — a prefix with nothing after it is not an id.
     #[test]
     fn a_workspace_id_is_found_by_its_shape() {
         assert_eq!(
@@ -383,43 +270,5 @@ mod tests {
     fn the_first_workspace_listed_is_the_one_taken() {
         let body = r#"[{"id":"wrk_zzz"},{"id":"wrk_aaa"}]"#;
         assert_eq!(find_workspace(body).as_deref(), Some("wrk_zzz"));
-    }
-
-    /// The response is not a documented API, so one spelling is a guess. This is the
-    /// alternative spelling actually listed by another client for the same endpoint.
-    #[test]
-    fn a_window_is_found_under_an_alternative_spelling() {
-        let body = r#"{"rolling":{"percentUsed":33,"resetIn":7200}}"#;
-        let snapshot = parse_usage(body, now()).expect("parses");
-        assert_eq!(snapshot.windows[0].used_percent, 33.0);
-        assert_eq!(
-            snapshot.windows[0].resets_at,
-            Some(now() + Duration::hours(2))
-        );
-    }
-
-    /// When parsing fails the useful information is what the response *did* contain, and
-    /// that is exactly the moment nobody can see it.
-    #[test]
-    fn a_failure_names_the_fields_it_saw() {
-        let body = r#"{"error":"unauthorized","requestId":"abc"}"#;
-        let message = parse_usage(body, now()).unwrap_err().to_string();
-        assert!(message.contains("error"), "{message}");
-        assert!(message.contains("requestId"), "{message}");
-    }
-
-    /// Values must never be reported, only names — the response may name an account.
-    #[test]
-    fn only_key_names_are_reported() {
-        let keys = keys_in(r#"{"email":"someone@example.com","plan":"pro"}"#);
-        assert_eq!(keys, vec!["email", "plan"]);
-        assert!(!keys.iter().any(|key| key.contains("example.com")));
-    }
-
-    /// A countdown of zero or less is a window already turned over, not a reset due now.
-    #[test]
-    fn a_non_positive_countdown_produces_no_reset_time() {
-        let body = r#"{"rollingUsage":{"usagePercent":5,"resetInSec":0}}"#;
-        assert!(parse_usage(body, now()).unwrap().windows[0].resets_at.is_none());
     }
 }
