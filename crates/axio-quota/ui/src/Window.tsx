@@ -513,9 +513,11 @@ function Connect({
       try {
         onStatus(await api.captureProvider(entry.id));
         setWaiting(false);
-      } catch {
-        // Not signed in yet. Expected on every tick until they are, so it is not an
-        // error to report — the window being open is the status.
+      } catch (err) {
+        // Not signed in yet, on almost every tick — but the message says which cookies
+        // the window does hold, and staring at an unchanging "Waiting…" while that is
+        // known and unshown is the whole reason this was hard to diagnose.
+        onStatus(String(err));
       }
     }, 1500);
     // A window left open forever should not poll forever.
@@ -530,9 +532,15 @@ function Connect({
     <div className="connect">
       <button
         onClick={async () => {
-          await api.connectProvider(entry.id);
-          setWaiting(true);
-          onStatus(`Sign in to ${entry.name} in the window that opened.`);
+          try {
+            await api.connectProvider(entry.id);
+            setWaiting(true);
+            onStatus(`Sign in to ${entry.name} in the window that opened.`);
+          } catch (err) {
+            // A window that fails to open used to fail silently, which reads as a dead
+            // button rather than as an error.
+            onStatus(String(err));
+          }
         }}
       >
         {waiting ? "Waiting for sign-in…" : `Sign in to ${entry.name}`}

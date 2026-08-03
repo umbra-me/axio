@@ -229,10 +229,22 @@ pub fn connect_provider(app: AppHandle, provider: String) -> Result<(), String> 
 /// Polled rather than pushed: a site can set its session cookie on a redirect, on a
 /// background request after the page settles, or after a second factor, and no navigation
 /// event marks all three. The cookie itself is the only reliable signal.
+///
+/// `async` and then off onto a thread of its own, and both halves are load-bearing on
+/// Windows. Reading cookies posts a message to the event loop and blocks waiting for the
+/// reply, so running it *on* that loop deadlocks the app outright — which is what a plain
+/// `fn` command does. Tauri documents this on `Webview::cookies`; the first version of this
+/// command ignored it and froze the window on the first poll.
 #[tauri::command]
-pub fn capture_provider(app: AppHandle, provider: String) -> Result<String, String> {
+pub async fn capture_provider(app: AppHandle, provider: String) -> Result<String, String> {
     let id = ProviderId::parse(&provider).ok_or("Unknown provider")?;
-    let message = super::connect::try_capture(&app, id)?;
+    let handle = app.clone();
+    let message = tauri::async_runtime::spawn_blocking(move || {
+        super::connect::try_capture(&handle, id)
+    })
+    .await
+    .map_err(|err| format!("The sign-in check did not finish: {err}"))??;
+
     // The credential just changed, so the figures on screen are about to be wrong.
     refresh(&app);
     Ok(message)

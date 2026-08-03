@@ -58,7 +58,10 @@ fn site(id: ProviderId) -> Option<Site> {
             title: "Sign in to Ollama",
         }),
         ProviderId::Opencode => Some(Site {
-            url: "https://opencode.ai/",
+            // `/auth`, not `/`. The home page is marketing and signs nobody in — it opened
+            // to a blank window and stayed there. This path redirects into the OAuth flow
+            // at auth.opencode.ai, which is the page someone can actually act on.
+            url: "https://opencode.ai/auth",
             origin: "https://opencode.ai",
             title: "Sign in to opencode",
         }),
@@ -101,10 +104,21 @@ fn capture(app: &AppHandle, id: ProviderId) -> Result<String, String> {
 
     let wanted = crate::providers::session_cookie_names(id);
     if crate::providers::cookies_present(&header, wanted).is_empty() {
-        return Err(format!(
-            "Signed in, but no session cookie yet. Waiting for one of: {}",
-            wanted.join(", ")
-        ));
+        // Names, never values. This is the message someone stares at while a sign-in is
+        // not completing, and "no session cookie yet" on its own cannot distinguish a page
+        // that has not been signed in to from one whose cookie we are looking for under
+        // the wrong name — which are opposite problems.
+        let seen: Vec<&str> = cookies.iter().map(|cookie| cookie.name()).collect();
+        return Err(if seen.is_empty() {
+            "Nothing signed in yet — the window has no cookies for this site.".to_string()
+        } else {
+            format!(
+                "Waiting for one of: {}. The window has {} cookies: {}",
+                wanted.join(", "),
+                seen.len(),
+                seen.join(", ")
+            )
+        });
     }
 
     let state = app.state::<Arc<AppState>>();
@@ -143,6 +157,7 @@ pub fn open(app: &AppHandle, id: ProviderId) -> Result<(), String> {
         .url
         .parse()
         .map_err(|_| "Bad sign-in URL.".to_string())?;
+    eprintln!("axio: opening sign-in window for {} at {}", id.as_str(), site.url);
     WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::External(url))
         .title(site.title)
         .inner_size(920.0, 760.0)
@@ -151,8 +166,55 @@ pub fn open(app: &AppHandle, id: ProviderId) -> Result<(), String> {
         // chrome that looks native is the shape of a phishing screen.
         .decorations(true)
         .build()
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            eprintln!("axio: sign-in window failed to open: {err}");
+            format!("Could not open the sign-in window: {err}")
+        })?;
     Ok(())
+}
+
+/// A one-shot check that the sign-in window and the cookie read both work.
+///
+/// `AXIO_CONNECT_PROBE=cursor` opens the window, waits, and prints the cookie names it can
+/// see. It exists because the failure it diagnoses is invisible from the outside: a window
+/// that opens but renders nothing, and a cookie read that returns nothing, look identical
+/// to someone who has not signed in yet. Names only, never values.
+pub fn spawn_probe(app: &AppHandle) {
+    let Some(raw) = std::env::var("AXIO_CONNECT_PROBE").ok() else {
+        return;
+    };
+    let Some(id) = ProviderId::parse(raw.trim()) else {
+        eprintln!("axio: AXIO_CONNECT_PROBE names no provider: {raw}");
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Err(err) = open(&app, id) {
+            eprintln!("axio probe: window failed: {err}");
+            return;
+        }
+        // Long enough for a page to load and set whatever it sets before anyone signs in.
+        for round in 1..=6 {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let Some(window) = app.get_webview_window(WINDOW) else {
+                eprintln!("axio probe: window gone");
+                return;
+            };
+            let url = site(id).map(|site| site.origin).unwrap_or_default();
+            match url.parse().map(|url| window.cookies_for_url(url)) {
+                Ok(Ok(cookies)) => {
+                    let names: Vec<&str> = cookies.iter().map(|c| c.name()).collect();
+                    eprintln!(
+                        "axio probe {round}: {} cookies for {url}: {}",
+                        names.len(),
+                        names.join(", ")
+                    );
+                }
+                Ok(Err(err)) => eprintln!("axio probe {round}: cookie read failed: {err}"),
+                Err(_) => eprintln!("axio probe {round}: bad origin"),
+            }
+        }
+    });
 }
 
 /// Try to capture, and report whether it worked.
@@ -162,6 +224,11 @@ pub fn open(app: &AppHandle, id: ProviderId) -> Result<(), String> {
 /// on an XHR after the page settles, or on a second factor — so the reliable signal is the
 /// cookie itself, asked for repeatedly while the window is open.
 pub fn try_capture(app: &AppHandle, id: ProviderId) -> Result<String, String> {
+    // Checked before anything blocking. Reading cookies waits on a reply from the event
+    // loop, and asking a window that has already gone waits for a reply nobody will send.
+    if app.get_webview_window(WINDOW).is_none() {
+        return Err("The sign-in window is closed.".to_string());
+    }
     let outcome = capture(app, id);
     if outcome.is_ok() {
         if let Some(window) = app.get_webview_window(WINDOW) {

@@ -65,6 +65,7 @@ pub fn run() -> Result<(), String> {
             tray::build(&handle)?;
             tray::update_icon(&handle);
             state::spawn_refresh_loop(&handle);
+            connect::spawn_probe(&handle);
 
             // Start scanning now rather than when the Cost tab is first opened. The saved
             // scan lands in milliseconds and the live one replaces it while the user is
