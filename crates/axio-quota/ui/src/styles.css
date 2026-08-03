@@ -744,8 +744,8 @@ input[type="checkbox"] {
 /* ---- headline figures ------------------------------------------------------ */
 
 .figures {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 1px;
   margin: 0;
   background: var(--border);
@@ -755,6 +755,7 @@ input[type="checkbox"] {
 }
 
 .figure {
+  flex: 1 1 150px;
   background: var(--bg);
   padding: 0.55rem 0.7rem;
 }
@@ -775,4 +776,280 @@ input[type="checkbox"] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---- panels ----------------------------------------------------------------
+ *
+ * The Stats tab is a stack of small charts rather than one big one, because each answers
+ * a different question and a reader takes them one at a time. Each gets a hairline box so
+ * the eye knows where one question ends and the next begins.
+ */
+
+.panel {
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.panel h4,
+h4.section {
+  margin: 0 0 0.15rem;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+h4.section {
+  margin-top: 1.4rem;
+}
+
+.note {
+  margin: 0 0 0.6rem;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+/* Two panels side by side where both are short, collapsing to one column when the window
+ * is narrow enough that a half-width histogram stops being readable. */
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.pair > .panel {
+  margin-top: 1rem;
+}
+
+@media (max-width: 720px) {
+  .pair {
+    grid-template-columns: 1fr;
+  }
+  .pair > .panel {
+    margin-top: 0.6rem;
+  }
+}
+
+/* ---- daily spend, histograms ------------------------------------------------ */
+
+.spend,
+.histogram-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 76px;
+}
+
+.spend i,
+.histogram-bars i {
+  flex: 1;
+  min-width: 2px;
+  background: var(--violet);
+  border-radius: 1px 1px 0 0;
+  display: block;
+  transition: background 0.12s;
+}
+
+.spend i:hover,
+.histogram-bars i:hover {
+  background: var(--fg);
+}
+
+/* A day nothing could be priced on is not a cheap day. Drawn in outline so it reads as
+ * "no figure" rather than as a small one. */
+.spend i.unpriced {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.histogram {
+  display: flex;
+  flex-direction: column;
+}
+
+.histogram-axis {
+  display: grid;
+  margin-top: 0.25rem;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ---- the token mix ---------------------------------------------------------- */
+
+.stack {
+  display: flex;
+  height: 22px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.stack i {
+  display: block;
+  height: 100%;
+}
+
+/* Four shades of the one hue rather than four hues: these are four kinds of the same
+ * thing, and four colours would imply four unrelated categories. */
+.part-0 {
+  background: color-mix(in srgb, var(--violet) 35%, var(--surface));
+}
+.part-1 {
+  background: color-mix(in srgb, var(--violet) 58%, var(--surface));
+}
+.part-2 {
+  background: color-mix(in srgb, var(--violet) 80%, var(--surface));
+}
+.part-3 {
+  background: var(--violet);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 1.1rem;
+  margin: 0.55rem 0 0;
+  font-size: 11px;
+}
+
+.legend > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.legend dt {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+}
+
+.legend dt i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: block;
+}
+
+.legend dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- ranked bars ------------------------------------------------------------ */
+
+.bars {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 11px;
+}
+
+/* Paths and ids differ at the end, so the ellipsis goes on the left — the same rule the
+ * cost table follows, for the same reason. */
+.bar-key {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.bar-rail {
+  height: 6px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar-rail i {
+  display: block;
+  height: 100%;
+  background: var(--violet);
+  border-radius: 3px;
+}
+
+.bar-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* ---- settings: agents and paths --------------------------------------------- */
+
+.agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* Absent agents are shown, not hidden. "Not installed" is an answer, and a list that
+ * silently omits them cannot distinguish it from "found nothing". */
+.agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.agent.found {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.agent b {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.paths {
+  margin: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.paths > div {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 0.6rem;
+  font-size: 11px;
+}
+
+.paths dt {
+  color: var(--muted);
+}
+
+.paths dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

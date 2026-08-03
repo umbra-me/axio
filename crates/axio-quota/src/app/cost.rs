@@ -69,6 +69,44 @@ pub struct StatsView {
     pub top_model: Option<String>,
     pub total_tokens: u64,
     pub total_cost_usd: Option<f64>,
+    /// Tokens by hour of day, UTC — labelled as UTC in the view for the reason
+    /// `Stats::by_hour` documents.
+    pub by_hour: Vec<u64>,
+    /// Tokens by weekday, Sunday first, so it lines up with the calendar above it.
+    pub by_weekday: Vec<u64>,
+    /// Where the money went, three ways. Each is the same grouping the Cost tab offers,
+    /// cut to the rows worth drawing as bars — a chart with forty bars is a table.
+    pub by_provider: Vec<CostRow>,
+    pub by_harness: Vec<CostRow>,
+    pub by_workspace: Vec<CostRow>,
+    /// What the tokens actually were. Cache reads are the majority of a coding agent's
+    /// volume and a tenth of its price, so a total that does not separate them invites
+    /// the wrong conclusion about where the money goes.
+    pub mix: TokenMix,
+}
+
+/// The four kinds of token, which are billed at four different rates.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenMix {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    /// Output tokens spent on reasoning. A subset of `output`, never billed separately —
+    /// shown because it is the part of a bill nobody remembers asking for.
+    pub reasoning: u64,
+}
+
+/// The saved scan, as the Settings tab describes it.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredScan {
+    pub path: String,
+    /// Zero when nothing has been written yet, which the view reads as "not saved".
+    pub bytes: u64,
+    pub scanned_at: Option<String>,
+    pub scanning: bool,
 }
 
 /// What one agent contributed, for the view's footer.
@@ -233,6 +271,37 @@ impl CostCache {
             top_model: stats.top_model.clone(),
             total_tokens: stats.totals.tokens.total(),
             total_cost_usd: stats.totals.cost().partial().map(|(dollars, _)| dollars),
+            by_hour: stats.by_hour.to_vec(),
+            by_weekday: stats.by_weekday.to_vec(),
+            by_provider: top_rows(report, "provider", 6),
+            by_harness: top_rows(report, "harness", 6),
+            by_workspace: top_rows(report, "workspace", 8),
+            mix: TokenMix {
+                input: stats.totals.tokens.input,
+                output: stats.totals.tokens.output,
+                cache_read: stats.totals.tokens.cache_read,
+                cache_write: stats.totals.tokens.cache_write_5m
+                    + stats.totals.tokens.cache_write_1h,
+                reasoning: stats.totals.tokens.reasoning,
+            },
+        }
+    }
+
+    /// What is on disk, for the Settings tab.
+    ///
+    /// The saved scan is tens of megabytes in a directory nobody browses, which is exactly
+    /// the kind of thing an app should be able to point at and delete rather than leave
+    /// for someone to find with a disk usage tool.
+    pub fn stored(&self) -> StoredScan {
+        let bytes = std::fs::metadata(&self.cache_file)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        StoredScan {
+            path: self.cache_file.display().to_string(),
+            bytes,
+            scanned_at: axio_cost::store::load_stamp(&self.cache_file)
+                .map(|at| at.to_string()),
+            scanning: self.is_scanning(),
         }
     }
 
@@ -243,6 +312,16 @@ impl CostCache {
     pub fn invalidate(&self) {
         let _ = std::fs::remove_file(&self.cache_file);
     }
+}
+
+/// The dearest `limit` rows of a grouping, for a chart rather than a table.
+///
+/// Truncated deliberately and without a remainder row: these are bars beside a total that
+/// is stated in full a few pixels away, and a chart's job is the shape of the top few.
+fn top_rows(report: &ScanReport, group: &str, limit: usize) -> Vec<CostRow> {
+    let mut rows = group_report(report, group).rows;
+    rows.truncate(limit);
+    rows
 }
 
 fn group_report(report: &ScanReport, group: &str) -> CostReport {

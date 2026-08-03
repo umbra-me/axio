@@ -10,6 +10,7 @@ import {
   type CostRow,
   type Overview,
   type ProviderSetting,
+  type Storage,
 } from "./api";
 import { ProviderList } from "./Providers";
 import { History } from "./History";
@@ -262,9 +263,20 @@ function Money({ row }: { row: CostRow }) {
 function Settings({ onStatus }: { onStatus: (text: string) => void }) {
   const [settings, setSettings] = useState<ProviderSetting[]>([]);
   const [dirty, setDirty] = useState(false);
+  const [storage, setStorage] = useState<Storage | null>(null);
+  const [agents, setAgents] = useState<CostReport["agents"]>([]);
 
   useEffect(() => {
     api.settings().then(setSettings);
+    const load = () => {
+      api.storage().then(setStorage);
+      api.costReport("harness").then((report) => setAgents(report.agents));
+    };
+    load();
+    const unlisten = onCostUpdated(load);
+    return () => {
+      unlisten.then((off) => off());
+    };
   }, []);
 
   const update = (id: string, patch: Partial<ProviderSetting>) => {
@@ -330,6 +342,71 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
         </button>
         {dirty && <span className="muted">Unsaved changes</span>}
       </div>
+
+      <h4 className="section">Agents read for cost</h4>
+      <p className="note">
+        Found by walking each agent's own log directory. Nothing is configured here —
+        an agent appears the moment it writes its first session.
+      </p>
+      <div className="agents">
+        {agents.map((agent) => (
+          <span
+            key={agent.name}
+            className={`agent ${agent.present ? "found" : ""}`}
+            title={
+              agent.present
+                ? `${agent.files.toLocaleString()} files, ${agent.messages.toLocaleString()} messages`
+                : "Not installed on this machine"
+            }
+          >
+            {agent.name}
+            {agent.present && (
+              <b>{agent.messages > 0 ? agent.messages.toLocaleString() : "0"}</b>
+            )}
+          </span>
+        ))}
+      </div>
+
+      <h4 className="section">Files</h4>
+      {storage && (
+        <dl className="paths">
+          <div>
+            <dt>Settings</dt>
+            <dd title={storage.configPath}>{storage.configPath}</dd>
+          </div>
+          <div>
+            <dt>Quota history</dt>
+            <dd title={storage.historyPath}>{storage.historyPath}</dd>
+          </div>
+          <div>
+            <dt>Saved scan</dt>
+            <dd title={storage.scan.path}>
+              {storage.scan.bytes > 0
+                ? `${storage.scan.path} — ${megabytes(storage.scan.bytes)}`
+                : "not saved yet"}
+            </dd>
+          </div>
+        </dl>
+      )}
+      <p className="note">
+        The saved scan is machine-local and rebuildable: deleting it costs one rescan,
+        not any history.
+      </p>
+      <div style={{ display: "flex", gap: "0.4rem" }}>
+        <button
+          disabled={storage?.scan.scanning}
+          onClick={async () => {
+            await api.refreshCost();
+            onStatus("Rescanning transcripts…");
+          }}
+        >
+          {storage?.scan.scanning ? "Scanning…" : "Rescan now"}
+        </button>
+      </div>
     </>
   );
+}
+
+function megabytes(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

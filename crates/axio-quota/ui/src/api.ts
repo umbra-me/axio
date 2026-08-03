@@ -90,12 +90,39 @@ export interface DayPoint {
   costUsd: number | null;
 }
 
+/// The four kinds of token, billed at four different rates.
+export interface TokenMix {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning: number;
+}
+
+/// Where axio keeps its files.
+export interface Storage {
+  configPath: string;
+  historyPath: string;
+  scan: {
+    path: string;
+    bytes: number;
+    scannedAt: string | null;
+    scanning: boolean;
+  };
+}
+
 export interface Stats {
   days: DayPoint[];
   busiestDayTokens: number;
   /// The three cuts that split a day into four heat levels, from the Rust side so the
   /// window and the CLI shade a day the same way.
   thresholds: [number, number, number];
+  byHour: number[];
+  byWeekday: number[];
+  byProvider: CostRow[];
+  byHarness: CostRow[];
+  byWorkspace: CostRow[];
+  mix: TokenMix;
   activeDays: number;
   currentStreak: number;
   longestStreak: number;
@@ -125,6 +152,7 @@ export const api = {
   costReport: (group: CostGroup) => invoke<CostReport>("cost_report", { group }),
   refreshCost: () => invoke<void>("refresh_cost"),
   costStats: () => invoke<Stats>("cost_stats"),
+  storage: () => invoke<Storage>("storage"),
   openMainWindow: () => invoke<void>("open_main_window"),
   minimizeWindow: () => invoke<void>("minimize_window"),
   closeWindow: () => invoke<void>("close_window"),

@@ -165,6 +165,31 @@ pub async fn cost_stats(
     Ok(cost.stats())
 }
 
+/// Where axio keeps its files, and how big the largest of them is.
+///
+/// Shown rather than hidden because both answers are things people ask: settings live in
+/// a roaming directory they may want to back up, and the saved scan is tens of megabytes
+/// they should be able to find and delete.
+#[tauri::command]
+pub async fn storage(
+    state: State<'_, Arc<AppState>>,
+    cost: State<'_, Arc<super::cost::CostCache>>,
+) -> Result<Storage, ()> {
+    Ok(Storage {
+        config_path: Config::default_path(&state.env).display().to_string(),
+        history_path: crate::history::history_path(&state.env).display().to_string(),
+        scan: cost.stored(),
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Storage {
+    pub config_path: String,
+    pub history_path: String,
+    pub scan: super::cost::StoredScan,
+}
+
 /// Read the transcripts again, on a worker.
 ///
 /// Returns as soon as the worker is started, not when it finishes — the window stays live

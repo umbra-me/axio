@@ -4,7 +4,7 @@
 // grouping of a table reaches: a run of days is a shape, and a shape has to be drawn.
 
 import { useEffect, useState } from "react";
-import { api, onCostUpdated, type DayPoint, type Stats as StatsData } from "./api";
+import { api, onCostUpdated, type CostRow, type DayPoint, type Stats as StatsData } from "./api";
 
 const WEEKS = 53;
 const DAYS = 7;
@@ -177,8 +177,204 @@ export function Stats() {
             exact={`${busiest.tokens.toLocaleString()} tokens`}
           />
         )}
+        <Figure
+          label="Cost per active day"
+          value={
+            stats.totalCostUsd !== null && stats.activeDays > 0
+              ? `$${(stats.totalCostUsd / stats.activeDays).toFixed(2)}`
+              : "—"
+          }
+        />
+      </dl>
+
+      <Section
+        title="Daily spend"
+        note="The last 60 days. Bars are cost, so a cheap busy day and an expensive quiet one read differently here than on the calendar."
+      >
+        <Spend days={stats.days.slice(-60)} />
+      </Section>
+
+      <div className="pair">
+        <Section title="By hour" note="UTC, not local — see the tooltip.">
+          <Histogram
+            values={stats.byHour}
+            label={(index) => `${String(index).padStart(2, "0")}`}
+            tick={(index) => index % 6 === 0}
+            title={(index, value) =>
+              `${String(index).padStart(2, "0")}:00–${String(index).padStart(2, "0")}:59 UTC · ${value.toLocaleString()} tokens`
+            }
+          />
+        </Section>
+        <Section title="By weekday">
+          <Histogram
+            values={stats.byWeekday}
+            label={(index) => WEEKDAYS[index]}
+            tick={() => true}
+            title={(index, value) => `${WEEKDAYS[index]} · ${value.toLocaleString()} tokens`}
+          />
+        </Section>
+      </div>
+
+      <Section
+        title="Token mix"
+        note="Cache reads are most of the volume and a tenth of the price. A total that does not separate them points at the wrong culprit."
+      >
+        <Mix stats={stats} />
+      </Section>
+
+      <div className="pair">
+        <Section title="By provider">
+          <Bars rows={stats.byProvider} />
+        </Section>
+        <Section title="By harness">
+          <Bars rows={stats.byHarness} />
+        </Section>
+      </div>
+
+      <Section title="Top workspaces">
+        <Bars rows={stats.byWorkspace} />
+      </Section>
+    </>
+  );
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function Section({
+  title,
+  note,
+  children,
+}: {
+  title: string;
+  note?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="panel">
+      <h4>{title}</h4>
+      {note && <p className="note">{note}</p>}
+      {children}
+    </section>
+  );
+}
+
+/// Cost per day as columns.
+///
+/// Linear, unlike the calendar, and deliberately: this is a short window where the range
+/// is narrow enough to read directly, and a log axis on money invites someone to compare
+/// two bars and get the ratio wrong.
+function Spend({ days }: { days: DayPoint[] }) {
+  const peak = Math.max(...days.map((day) => day.costUsd ?? 0), 0.01);
+  return (
+    <div className="spend">
+      {days.map((day) => (
+        <i
+          key={day.date}
+          style={{ height: `${Math.max(2, ((day.costUsd ?? 0) / peak) * 100)}%` }}
+          className={day.costUsd === null ? "unpriced" : undefined}
+          title={`${day.date} · ${day.costUsd !== null ? `$${day.costUsd.toFixed(2)}` : "unpriced"} · ${day.tokens.toLocaleString()} tokens`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Histogram({
+  values,
+  label,
+  tick,
+  title,
+}: {
+  values: number[];
+  label: (index: number) => string;
+  /// Which columns get a written label. Twenty-four of them will not fit.
+  tick: (index: number) => boolean;
+  title: (index: number, value: number) => string;
+}) {
+  const peak = Math.max(...values, 1);
+  return (
+    <div className="histogram">
+      <div className="histogram-bars">
+        {values.map((value, index) => (
+          <i
+            key={index}
+            style={{ height: `${Math.max(1, (value / peak) * 100)}%` }}
+            title={title(index, value)}
+          />
+        ))}
+      </div>
+      <div className="histogram-axis" style={{ gridTemplateColumns: `repeat(${values.length}, 1fr)` }}>
+        {values.map((_, index) => (
+          <span key={index}>{tick(index) ? label(index) : ""}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/// One stacked bar: what the tokens were.
+function Mix({ stats }: { stats: StatsData }) {
+  const { input, output, cacheRead, cacheWrite, reasoning } = stats.mix;
+  const total = input + output + cacheRead + cacheWrite || 1;
+  const parts = [
+    { key: "cache read", value: cacheRead },
+    { key: "cache write", value: cacheWrite },
+    { key: "input", value: input },
+    { key: "output", value: output },
+  ];
+  return (
+    <>
+      <div className="stack">
+        {parts.map((part, index) => (
+          <i
+            key={part.key}
+            className={`part-${index}`}
+            style={{ width: `${(part.value / total) * 100}%` }}
+            title={`${part.key} · ${part.value.toLocaleString()} tokens · ${((part.value / total) * 100).toFixed(1)}%`}
+          />
+        ))}
+      </div>
+      <dl className="legend">
+        {parts.map((part, index) => (
+          <div key={part.key}>
+            <dt>
+              <i className={`part-${index}`} />
+              {part.key}
+            </dt>
+            <dd>{((part.value / total) * 100).toFixed(1)}%</dd>
+          </div>
+        ))}
+        {reasoning > 0 && (
+          <div title="Billed as output, not separately. Shown because it is the part of a bill nobody remembers asking for.">
+            <dt>of which reasoning</dt>
+            <dd>{((reasoning / Math.max(1, output)) * 100).toFixed(1)}%</dd>
+          </div>
+        )}
       </dl>
     </>
+  );
+}
+
+/// Rows as bars, sorted by spend, each labelled with its own figure.
+function Bars({ rows }: { rows: CostRow[] }) {
+  if (rows.length === 0) return <p className="muted">Nothing recorded.</p>;
+  const peak = Math.max(...rows.map((row) => row.costUsd ?? 0), 0.01);
+  return (
+    <div className="bars">
+      {rows.map((row) => (
+        <div className="bar" key={row.key}>
+          <span className="bar-key" title={row.key}>
+            {row.key}
+          </span>
+          <span className="bar-rail">
+            <i style={{ width: `${((row.costUsd ?? 0) / peak) * 100}%` }} />
+          </span>
+          <span className="bar-value">
+            {row.costUsd !== null ? `$${row.costUsd.toFixed(2)}` : "unpriced"}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

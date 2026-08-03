@@ -41,6 +41,15 @@ pub struct Stats {
     /// The model with the most tokens through it.
     pub top_model: Option<String>,
     pub totals: Totals,
+    /// Tokens by hour of the day, UTC, `0..24`.
+    ///
+    /// The one figure here that is worth reading in local time and is not — see the module
+    /// note. Reported as UTC and labelled as UTC, rather than converted silently, because
+    /// a histogram that shifts when you fly somewhere is worse than one that is honest
+    /// about which clock it is on.
+    pub by_hour: [u64; 24],
+    /// Tokens by weekday, Sunday first, matching the calendar grid above it.
+    pub by_weekday: [u64; 7],
 }
 
 impl Stats {
@@ -102,9 +111,13 @@ pub fn summarise<'a>(
     let mut by_model: BTreeMap<String, u64> = BTreeMap::new();
     let mut sessions: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut totals = Totals::default();
+    let mut by_hour = [0u64; 24];
+    let mut by_weekday = [0u64; 7];
 
     for message in messages {
         let date = message.timestamp.date();
+        by_hour[message.timestamp.hour() as usize] += message.tokens.total();
+        by_weekday[date.weekday().number_days_from_sunday() as usize] += message.tokens.total();
         let entry = by_day.entry(date).or_default();
         entry.0 += 1;
         entry.1 += message.tokens.total();
@@ -142,6 +155,8 @@ pub fn summarise<'a>(
             .map(|(model, _)| model),
         days,
         totals,
+        by_hour,
+        by_weekday,
     }
 }
 
@@ -311,6 +326,25 @@ mod tests {
             );
         }
         assert_eq!(Stats::level(&cuts, 0), 0, "an empty day is never shaded");
+    }
+
+    /// The histograms have to account for every token, or a reader comparing them against
+    /// the total finds a gap and cannot tell which figure to trust.
+    #[test]
+    fn the_histograms_account_for_every_token() {
+        let messages = vec![
+            on(date!(2026 - 08 - 02), "m", 10),
+            on(date!(2026 - 08 - 03), "m", 25),
+            on(date!(2026 - 08 - 03), "m", 5),
+        ];
+        let stats = summarise(&messages, &Prices::bundled());
+
+        assert_eq!(stats.by_hour.iter().sum::<u64>(), 40);
+        assert_eq!(stats.by_weekday.iter().sum::<u64>(), 40);
+        // The fixture is fixed at noon UTC, and the 2nd of August 2026 is a Sunday.
+        assert_eq!(stats.by_hour[12], 40);
+        assert_eq!(stats.by_weekday[0], 10, "Sunday");
+        assert_eq!(stats.by_weekday[1], 30, "Monday");
     }
 
     /// A year with one active day still has to bucket it somewhere.

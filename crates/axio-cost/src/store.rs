@@ -119,6 +119,20 @@ fn writeln(out: &mut impl Write, record: &Record) -> std::io::Result<()> {
     out.write_all(b"\n")
 }
 
+/// When the saved scan was taken, reading only its first line.
+///
+/// Separate from [`load`] because the answer is in the header and the body is tens of
+/// megabytes: a view that only wants to say "saved 4 minutes ago" should not parse a
+/// hundred thousand messages to find out.
+pub fn load_stamp(path: &Path) -> Option<OffsetDateTime> {
+    let file = std::fs::File::open(path).ok()?;
+    let line = std::io::BufReader::new(file).lines().next()?.ok()?;
+    match serde_json::from_str::<Record>(&line).ok()? {
+        Record::Head { version, scanned_at } if version == VERSION => Some(scanned_at),
+        _ => None,
+    }
+}
+
 /// Read a scan back, or `None` if there is nothing usable there.
 ///
 /// Every failure is the same answer — scan instead — so none of them is worth
@@ -298,6 +312,20 @@ mod tests {
 
         let cached = load(&path).expect("the whole lines still load");
         assert_eq!(cached.report.messages().count(), 1);
+    }
+
+    /// The stamp must be readable without parsing the body, because the body is the
+    /// reason the stamp exists.
+    #[test]
+    fn the_stamp_reads_without_the_body() {
+        let path = temp("stamp");
+        let _ = std::fs::remove_file(&path);
+        save(&path, &report_of(vec![("codex", vec![message("codex", "gpt-5.5")])])).expect("write");
+
+        let stamp = load_stamp(&path).expect("a stamp");
+        let whole = load(&path).expect("the whole file");
+        assert_eq!(stamp, whole.scanned_at);
+        assert!(load_stamp(&temp("absent")).is_none());
     }
 
     #[test]
