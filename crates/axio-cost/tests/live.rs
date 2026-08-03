@@ -25,7 +25,9 @@ fn home() -> Option<std::path::PathBuf> {
 #[test]
 #[ignore = "reads the running user's own agent logs"]
 fn the_local_logs_parse_into_priced_sessions() {
-    let Some(home) = home() else { panic!("no HOME or USERPROFILE to scan") };
+    let Some(home) = home() else {
+        panic!("no HOME or USERPROFILE to scan")
+    };
 
     let report = scan(&home, &registry());
     let prices = Prices::bundled();
@@ -66,7 +68,11 @@ fn the_local_logs_parse_into_priced_sessions() {
         let lines = agent.outcome.billable + agent.outcome.skipped + agent.outcome.malformed;
         if lines > 100 {
             let bad = 100.0 * agent.outcome.malformed as f64 / lines as f64;
-            assert!(bad < 5.0, "{}: {bad:.1}% of lines unparsable", agent.display_name);
+            assert!(
+                bad < 5.0,
+                "{}: {bad:.1}% of lines unparsable",
+                agent.display_name
+            );
         }
 
         // The defect this test exists to catch: a figure derived from a negligible slice
@@ -83,12 +89,27 @@ fn the_local_logs_parse_into_priced_sessions() {
         grand.merge(&totals);
     }
 
-    assert!(any_installed, "no agent logs found under {}", home.display());
-    println!("
-all agents: {} over {} messages", render(&grand.cost()), grand.messages);
-    println!("{} of {} tokens priced", grand.tokens.total() - grand.unpriced_tokens, grand.tokens.total());
+    assert!(
+        any_installed,
+        "no agent logs found under {}",
+        home.display()
+    );
+    println!(
+        "
+all agents: {} over {} messages",
+        render(&grand.cost()),
+        grand.messages
+    );
+    println!(
+        "{} of {} tokens priced",
+        grand.tokens.total() - grand.unpriced_tokens,
+        grand.tokens.total()
+    );
 
     for message in report.messages() {
-        assert!(message.is_billable(), "an unbillable message reached the report");
+        assert!(
+            message.is_billable(),
+            "an unbillable message reached the report"
+        );
     }
 }

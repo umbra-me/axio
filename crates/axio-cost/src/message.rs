@@ -82,9 +82,7 @@ impl CostMessage {
     /// them appear in the local logs. They are dropped rather than priced at zero so a
     /// missing price stays distinguishable from a genuine zero.
     pub fn is_billable(&self) -> bool {
-        !self.model.is_empty()
-            && !self.model.starts_with('<')
-            && !self.tokens.is_empty()
+        !self.model.is_empty() && !self.model.starts_with('<') && !self.tokens.is_empty()
     }
 }
 

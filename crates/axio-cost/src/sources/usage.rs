@@ -112,20 +112,19 @@ impl AnyUsage {
         // meaning with it.
         let (input, inclusive) = match (self.input_tokens, self.prompt_tokens) {
             (Some(input), _) => (input, convention == Convention::CacheInclusive),
-            (None, Some(prompt)) => (
-                prompt,
-                convention != Convention::CacheExclusive,
-            ),
+            (None, Some(prompt)) => (prompt, convention != Convention::CacheExclusive),
             (None, None) => (0, false),
         };
 
-        if input == 0 && output == 0 && cached == 0 {
-            if let Some(total) = self.total_tokens.filter(|total| *total > 0) {
-                return TokenBreakdown {
-                    output: total,
-                    ..Default::default()
-                };
-            }
+        if input == 0
+            && output == 0
+            && cached == 0
+            && let Some(total) = self.total_tokens.filter(|total| *total > 0)
+        {
+            return TokenBreakdown {
+                output: total,
+                ..Default::default()
+            };
         }
 
         if inclusive {
@@ -169,7 +168,8 @@ mod tests {
     /// prompt figure. Reading it as disjoint would bill 100k of fresh input instead of 10k.
     #[test]
     fn the_openai_spelling_subtracts_its_cached_reads() {
-        let usage = parse(r#"{"prompt_tokens":100000,"completion_tokens":500,"cached_tokens":90000}"#);
+        let usage =
+            parse(r#"{"prompt_tokens":100000,"completion_tokens":500,"cached_tokens":90000}"#);
         let tokens = usage.breakdown(Convention::BySpelling);
         assert_eq!(tokens.input, 10_000);
         assert_eq!(tokens.cache_read, 90_000);

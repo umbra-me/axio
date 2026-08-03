@@ -141,9 +141,9 @@ impl Source for OpenCode {
                 outcome.skipped += 1;
                 continue;
             };
-            let Ok(timestamp) = time::OffsetDateTime::from_unix_timestamp_nanos(
-                created_ms as i128 * 1_000_000,
-            ) else {
+            let Ok(timestamp) =
+                time::OffsetDateTime::from_unix_timestamp_nanos(created_ms as i128 * 1_000_000)
+            else {
                 outcome.skipped += 1;
                 continue;
             };

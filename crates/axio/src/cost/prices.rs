@@ -79,4 +79,3 @@ pub(super) fn prices_for(home: &std::path::Path) -> Prices {
         Err(_) => bundled,
     }
 }
-

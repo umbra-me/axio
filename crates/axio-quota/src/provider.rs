@@ -109,7 +109,11 @@ pub fn clean_cookie(raw: &str) -> Option<String> {
 /// session died, anything else means the request was wrong. Reported without its query
 /// string, which on a sign-in redirect carries the original URL and sometimes a token.
 pub fn redirect_target(response: &reqwest::Response) -> Option<String> {
-    let raw = response.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+    let raw = response
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()?;
     Some(raw.split('?').next().unwrap_or(raw).to_string())
 }
 

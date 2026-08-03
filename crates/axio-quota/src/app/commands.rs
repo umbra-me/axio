@@ -247,11 +247,10 @@ pub async fn connect_provider(app: AppHandle, provider: String) -> Result<(), St
 pub async fn capture_provider(app: AppHandle, provider: String) -> Result<String, String> {
     let id = ProviderId::parse(&provider).ok_or("Unknown provider")?;
     let handle = app.clone();
-    let message = tauri::async_runtime::spawn_blocking(move || {
-        super::connect::try_capture(&handle, id)
-    })
-    .await
-    .map_err(|err| format!("The sign-in check did not finish: {err}"))??;
+    let message =
+        tauri::async_runtime::spawn_blocking(move || super::connect::try_capture(&handle, id))
+            .await
+            .map_err(|err| format!("The sign-in check did not finish: {err}"))??;
 
     // The credential just changed, so the figures on screen are about to be wrong.
     refresh(&app);
@@ -270,7 +269,9 @@ pub async fn storage(
 ) -> Result<Storage, ()> {
     Ok(Storage {
         config_path: Config::default_path(&state.env).display().to_string(),
-        history_path: crate::history::history_path(&state.env).display().to_string(),
+        history_path: crate::history::history_path(&state.env)
+            .display()
+            .to_string(),
         scan: cost.stored(),
     })
 }

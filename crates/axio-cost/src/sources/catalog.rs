@@ -132,7 +132,11 @@ mod tests {
     #[test]
     fn every_agent_declares_at_least_one_root() {
         for agent in CATALOG {
-            assert!(!agent.roots.is_empty(), "{} has nowhere to look", agent.client);
+            assert!(
+                !agent.roots.is_empty(),
+                "{} has nowhere to look",
+                agent.client
+            );
         }
     }
 
@@ -140,10 +144,17 @@ mod tests {
     /// whose name contains slashes.
     #[test]
     fn roots_resolve_to_nested_directories() {
-        let gemini = CATALOG.iter().find(|a| a.client == "gemini").expect("present");
+        let gemini = CATALOG
+            .iter()
+            .find(|a| a.client == "gemini")
+            .expect("present");
         let resolved = gemini.roots(Path::new("/home/u"));
         assert!(resolved[0].ends_with("tmp"));
-        assert!(resolved[0].parent().is_some_and(|dir| dir.ends_with(".gemini")));
+        assert!(
+            resolved[0]
+                .parent()
+                .is_some_and(|dir| dir.ends_with(".gemini"))
+        );
     }
 
     /// The two conventions are not interchangeable, so an agent relaying an OpenAI-shaped
@@ -151,7 +162,10 @@ mod tests {
     #[test]
     fn openai_shaped_agents_are_marked_inclusive() {
         for client in ["gemini", "qwen"] {
-            let agent = CATALOG.iter().find(|a| a.client == client).expect("present");
+            let agent = CATALOG
+                .iter()
+                .find(|a| a.client == client)
+                .expect("present");
             assert_eq!(agent.convention, Convention::CacheInclusive, "{client}");
         }
     }

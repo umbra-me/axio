@@ -88,10 +88,7 @@ fn capture(app: &AppHandle, id: ProviderId) -> Result<String, String> {
         .get_webview_window(WINDOW)
         .ok_or_else(|| "The sign-in window is gone.".to_string())?;
 
-    let url = site
-        .origin
-        .parse()
-        .map_err(|_| "Bad origin.".to_string())?;
+    let url = site.origin.parse().map_err(|_| "Bad origin.".to_string())?;
     let cookies = window
         .cookies_for_url(url)
         .map_err(|err| format!("Could not read the sign-in window's cookies: {err}"))?;
@@ -141,7 +138,9 @@ fn capture(app: &AppHandle, id: ProviderId) -> Result<String, String> {
     {
         Some(index) => index,
         None => {
-            config.providers.push(crate::config::ProviderConfig::new(id));
+            config
+                .providers
+                .push(crate::config::ProviderConfig::new(id));
             config.providers.len() - 1
         }
     };
@@ -201,7 +200,11 @@ pub fn open(app: &AppHandle, id: ProviderId) -> Result<(), String> {
         .url
         .parse()
         .map_err(|_| "Bad sign-in URL.".to_string())?;
-    eprintln!("axio: opening sign-in window for {} at {}", id.as_str(), site.url);
+    eprintln!(
+        "axio: opening sign-in window for {} at {}",
+        id.as_str(),
+        site.url
+    );
     WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::External(url))
         .title(site.title)
         .inner_size(920.0, 760.0)
@@ -296,7 +299,10 @@ mod tests {
                 continue;
             }
             let site = site(*id).expect("a connectable provider has a site");
-            assert!(site.url.starts_with("https://"), "{id} must sign in over TLS");
+            assert!(
+                site.url.starts_with("https://"),
+                "{id} must sign in over TLS"
+            );
             assert!(site.origin.starts_with("https://"));
             assert!(
                 !crate::providers::session_cookie_names(*id).is_empty(),

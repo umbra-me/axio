@@ -94,7 +94,10 @@ impl Totals {
         }
 
         let date = message.timestamp.date().to_string();
-        match prices.resolve(&message.model, date_of(&date)).cost(&message.tokens) {
+        match prices
+            .resolve(&message.model, date_of(&date))
+            .cost(&message.tokens)
+        {
             Some(dollars) => self.priced_dollars += dollars,
             None => {
                 self.unpriced_tokens += message.tokens.total();
@@ -136,7 +139,10 @@ impl Totals {
         if covered < NEGLIGIBLE_COVERAGE {
             return Cost::Unknown;
         }
-        Cost::Partial { dollars: self.priced_dollars, covered }
+        Cost::Partial {
+            dollars: self.priced_dollars,
+            covered,
+        }
     }
 
     /// Merge another group's totals in.
@@ -147,7 +153,8 @@ impl Totals {
         self.unpriced_tokens += other.unpriced_tokens;
         self.unpriced_messages += other.unpriced_messages;
         self.reported_messages += other.reported_messages;
-        self.unpriced_models.extend(other.unpriced_models.iter().cloned());
+        self.unpriced_models
+            .extend(other.unpriced_models.iter().cloned());
     }
 }
 
@@ -185,7 +192,10 @@ mod tests {
             session_id: "s".into(),
             workspace: None,
             timestamp: datetime!(2026-08-02 10:00 UTC),
-            tokens: TokenBreakdown { input, ..Default::default() },
+            tokens: TokenBreakdown {
+                input,
+                ..Default::default()
+            },
             dedup_key: None,
             turn_start: false,
             reported_cost: None,
@@ -213,7 +223,11 @@ mod tests {
         assert_eq!(totals.cost(), Cost::Unknown);
         assert_eq!(render(&totals.cost()), "unpriced");
         assert!(totals.coverage() < 0.001);
-        assert_eq!(totals.cost().complete(), None, "cannot leak into a grand total");
+        assert_eq!(
+            totals.cost().complete(),
+            None,
+            "cannot leak into a grand total"
+        );
     }
 
     #[test]
@@ -249,7 +263,10 @@ mod tests {
         totals.add(&message("unlisted-model-2", 10), &Prices::bundled());
         assert_eq!(
             totals.unpriced_models.iter().cloned().collect::<Vec<_>>(),
-            vec!["unlisted-model-1".to_string(), "unlisted-model-2".to_string()]
+            vec![
+                "unlisted-model-1".to_string(),
+                "unlisted-model-2".to_string()
+            ]
         );
     }
 
@@ -275,7 +292,10 @@ mod tests {
         totals.add(&message("unlisted-model-1", 4), &Prices::bundled());
         let rendered = render(&totals.cost());
         assert!(rendered.ends_with("(99.9% priced)"), "{rendered}");
-        assert!(!rendered.contains("only"), "not a warning at 99.9%: {rendered}");
+        assert!(
+            !rendered.contains("only"),
+            "not a warning at 99.9%: {rendered}"
+        );
     }
 
     #[test]

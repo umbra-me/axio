@@ -65,9 +65,11 @@ const WEEKLY_LABELS: &[&str] = &["weeklyUsage", "weekly_usage", "weekly"];
 
 /// The first of `fields` that appears near any of `labels`.
 fn first_number(text: &str, labels: &[&str], fields: &[&str]) -> Option<f64> {
-    labels
-        .iter()
-        .find_map(|label| fields.iter().find_map(|field| number_near(text, label, field)))
+    labels.iter().find_map(|label| {
+        fields
+            .iter()
+            .find_map(|field| number_near(text, label, field))
+    })
 }
 
 /// Log a response's shape when `AXIO_OPENCODE_DUMP` is set.
@@ -83,8 +85,14 @@ pub(super) fn dump(label: &str, text: &str) {
     let redacted: String = text
         .split_inclusive(|c: char| !c.is_ascii_alphanumeric())
         .map(|piece| {
-            let word: String = piece.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
-            let tail: String = piece.chars().filter(|c| !c.is_ascii_alphanumeric()).collect();
+            let word: String = piece
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
+            let tail: String = piece
+                .chars()
+                .filter(|c| !c.is_ascii_alphanumeric())
+                .collect();
             if word.len() > 24 || piece.contains('@') {
                 format!("<{}>{tail}", word.len())
             } else {
@@ -206,7 +214,10 @@ pub fn parse_usage(text: &str, now: OffsetDateTime) -> Result<UsageSnapshot, Pro
         return Err(ProbeError::decode(
             "opencode subscription response",
             if keys.is_empty() {
-                format!("no usage in a {}-byte response with no field names", text.len())
+                format!(
+                    "no usage in a {}-byte response with no field names",
+                    text.len()
+                )
             } else {
                 format!("no usage found. The response has: {}", keys.join(", "))
             },
@@ -306,7 +317,10 @@ mod tests {
     fn an_error_is_read_out_of_a_javascript_payload() {
         let body = r#";0x00000266;((self.$R=self.$R||{})["server-fn:axio"]=[],($R=>$R[0]=Object.assign(new Error("actor of type \"public\" is not associated with an account"),{stack:"..."}))($R["server-fn:axio"]))"#;
         let message = error_message(body).expect("an error message");
-        assert!(message.contains("not associated with an account"), "{message}");
+        assert!(
+            message.contains("not associated with an account"),
+            "{message}"
+        );
         assert!(is_signed_out(&message));
 
         // And it reaches the caller as something to do, not as a parse failure.
@@ -325,6 +339,10 @@ mod tests {
     #[test]
     fn a_non_positive_countdown_produces_no_reset_time() {
         let body = r#"{"rollingUsage":{"usagePercent":5,"resetInSec":0}}"#;
-        assert!(parse_usage(body, now()).unwrap().windows[0].resets_at.is_none());
+        assert!(
+            parse_usage(body, now()).unwrap().windows[0]
+                .resets_at
+                .is_none()
+        );
     }
 }

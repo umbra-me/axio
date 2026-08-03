@@ -74,7 +74,14 @@ const TIME_KEYS: &[&str] = &[
 ];
 
 /// Keys that identify the underlying API call.
-pub(super) const ID_KEYS: &[&str] = &["requestId", "request_id", "messageId", "message_id", "id", "uuid"];
+pub(super) const ID_KEYS: &[&str] = &[
+    "requestId",
+    "request_id",
+    "messageId",
+    "message_id",
+    "id",
+    "uuid",
+];
 
 impl Source for GenericAgent {
     fn client(&self) -> &'static str {
@@ -88,7 +95,10 @@ impl Source for GenericAgent {
     fn roots(&self, home: &Path) -> Vec<PathBuf> {
         self.roots
             .iter()
-            .map(|root| root.split('/').fold(home.to_path_buf(), |path, part| path.join(part)))
+            .map(|root| {
+                root.split('/')
+                    .fold(home.to_path_buf(), |path, part| path.join(part))
+            })
             .collect()
     }
 
@@ -114,14 +124,16 @@ impl Source for GenericAgent {
             .map(str::to_string);
 
         let mut outcome = FileOutcome::default();
-        let mut consume = |document: &Value, outcome: &mut FileOutcome| {
-            match self.message(document, &session_id, workspace.clone()) {
-                Some(message) => {
-                    out.push(message);
-                    outcome.billable += 1;
-                }
-                None => outcome.skipped += 1,
+        let mut consume = |document: &Value, outcome: &mut FileOutcome| match self.message(
+            document,
+            &session_id,
+            workspace.clone(),
+        ) {
+            Some(message) => {
+                out.push(message);
+                outcome.billable += 1;
             }
+            None => outcome.skipped += 1,
         };
 
         // A whole-file JSON document first: several agents write one array or object per
@@ -303,7 +315,11 @@ mod tests {
 
     fn parse(contents: &str) -> (FileOutcome, Vec<CostMessage>) {
         let mut ledger = DedupLedger::new();
-        let outcome = AGENT.parse(Path::new("/h/.example/sessions/proj/s1.jsonl"), contents, &mut ledger);
+        let outcome = AGENT.parse(
+            Path::new("/h/.example/sessions/proj/s1.jsonl"),
+            contents,
+            &mut ledger,
+        );
         (outcome, ledger.into_messages())
     }
 
@@ -387,6 +403,10 @@ mod tests {
         let roots = AGENT.roots(Path::new("/home/u"));
         assert_eq!(roots.len(), 1);
         assert!(roots[0].ends_with("sessions"));
-        assert!(roots[0].parent().is_some_and(|dir| dir.ends_with(".example")));
+        assert!(
+            roots[0]
+                .parent()
+                .is_some_and(|dir| dir.ends_with(".example"))
+        );
     }
 }

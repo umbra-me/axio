@@ -71,13 +71,12 @@ pub fn parse_usage(raw: &str) -> Result<UsageSnapshot, ProbeError> {
         time::OffsetDateTime::parse(&text, &time::format_description::well_known::Rfc3339).ok()
     });
 
-    let individual = root.get("individualUsage").unwrap_or(&serde_json::Value::Null);
+    let individual = root
+        .get("individualUsage")
+        .unwrap_or(&serde_json::Value::Null);
     let plan = individual.get("plan").unwrap_or(&serde_json::Value::Null);
 
-    for (field, label) in [
-        ("autoPercentUsed", "Auto"),
-        ("apiPercentUsed", "Included"),
-    ] {
+    for (field, label) in [("autoPercentUsed", "Auto"), ("apiPercentUsed", "Included")] {
         if let Some(used) = percent(pick(plan, &[field])) {
             snapshot
                 .windows
@@ -96,8 +95,11 @@ pub fn parse_usage(raw: &str) -> Result<UsageSnapshot, ProbeError> {
             && limit > 0
         {
             snapshot.windows.push(
-                RateWindow::new(label, (used as f64 / limit as f64 * 100.0).clamp(0.0, 100.0))
-                    .with_reset(resets_at),
+                RateWindow::new(
+                    label,
+                    (used as f64 / limit as f64 * 100.0).clamp(0.0, 100.0),
+                )
+                .with_reset(resets_at),
             );
             if key == "onDemand" {
                 snapshot.credits = Some(Credits {
@@ -238,7 +240,10 @@ mod tests {
     #[test]
     fn the_session_cookie_encodes_its_separator() {
         let cookie = session_cookie("auth0|user_01ABC", "ey.token");
-        assert_eq!(cookie, "WorkosCursorSessionToken=auth0|user_01ABC%3A%3Aey.token");
+        assert_eq!(
+            cookie,
+            "WorkosCursorSessionToken=auth0|user_01ABC%3A%3Aey.token"
+        );
         assert!(!cookie.contains("::"));
     }
 }

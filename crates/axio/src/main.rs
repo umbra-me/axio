@@ -10,9 +10,9 @@ mod cli;
 mod credentials;
 // Only the interactive surface can switch provider mid-session, so only it
 // has a default to save.
+mod cost;
 #[cfg(feature = "tui")]
 mod defaults;
-mod cost;
 mod doctor;
 mod paths;
 mod probe;
@@ -115,8 +115,16 @@ async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
     if let Some(Command::Auth { action }) = &cli.command {
         return auth_command(action);
     }
-    if let Some(Command::Cost { by, json, diagnose, calendar, cached, wide, limit, import_prices }) =
-        &cli.command
+    if let Some(Command::Cost {
+        by,
+        json,
+        diagnose,
+        calendar,
+        cached,
+        wide,
+        limit,
+        import_prices,
+    }) = &cli.command
     {
         return match import_prices {
             Some(path) => cost::import_prices(path),

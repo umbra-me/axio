@@ -76,7 +76,10 @@ pub(crate) async fn quota_command(provider: Option<&str>, json: bool, diagnose: 
                     if bare {
                         println!(
                             "             cookie: a bare value, no name — read as {}",
-                            found.first().map(String::as_str).unwrap_or("nothing usable")
+                            found
+                                .first()
+                                .map(String::as_str)
+                                .unwrap_or("nothing usable")
                         );
                     } else if found.is_empty() {
                         println!(

@@ -165,9 +165,7 @@ impl Source for Grok {
                     // entries of the same prompt would merge into one.
                     dedup_key: prompt_id.map(|id| format!("{session_id}:{id}:{model}")),
                     turn_start: false,
-                    reported_cost: counts
-                        .cost_usd_ticks
-                        .map(|ticks| ticks / TICKS_PER_DOLLAR),
+                    reported_cost: counts.cost_usd_ticks.map(|ticks| ticks / TICKS_PER_DOLLAR),
                 };
 
                 if candidate.is_billable() {

@@ -90,7 +90,10 @@ pub fn save(path: &Path, report: &ScanReport) -> std::io::Result<()> {
         let mut out = BufWriter::new(std::fs::File::create(&temp)?);
         writeln(
             &mut out,
-            &Record::Head { version: VERSION, scanned_at: OffsetDateTime::now_utc() },
+            &Record::Head {
+                version: VERSION,
+                scanned_at: OffsetDateTime::now_utc(),
+            },
         )?;
         for agent in &report.agents {
             writeln(
@@ -128,7 +131,10 @@ pub fn load_stamp(path: &Path) -> Option<OffsetDateTime> {
     let file = std::fs::File::open(path).ok()?;
     let line = std::io::BufReader::new(file).lines().next()?.ok()?;
     match serde_json::from_str::<Record>(&line).ok()? {
-        Record::Head { version, scanned_at } if version == VERSION => Some(scanned_at),
+        Record::Head {
+            version,
+            scanned_at,
+        } if version == VERSION => Some(scanned_at),
         _ => None,
     }
 }
@@ -145,7 +151,11 @@ pub fn load(path: &Path) -> Option<Cached> {
     let mut lines = std::io::BufReader::new(file).lines();
 
     let head = serde_json::from_str::<Record>(&lines.next()?.ok()?).ok()?;
-    let Record::Head { version, scanned_at } = head else {
+    let Record::Head {
+        version,
+        scanned_at,
+    } = head
+    else {
         return None;
     };
     if version != VERSION {
@@ -165,7 +175,13 @@ pub fn load(path: &Path) -> Option<Cached> {
         };
         match record {
             Record::Head { .. } => break,
-            Record::Agent { client, present, files_read, files_failed, outcome } => {
+            Record::Agent {
+                client,
+                present,
+                files_read,
+                files_failed,
+                outcome,
+            } => {
                 let Some(source) = known.iter().find(|source| source.client() == client) else {
                     continue;
                 };
@@ -183,7 +199,9 @@ pub fn load(path: &Path) -> Option<Cached> {
                 // Messages follow their agent's line, so the open one is the last pushed.
                 // A message with no agent ahead of it means the file was written by
                 // something else and is not worth guessing about.
-                let Some(agent) = agents.last_mut() else { break };
+                let Some(agent) = agents.last_mut() else {
+                    break;
+                };
                 agent.messages.push(message);
             }
         }
@@ -192,7 +210,10 @@ pub fn load(path: &Path) -> Option<Cached> {
     if agents.is_empty() {
         return None;
     }
-    Some(Cached { report: ScanReport { agents }, scanned_at })
+    Some(Cached {
+        report: ScanReport { agents },
+        scanned_at,
+    })
 }
 
 #[cfg(test)]
@@ -209,7 +230,11 @@ mod tests {
             session_id: "s1".into(),
             workspace: Some("W:\\dev".into()),
             timestamp: datetime!(2026-08-02 10:00 UTC),
-            tokens: TokenBreakdown { input: 10, output: 5, ..Default::default() },
+            tokens: TokenBreakdown {
+                input: 10,
+                output: 5,
+                ..Default::default()
+            },
             dedup_key: None,
             turn_start: false,
             reported_cost: None,
@@ -232,7 +257,11 @@ mod tests {
                         present: true,
                         files_read: 3,
                         files_failed: 1,
-                        outcome: FileOutcome { billable: messages.len(), skipped: 2, malformed: 0 },
+                        outcome: FileOutcome {
+                            billable: messages.len(),
+                            skipped: 2,
+                            malformed: 0,
+                        },
                         messages,
                     }
                 })
@@ -241,7 +270,9 @@ mod tests {
     }
 
     fn temp(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("axio-store-{name}")).join("cost-scan.jsonl")
+        std::env::temp_dir()
+            .join(format!("axio-store-{name}"))
+            .join("cost-scan.jsonl")
     }
 
     #[test]
@@ -249,7 +280,10 @@ mod tests {
         let path = temp("roundtrip");
         let _ = std::fs::remove_file(&path);
         let original = report_of(vec![
-            ("codex", vec![message("codex", "gpt-5.6-sol"), message("codex", "gpt-5.5")]),
+            (
+                "codex",
+                vec![message("codex", "gpt-5.6-sol"), message("codex", "gpt-5.5")],
+            ),
             ("claude-code", vec![message("claude-code", "claude-opus-5")]),
         ]);
 
@@ -275,7 +309,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let original = report_of(vec![(
             "codex",
-            vec![message("codex", "gpt-5.6-sol"), message("codex", "gpt-5.6-sol")],
+            vec![
+                message("codex", "gpt-5.6-sol"),
+                message("codex", "gpt-5.6-sol"),
+            ],
         )]);
         save(&path, &original).expect("write");
 
@@ -283,7 +320,10 @@ mod tests {
         let mut before = crate::totals::Totals::default();
         before.extend(&original.agents[0].messages, &prices);
         let mut after = crate::totals::Totals::default();
-        after.extend(&load(&path).expect("read").report.agents[0].messages, &prices);
+        after.extend(
+            &load(&path).expect("read").report.agents[0].messages,
+            &prices,
+        );
 
         assert_eq!(before.tokens.total(), after.tokens.total());
         assert_eq!(before.cost().partial(), after.cost().partial());
@@ -293,8 +333,11 @@ mod tests {
     fn a_cache_from_another_version_is_ignored() {
         let path = temp("version");
         let _ = std::fs::create_dir_all(path.parent().unwrap());
-        std::fs::write(&path, "{\"t\":\"head\",\"version\":999,\"scannedAt\":\"2026-08-02T10:00:00Z\"}\n")
-            .expect("write");
+        std::fs::write(
+            &path,
+            "{\"t\":\"head\",\"version\":999,\"scannedAt\":\"2026-08-02T10:00:00Z\"}\n",
+        )
+        .expect("write");
         assert!(load(&path).is_none());
     }
 
@@ -304,7 +347,11 @@ mod tests {
     fn a_torn_tail_keeps_what_came_before_it() {
         let path = temp("torn");
         let _ = std::fs::remove_file(&path);
-        save(&path, &report_of(vec![("codex", vec![message("codex", "gpt-5.5")])])).expect("write");
+        save(
+            &path,
+            &report_of(vec![("codex", vec![message("codex", "gpt-5.5")])]),
+        )
+        .expect("write");
 
         let mut text = std::fs::read_to_string(&path).expect("read");
         text.push_str("{\"t\":\"message\",\"clie");
@@ -320,7 +367,11 @@ mod tests {
     fn the_stamp_reads_without_the_body() {
         let path = temp("stamp");
         let _ = std::fs::remove_file(&path);
-        save(&path, &report_of(vec![("codex", vec![message("codex", "gpt-5.5")])])).expect("write");
+        save(
+            &path,
+            &report_of(vec![("codex", vec![message("codex", "gpt-5.5")])]),
+        )
+        .expect("write");
 
         let stamp = load_stamp(&path).expect("a stamp");
         let whole = load(&path).expect("the whole file");

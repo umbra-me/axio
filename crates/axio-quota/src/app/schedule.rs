@@ -94,7 +94,8 @@ fn adaptive(results: &Results, now_unix: i64) -> Duration {
                 let seconds = at.unix_timestamp() - now_unix;
                 // A reset in the past is a stale snapshot, not an imminent event.
                 if seconds > 0 {
-                    soonest_reset = Some(soonest_reset.map_or(seconds, |best: i64| best.min(seconds)));
+                    soonest_reset =
+                        Some(soonest_reset.map_or(seconds, |best: i64| best.min(seconds)));
                 }
             }
         }
@@ -112,8 +113,9 @@ fn adaptive(results: &Results, now_unix: i64) -> Duration {
     // the remaining time gives roughly twenty readings before the window turns over, which
     // is enough to draw the History chart's shape.
     match soonest_reset {
-        Some(seconds) => Duration::from_secs((seconds as u64 / 20).max(FASTEST.as_secs()))
-            .min(SLOWEST),
+        Some(seconds) => {
+            Duration::from_secs((seconds as u64 / 20).max(FASTEST.as_secs())).min(SLOWEST)
+        }
         // Nothing reported a reset at all, so there is nothing to pace against.
         None => Duration::from_secs(5 * 60),
     }
@@ -135,9 +137,8 @@ mod tests {
 
     fn window(used: f64, resets_in: Option<i64>) -> RateWindow {
         RateWindow::new("w", used).with_reset(
-            resets_in.map(|seconds| {
-                OffsetDateTime::from_unix_timestamp(NOW + seconds).expect("valid")
-            }),
+            resets_in
+                .map(|seconds| OffsetDateTime::from_unix_timestamp(NOW + seconds).expect("valid")),
         )
     }
 

@@ -14,8 +14,8 @@ use time::OffsetDateTime;
 
 mod payload;
 
-pub use payload::{error_message, is_signed_out, parse_usage};
 use payload::{dump, signed_out_or_broken};
+pub use payload::{error_message, is_signed_out, parse_usage};
 
 use crate::error::ProbeError;
 use crate::model::{ProviderId, UsageSnapshot};
@@ -75,7 +75,10 @@ async fn discover_workspace(ctx: &FetchContext, session: &str) -> Result<String,
         .header("X-Server-Instance", "server-fn:axio")
         .header("Origin", "https://opencode.ai")
         .header("Referer", "https://opencode.ai/")
-        .header("Accept", "text/javascript, application/json;q=0.9, */*;q=0.8")
+        .header(
+            "Accept",
+            "text/javascript, application/json;q=0.9, */*;q=0.8",
+        )
         .send()
         .await
         .map_err(|err| ProbeError::network(PROVIDER, err))?;
@@ -166,7 +169,10 @@ impl Provider for OpenCodeProvider {
                 "Referer",
                 format!("https://opencode.ai/workspace/{workspace}/billing"),
             )
-            .header("Accept", "text/javascript, application/json;q=0.9, */*;q=0.8")
+            .header(
+                "Accept",
+                "text/javascript, application/json;q=0.9, */*;q=0.8",
+            )
             .send()
             .await
             .map_err(|err| ProbeError::network(PROVIDER, err))?;
@@ -227,7 +233,10 @@ async fn post_subscription(
             format!("https://opencode.ai/workspace/{workspace}/billing"),
         )
         .header("Content-Type", "application/json")
-        .header("Accept", "text/javascript, application/json;q=0.9, */*;q=0.8")
+        .header(
+            "Accept",
+            "text/javascript, application/json;q=0.9, */*;q=0.8",
+        )
         .body(format!("[\"{workspace}\"]"))
         .send()
         .await
@@ -242,15 +251,6 @@ async fn post_subscription(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::format_description::well_known::Rfc3339;
-
-    fn now() -> OffsetDateTime {
-        OffsetDateTime::parse("2026-08-03T12:00:00Z", &Rfc3339).expect("fixed stamp")
-    }
-
-    const BODY: &str = r#"0:{"subscription":{"plan":"pro",
-        "rollingUsage":{"usagePercent":42.5,"resetInSec":3600},
-        "weeklyUsage":{"usagePercent":8,"resetInSec":172800}}}"#;
 
     #[test]
     fn a_workspace_id_is_found_by_its_shape() {

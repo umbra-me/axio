@@ -153,8 +153,7 @@ impl DatabaseAgent {
                 outcome.skipped += 1;
                 continue;
             };
-            let (Some(model), Some(timestamp)) =
-                (find_string(entry, MODEL_KEYS), find_time(entry))
+            let (Some(model), Some(timestamp)) = (find_string(entry, MODEL_KEYS), find_time(entry))
             else {
                 outcome.skipped += 1;
                 continue;
@@ -233,10 +232,7 @@ pub const CATALOG: &[DatabaseAgent] = &[
         display_name: "Crush",
         roots: &[".crush", ".local/share/crush", "AppData/Local/crush"],
         matcher: Matcher::FileName("crush.db"),
-        queries: &[
-            "SELECT parts FROM messages",
-            "SELECT data FROM messages",
-        ],
+        queries: &["SELECT parts FROM messages", "SELECT data FROM messages"],
         convention: Convention::BySpelling,
     },
     DatabaseAgent {
@@ -250,7 +246,11 @@ pub const CATALOG: &[DatabaseAgent] = &[
     DatabaseAgent {
         client: "goose",
         display_name: "Goose",
-        roots: &[".local/share/goose", ".config/goose", "AppData/Roaming/goose"],
+        roots: &[
+            ".local/share/goose",
+            ".config/goose",
+            "AppData/Roaming/goose",
+        ],
         matcher: Matcher::FileName("sessions.db"),
         queries: &["SELECT data FROM messages", "SELECT content FROM messages"],
         convention: Convention::BySpelling,
@@ -275,7 +275,11 @@ mod tests {
     #[test]
     fn client_ids_are_unique_and_distinct_from_the_file_catalog() {
         let mut ids: Vec<_> = CATALOG.iter().map(|agent| agent.client).collect();
-        ids.extend(super::super::catalog::CATALOG.iter().map(|agent| agent.client));
+        ids.extend(
+            super::super::catalog::CATALOG
+                .iter()
+                .map(|agent| agent.client),
+        );
         ids.extend(["claude-code", "codex", "grok", "opencode"]);
         let before = ids.len();
         ids.sort_unstable();
@@ -286,8 +290,16 @@ mod tests {
     #[test]
     fn every_agent_has_a_root_and_at_least_one_query() {
         for agent in CATALOG {
-            assert!(!agent.roots.is_empty(), "{} has nowhere to look", agent.client);
-            assert!(!agent.queries.is_empty(), "{} has nothing to run", agent.client);
+            assert!(
+                !agent.roots.is_empty(),
+                "{} has nowhere to look",
+                agent.client
+            );
+            assert!(
+                !agent.queries.is_empty(),
+                "{} has nothing to run",
+                agent.client
+            );
         }
     }
 
@@ -307,7 +319,10 @@ mod tests {
     fn a_missing_database_yields_nothing_rather_than_failing() {
         let zed = CATALOG.iter().find(|a| a.client == "zed").expect("present");
         let mut ledger = DedupLedger::new();
-        assert!(zed.open(Path::new("/nonexistent/threads.db"), &mut ledger).is_none());
+        assert!(
+            zed.open(Path::new("/nonexistent/threads.db"), &mut ledger)
+                .is_none()
+        );
         assert!(ledger.is_empty());
     }
 
@@ -367,8 +382,10 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO threads (data) VALUES (?1)",
-                [r#"[{"ts":1784524526,"model":"m","usage":{"input_tokens":3}},
-                     {"ts":1784524600,"model":"m","usage":{"input_tokens":4}}]"#],
+                [
+                    r#"[{"ts":1784524526,"model":"m","usage":{"input_tokens":3}},
+                     {"ts":1784524600,"model":"m","usage":{"input_tokens":4}}]"#,
+                ],
             )
             .expect("inserts");
         drop(connection);

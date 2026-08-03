@@ -167,7 +167,11 @@ mod tests {
 
     #[test]
     fn a_provider_with_no_models_is_not_an_error() {
-        assert!(parse(r#"{"empty":{"id":"empty"}}"#).expect("parses").is_empty());
+        assert!(
+            parse(r#"{"empty":{"id":"empty"}}"#)
+                .expect("parses")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -182,7 +186,12 @@ mod tests {
             .with_overlay("models.dev", parse(FEED).expect("parses"));
 
         // Newly known, from the feed.
-        assert!(prices.resolve("brand-new-model", "2026-08-03").pricing.is_some());
+        assert!(
+            prices
+                .resolve("brand-new-model", "2026-08-03")
+                .pricing
+                .is_some()
+        );
 
         // Bundled and tiered: the feed has no way to express the 272K step, so the
         // bundled row must survive.

@@ -53,8 +53,8 @@ impl Identity {
 ///
 /// `now` is passed rather than read so expiry is a test rather than a wait.
 pub fn parse_auth(raw: &str, now: OffsetDateTime) -> Result<Identity, ProbeError> {
-    let root: serde_json::Value = serde_json::from_str(raw)
-        .map_err(|err| ProbeError::decode("Grok auth.json", err))?;
+    let root: serde_json::Value =
+        serde_json::from_str(raw).map_err(|err| ProbeError::decode("Grok auth.json", err))?;
 
     let entry = root
         .as_object()
@@ -98,11 +98,19 @@ pub fn apply_credits(snapshot: &mut UsageSnapshot, raw: &str) -> bool {
     let Ok(root) = serde_json::from_str::<serde_json::Value>(raw) else {
         return false;
     };
-    let data = root.get("config").or_else(|| root.get("data")).unwrap_or(&root);
+    let data = root
+        .get("config")
+        .or_else(|| root.get("data"))
+        .unwrap_or(&root);
 
     let Some(remaining) = as_f64(pick(
         data,
-        &["credits", "remaining_credits", "remainingCredits", "balance"],
+        &[
+            "credits",
+            "remaining_credits",
+            "remainingCredits",
+            "balance",
+        ],
     )) else {
         return false;
     };
@@ -145,13 +153,15 @@ impl Provider for GrokProvider {
         let identity = parse_auth(&raw, OffsetDateTime::now_utc())?;
 
         let mut snapshot = UsageSnapshot::new(ProviderId::Grok);
-        snapshot.account_label = identity.email.clone().or_else(|| identity.first_name.clone());
+        snapshot.account_label = identity
+            .email
+            .clone()
+            .or_else(|| identity.first_name.clone());
         snapshot.plan = identity.principal_type.clone();
 
         if identity.expired {
             return Err(ProbeError::Unauthorized(
-                "The Grok CLI's saved token has expired. Run `grok` to sign in again."
-                    .to_string(),
+                "The Grok CLI's saved token has expired. Run `grok` to sign in again.".to_string(),
             ));
         }
         // Grok exposes no team usage surface. Saying so beats forwarding whatever the
@@ -239,7 +249,10 @@ mod tests {
         assert!(!apply_credits(&mut snapshot, r#"{"unexpected":true}"#));
         assert!(snapshot.credits.is_none());
 
-        assert!(apply_credits(&mut snapshot, r#"{"config":{"credits":42.5}}"#));
+        assert!(apply_credits(
+            &mut snapshot,
+            r#"{"config":{"credits":42.5}}"#
+        ));
         assert_eq!(snapshot.credits.unwrap().balance, Some(42.5));
     }
 }

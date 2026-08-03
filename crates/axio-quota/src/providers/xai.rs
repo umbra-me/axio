@@ -154,7 +154,10 @@ mod tests {
     /// A spent-out team posts a positive ledger, which is a zero-or-worse balance.
     #[test]
     fn a_positive_ledger_is_an_exhausted_balance() {
-        let credits = parse_balance(r#"{"total":"250"}"#).unwrap().credits.unwrap();
+        let credits = parse_balance(r#"{"total":"250"}"#)
+            .unwrap()
+            .credits
+            .unwrap();
         assert_eq!(credits.balance, Some(-2.5));
         assert!(!credits.has_credits);
     }
@@ -170,6 +173,11 @@ mod tests {
     /// A prepaid ledger has no ceiling, so there is no honest percentage to draw.
     #[test]
     fn a_balance_produces_no_window() {
-        assert!(parse_balance(r#"{"total":"-1000"}"#).unwrap().windows.is_empty());
+        assert!(
+            parse_balance(r#"{"total":"-1000"}"#)
+                .unwrap()
+                .windows
+                .is_empty()
+        );
     }
 }

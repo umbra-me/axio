@@ -20,13 +20,13 @@ use crate::message::{CostMessage, DedupLedger};
 
 pub mod catalog;
 pub mod claude_code;
-#[cfg(feature = "sqlite")]
-pub mod database;
 pub mod codex;
 #[cfg(feature = "sqlite")]
-pub mod opencode;
+pub mod database;
 pub mod generic;
 pub mod grok;
+#[cfg(feature = "sqlite")]
+pub mod opencode;
 pub mod usage;
 
 /// An agent whose sessions can be read from disk.
@@ -339,7 +339,11 @@ fn walk(root: &Path) -> impl Iterator<Item = PathBuf> {
 /// Every one of these logs writes RFC 3339, where the date is the first ten characters by
 /// definition. Pricing needs the day and nothing finer, and this runs once per message.
 pub fn date_of(timestamp: &str) -> &str {
-    if timestamp.len() >= 10 { &timestamp[..10] } else { timestamp }
+    if timestamp.len() >= 10 {
+        &timestamp[..10]
+    } else {
+        timestamp
+    }
 }
 
 #[cfg(test)]

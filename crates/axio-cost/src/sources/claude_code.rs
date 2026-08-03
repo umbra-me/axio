@@ -79,7 +79,10 @@ impl Usage {
             Some(split)
                 if split.ephemeral_5m_input_tokens + split.ephemeral_1h_input_tokens > 0 =>
             {
-                (split.ephemeral_5m_input_tokens, split.ephemeral_1h_input_tokens)
+                (
+                    split.ephemeral_5m_input_tokens,
+                    split.ephemeral_1h_input_tokens,
+                )
             }
             _ => (self.cache_creation_input_tokens, 0),
         };
@@ -222,7 +225,10 @@ mod tests {
         assert_eq!(messages[0].model, "gpt-5.6-sol", "not claude-anything");
         assert_eq!(messages[0].client.as_str(), "claude-code");
         assert_eq!(messages[0].tokens.cache_read, 20_992);
-        assert_eq!(messages[0].tokens.input, 1_006, "anthropic input excludes cache");
+        assert_eq!(
+            messages[0].tokens.input, 1_006,
+            "anthropic input excludes cache"
+        );
     }
 
     #[test]

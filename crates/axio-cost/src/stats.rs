@@ -215,7 +215,10 @@ mod tests {
             session_id: format!("s-{day}"),
             workspace: None,
             timestamp: datetime!(2026-01-01 12:00 UTC).replace_date(day),
-            tokens: TokenBreakdown { input: tokens, ..Default::default() },
+            tokens: TokenBreakdown {
+                input: tokens,
+                ..Default::default()
+            },
             dedup_key: None,
             turn_start: false,
             reported_cost: None,

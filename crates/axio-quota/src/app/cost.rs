@@ -173,8 +173,7 @@ impl CostCache {
         StoredScan {
             path: self.cache_file.display().to_string(),
             bytes,
-            scanned_at: axio_cost::store::load_stamp(&self.cache_file)
-                .map(|at| at.to_string()),
+            scanned_at: axio_cost::store::load_stamp(&self.cache_file).map(|at| at.to_string()),
             scanning: self.is_scanning(),
         }
     }
@@ -236,7 +235,10 @@ fn group_report(report: &ScanReport, group: &str) -> CostReport {
 
     CostReport {
         rows,
-        total: CostRow { share: 1.0, ..row("total".into(), &grand) },
+        total: CostRow {
+            share: 1.0,
+            ..row("total".into(), &grand)
+        },
         unpriced_models: grand.unpriced_models.iter().cloned().collect(),
         agents: report
             .agents
@@ -362,7 +364,9 @@ mod tests {
     /// run has to come back on the next without touching a transcript.
     #[test]
     fn a_saved_scan_comes_back_without_rescanning() {
-        let path = std::env::temp_dir().join("axio-warm-cache").join("cost-scan.jsonl");
+        let path = std::env::temp_dir()
+            .join("axio-warm-cache")
+            .join("cost-scan.jsonl");
         let _ = std::fs::remove_file(&path);
         let saved = ScanReport {
             agents: vec![axio_cost::AgentReport {
@@ -422,7 +426,10 @@ mod tests {
 
     #[test]
     fn a_partly_priced_total_reports_its_coverage() {
-        let scanned = report_of(vec![message("claude-opus-5", "a"), message("unlisted-model-1", "a")]);
+        let scanned = report_of(vec![
+            message("claude-opus-5", "a"),
+            message("unlisted-model-1", "a"),
+        ]);
         let report = group_report(&scanned, "model");
         assert!((report.total.coverage - 0.5).abs() < 1e-9);
         assert_eq!(report.total.cost_usd, Some(5.0));

@@ -30,13 +30,48 @@ pub(super) struct Row {
 /// price by fixed multipliers — see [`anthropic_rates`]. Writing them out would invite the
 /// table and the multipliers to disagree.
 pub(super) const ANTHROPIC: &[Row] = &[
-    Row { id: "claude-fable-5", input: 10.0, output: 50.0, promo: None },
-    Row { id: "claude-mythos-5", input: 10.0, output: 50.0, promo: None },
-    Row { id: "claude-opus-5", input: 5.0, output: 25.0, promo: None },
-    Row { id: "claude-opus-4-8", input: 5.0, output: 25.0, promo: None },
-    Row { id: "claude-opus-4-7", input: 5.0, output: 25.0, promo: None },
-    Row { id: "claude-opus-4-6", input: 5.0, output: 25.0, promo: None },
-    Row { id: "claude-opus-4-5", input: 5.0, output: 25.0, promo: None },
+    Row {
+        id: "claude-fable-5",
+        input: 10.0,
+        output: 50.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-mythos-5",
+        input: 10.0,
+        output: 50.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-opus-5",
+        input: 5.0,
+        output: 25.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-opus-4-8",
+        input: 5.0,
+        output: 25.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-opus-4-7",
+        input: 5.0,
+        output: 25.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-opus-4-6",
+        input: 5.0,
+        output: 25.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-opus-4-5",
+        input: 5.0,
+        output: 25.0,
+        promo: None,
+    },
     // Introductory pricing runs to the end of 2026-08. A session from inside that window
     // is billed at 2/10 and one from after it at 3/15; a single flat row would overstate
     // every Sonnet 5 session logged this month by half.
@@ -46,9 +81,24 @@ pub(super) const ANTHROPIC: &[Row] = &[
         output: 15.0,
         promo: Some((2.0, 10.0, "2026-08-31")),
     },
-    Row { id: "claude-sonnet-4-6", input: 3.0, output: 15.0, promo: None },
-    Row { id: "claude-sonnet-4-5", input: 3.0, output: 15.0, promo: None },
-    Row { id: "claude-haiku-4-5", input: 1.0, output: 5.0, promo: None },
+    Row {
+        id: "claude-sonnet-4-6",
+        input: 3.0,
+        output: 15.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-sonnet-4-5",
+        input: 3.0,
+        output: 15.0,
+        promo: None,
+    },
+    Row {
+        id: "claude-haiku-4-5",
+        input: 1.0,
+        output: 5.0,
+        promo: None,
+    },
 ];
 
 /// OpenAI models, from `developers.openai.com/api/docs/pricing`.
@@ -60,7 +110,9 @@ pub(super) const ANTHROPIC: &[Row] = &[
 ///
 /// Two aggregator sites quoted Terra at $2.50/$15 and Luna at $1.00/$6. The vendor's own
 /// page says $2/$12 and $0.20/$1.20. These are the vendor's numbers.
-pub(super) const OPENAI: &[(&str, f64, f64, Option<(u64, f64, f64)>)] = &[
+pub(super) type OpenAiRow = (&'static str, f64, f64, Option<(u64, f64, f64)>);
+
+pub(super) const OPENAI: &[OpenAiRow] = &[
     ("gpt-5.6-sol", 5.00, 30.00, Some((272_000, 10.00, 45.00))),
     ("gpt-5.6-terra", 2.00, 12.00, Some((272_000, 4.00, 18.00))),
     ("gpt-5.6-luna", 0.20, 1.20, Some((272_000, 0.40, 1.80))),
@@ -104,7 +156,9 @@ pub(super) const VENDORS: &[(&str, f64, f64, f64)] = &[
 /// The date is the message's own timestamp, not today's — pricing a January session at
 /// August's rates is the same class of error as ignoring a promotional window.
 pub(super) fn lookup(id: &str, date: &str) -> Option<ModelPricing> {
-    anthropic(id, date).or_else(|| openai(id)).or_else(|| vendor(id))
+    anthropic(id, date)
+        .or_else(|| openai(id))
+        .or_else(|| vendor(id))
 }
 
 fn vendor(id: &str) -> Option<ModelPricing> {
@@ -239,7 +293,12 @@ mod tests {
     fn the_opus_row_matches_axio_cores_own_numbers() {
         let opus = anthropic("claude-opus-5", "2026-08-02").expect("opus is priced");
         assert_eq!(
-            (opus.input, opus.output, opus.cache_read, opus.cache_write_5m),
+            (
+                opus.input,
+                opus.output,
+                opus.cache_read,
+                opus.cache_write_5m
+            ),
             (5.0, 25.0, 0.5, 6.25)
         );
     }
@@ -290,7 +349,10 @@ mod openai_tests {
             let rates = lookup(id, "2026-08-02").unwrap_or_else(|| panic!("{id} is priced"));
             assert_eq!(rates.input, input, "{id} input");
             assert_eq!(rates.output, output, "{id} output");
-            assert!((rates.cache_read - cached).abs() < 1e-9, "{id} cached input");
+            assert!(
+                (rates.cache_read - cached).abs() < 1e-9,
+                "{id} cached input"
+            );
         }
     }
 
@@ -300,13 +362,29 @@ mod openai_tests {
     fn a_request_over_272k_is_billed_at_the_long_rate() {
         let sol = lookup("gpt-5.6-sol", "2026-08-02").expect("priced");
 
-        let short = TokenBreakdown { input: 100_000, output: 1_000, ..Default::default() };
-        let long = TokenBreakdown { input: 300_000, output: 1_000, ..Default::default() };
+        let short = TokenBreakdown {
+            input: 100_000,
+            output: 1_000,
+            ..Default::default()
+        };
+        let long = TokenBreakdown {
+            input: 300_000,
+            output: 1_000,
+            ..Default::default()
+        };
 
         // 100k at $5 + 1k at $30
-        assert!((sol.cost(&short) - (0.5 + 0.03)).abs() < 1e-9, "{}", sol.cost(&short));
+        assert!(
+            (sol.cost(&short) - (0.5 + 0.03)).abs() < 1e-9,
+            "{}",
+            sol.cost(&short)
+        );
         // 300k at $10 + 1k at $45
-        assert!((sol.cost(&long) - (3.0 + 0.045)).abs() < 1e-9, "{}", sol.cost(&long));
+        assert!(
+            (sol.cost(&long) - (3.0 + 0.045)).abs() < 1e-9,
+            "{}",
+            sol.cost(&long)
+        );
     }
 
     /// The threshold counts everything the provider treats as input, so a request that is
@@ -314,9 +392,17 @@ mod openai_tests {
     #[test]
     fn cached_reads_count_toward_the_threshold() {
         let sol = lookup("gpt-5.6-sol", "2026-08-02").expect("priced");
-        let cached = TokenBreakdown { input: 1_000, cache_read: 300_000, ..Default::default() };
+        let cached = TokenBreakdown {
+            input: 1_000,
+            cache_read: 300_000,
+            ..Default::default()
+        };
         // Long tier: 1k at $10 + 300k at $1.00
-        assert!((sol.cost(&cached) - (0.01 + 0.3)).abs() < 1e-9, "{}", sol.cost(&cached));
+        assert!(
+            (sol.cost(&cached) - (0.01 + 0.3)).abs() < 1e-9,
+            "{}",
+            sol.cost(&cached)
+        );
     }
 
     /// Anthropic's current models do not tier, so a huge Opus request stays at one rate.

@@ -111,7 +111,10 @@ pub fn parse_usage(raw: &str) -> Result<UsageSnapshot, ProbeError> {
 
     let data = root.get("data").unwrap_or(&root);
     let mut snapshot = UsageSnapshot::new(ProviderId::Zai);
-    snapshot.plan = as_string(pick(data, &["planName", "plan", "plan_type", "packageName"]));
+    snapshot.plan = as_string(pick(
+        data,
+        &["planName", "plan", "plan_type", "packageName"],
+    ));
 
     let limits = data
         .get("limits")
@@ -130,7 +133,9 @@ pub fn parse_usage(raw: &str) -> Result<UsageSnapshot, ProbeError> {
         // negotiable — a seconds value here would land in 1970 and read as "resetting".
         let resets_at = as_i64(pick(limit, &["nextResetTime"]))
             .filter(|millis| *millis > 0)
-            .and_then(|millis| OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000).ok());
+            .and_then(|millis| {
+                OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000).ok()
+            });
 
         snapshot.windows.push(
             RateWindow::new(label_for(unit, number), percentage)
@@ -241,10 +246,7 @@ mod tests {
     #[test]
     fn an_error_code_in_a_200_body_is_still_an_error() {
         let raw = r#"{"code":401,"success":false,"msg":"invalid token"}"#;
-        assert!(matches!(
-            parse_usage(raw),
-            Err(ProbeError::Unauthorized(_))
-        ));
+        assert!(matches!(parse_usage(raw), Err(ProbeError::Unauthorized(_))));
     }
 
     /// Empty limits mean a team token missing its selectors, which is a configuration

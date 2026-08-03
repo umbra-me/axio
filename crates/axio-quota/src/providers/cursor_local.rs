@@ -29,7 +29,9 @@ pub fn state_db(env: &Env) -> PathBuf {
     #[cfg(target_os = "windows")]
     let base = crate::paths::app_data_dir(env);
     #[cfg(target_os = "macos")]
-    let base = crate::paths::home_dir(env).join("Library").join("Application Support");
+    let base = crate::paths::home_dir(env)
+        .join("Library")
+        .join("Application Support");
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let base = crate::paths::home_dir(env).join(".config");
 
@@ -90,8 +92,7 @@ fn read_token(path: &std::path::Path) -> Result<String, ProbeError> {
         .filter(|token| !token.is_empty())
         .ok_or_else(|| {
             ProbeError::NotConfigured(
-                "Cursor is installed but not signed in — no token in its state store."
-                    .to_string(),
+                "Cursor is installed but not signed in — no token in its state store.".to_string(),
             )
         })
 }
@@ -99,8 +100,7 @@ fn read_token(path: &std::path::Path) -> Result<String, ProbeError> {
 #[cfg(not(feature = "sqlite"))]
 pub fn access_token(_env: &Env) -> Result<String, ProbeError> {
     Err(ProbeError::NotConfigured(
-        "This build cannot read Cursor's state store. Paste a Cookie header instead."
-            .to_string(),
+        "This build cannot read Cursor's state store. Paste a Cookie header instead.".to_string(),
     ))
 }
 
@@ -177,7 +177,10 @@ mod tests {
     #[test]
     fn the_state_path_is_cursors_own_directory() {
         let env: Env = [
-            ("APPDATA".to_string(), "C:\\Users\\x\\AppData\\Roaming".to_string()),
+            (
+                "APPDATA".to_string(),
+                "C:\\Users\\x\\AppData\\Roaming".to_string(),
+            ),
             ("HOME".to_string(), "/home/x".to_string()),
         ]
         .into_iter()

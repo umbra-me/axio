@@ -21,7 +21,10 @@ pub(super) fn cache_ratio(totals: &Totals) -> String {
     if total == 0 {
         return "-".to_string();
     }
-    format!("{:.0}%", totals.tokens.cache_read as f64 / total as f64 * 100.0)
+    format!(
+        "{:.0}%",
+        totals.tokens.cache_read as f64 / total as f64 * 100.0
+    )
 }
 
 /// Dollars per million tokens, blended across every rate the row's models charge.

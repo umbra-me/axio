@@ -190,9 +190,15 @@ impl Source for Codex {
 fn session_id_of(path: &Path) -> String {
     const TIMESTAMP_SEGMENTS: usize = 5;
 
-    let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("unknown");
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("unknown");
     stem.strip_prefix("rollout-")
-        .and_then(|rest| rest.splitn(TIMESTAMP_SEGMENTS + 1, '-').nth(TIMESTAMP_SEGMENTS))
+        .and_then(|rest| {
+            rest.splitn(TIMESTAMP_SEGMENTS + 1, '-')
+                .nth(TIMESTAMP_SEGMENTS)
+        })
         .unwrap_or(stem)
         .to_string()
 }
@@ -207,7 +213,8 @@ mod tests {
 
     fn parse(contents: &str) -> (FileOutcome, Vec<CostMessage>) {
         let mut ledger = DedupLedger::new();
-        let path = Path::new("/h/.codex/sessions/2026/04/26/rollout-2026-04-26T17-34-45-019dc924.jsonl");
+        let path =
+            Path::new("/h/.codex/sessions/2026/04/26/rollout-2026-04-26T17-34-45-019dc924.jsonl");
         let outcome = Codex.parse(path, contents, &mut ledger);
         (outcome, ledger.into_messages())
     }
@@ -224,7 +231,10 @@ mod tests {
     /// charge for 71,375 fresh tokens rather than 3,919.
     #[test]
     fn input_is_made_cache_exclusive() {
-        let (_, messages) = parse(&format!("{CONTEXT}\n{}", token_count(71_375, 67_456, 569, 285)));
+        let (_, messages) = parse(&format!(
+            "{CONTEXT}\n{}",
+            token_count(71_375, 67_456, 569, 285)
+        ));
         assert_eq!(messages[0].tokens.input, 3_919);
         assert_eq!(messages[0].tokens.cache_read, 67_456);
         assert_eq!(messages[0].tokens.total(), 71_944, "matches total_tokens");
@@ -290,6 +300,9 @@ mod tests {
     #[test]
     fn the_working_directory_becomes_the_workspace() {
         let (_, messages) = parse(&format!("{CONTEXT}\n{}", token_count(100, 0, 1, 0)));
-        assert_eq!(messages[0].workspace.as_deref(), Some(r"D:\evade.fail-suite"));
+        assert_eq!(
+            messages[0].workspace.as_deref(),
+            Some(r"D:\evade.fail-suite")
+        );
     }
 }

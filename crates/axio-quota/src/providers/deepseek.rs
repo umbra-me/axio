@@ -186,7 +186,8 @@ mod tests {
 
     #[test]
     fn a_suspended_account_says_so() {
-        let raw = r#"{"is_available":false,"balance_infos":[{"currency":"USD","total_balance":"0"}]}"#;
+        let raw =
+            r#"{"is_available":false,"balance_infos":[{"currency":"USD","total_balance":"0"}]}"#;
         let snapshot = parse_usage(raw).expect("parses");
         assert_eq!(snapshot.account_label.as_deref(), Some("Suspended"));
         assert!(!snapshot.credits.unwrap().has_credits);

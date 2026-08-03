@@ -59,7 +59,11 @@ fn primary_cookie(id: ProviderId) -> Option<&'static str> {
 /// certainly-broken paste into a probably-working one, and a wrong guess still fails with
 /// the same message it would have anyway.
 pub fn cookie_header_for(id: ProviderId, raw: &str) -> Option<String> {
-    let cleaned = raw.trim().trim_start_matches("Cookie:").trim_start_matches("cookie:").trim();
+    let cleaned = raw
+        .trim()
+        .trim_start_matches("Cookie:")
+        .trim_start_matches("cookie:")
+        .trim();
     if let Some(header) = crate::provider::clean_cookie(cleaned) {
         return Some(header);
     }
@@ -133,7 +137,10 @@ mod tests {
         assert!(cookies_present(analytics, names).is_empty());
 
         let real = "ph_phc_x=1; WorkosCursorSessionToken=user%3A%3Atok; _ga=GA1.1.2";
-        assert_eq!(cookies_present(real, names), vec!["WorkosCursorSessionToken"]);
+        assert_eq!(
+            cookies_present(real, names),
+            vec!["WorkosCursorSessionToken"]
+        );
     }
 
     /// A value containing another cookie's name must not count as that cookie.
@@ -141,7 +148,10 @@ mod tests {
     fn a_name_inside_a_value_does_not_count() {
         let names = session_cookie_names(ProviderId::Opencode);
         assert!(cookies_present("other=__Host-auth-ish", names).is_empty());
-        assert_eq!(cookies_present("__Host-auth=xyz", names), vec!["__Host-auth"]);
+        assert_eq!(
+            cookies_present("__Host-auth=xyz", names),
+            vec!["__Host-auth"]
+        );
     }
 
     #[test]

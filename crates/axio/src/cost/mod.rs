@@ -16,10 +16,10 @@ pub(crate) mod calendar;
 pub(crate) mod columns;
 pub(crate) mod json;
 pub(crate) mod prices;
-pub(crate) use prices::import_prices;
 use axio_cost::sources::{registry, scan};
 use axio_cost::totals::{Totals, render};
 use axio_cost::{CostMessage, ScanReport};
+pub(crate) use prices::import_prices;
 
 /// What to group the table by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -146,22 +146,20 @@ pub(crate) fn cost_command(
     let grand_dollars = spend(&grand);
     if wide {
         println!(
-            "{:<30} {:>9} {:>15} {:>7} {:>9} {:>6}  {}",
+            "{:<30} {:>9} {:>15} {:>7} {:>9} {:>6}  cost",
             by.heading(),
             "messages",
             "tokens",
             "cached",
             "$/1M",
-            "share",
-            "cost"
+            "share"
         );
     } else {
         println!(
-            "{:<34} {:>10} {:>16}  {}",
+            "{:<34} {:>10} {:>16}  cost",
             by.heading(),
             "messages",
-            "tokens",
-            "cost"
+            "tokens"
         );
     }
     let shown = rows.len().min(limit);
@@ -190,7 +188,10 @@ pub(crate) fn cost_command(
     if rows.len() > shown {
         // Never truncate silently — a table that hides rows without saying so reads as
         // the whole picture.
-        println!("... {} more rows, use --limit to see them", rows.len() - shown);
+        println!(
+            "... {} more rows, use --limit to see them",
+            rows.len() - shown
+        );
     }
 
     // The total has to line up with the columns above it, so it follows the same branch.
@@ -280,7 +281,10 @@ fn summarise<'a>(
 ) {
     let mut groups: BTreeMap<String, Totals> = BTreeMap::new();
     for message in messages {
-        groups.entry(by.key(message)).or_default().add(message, prices);
+        groups
+            .entry(by.key(message))
+            .or_default()
+            .add(message, prices);
     }
     if groups.len() < 2 {
         // One row would only restate the total in different words.
@@ -294,8 +298,10 @@ fn summarise<'a>(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    println!("
-{heading}");
+    println!(
+        "
+{heading}"
+    );
     for (key, totals) in rows {
         println!(
             "  {:<32} {:>10} {:>16}  {}",
@@ -381,7 +387,10 @@ mod tests {
             session_id: session.into(),
             workspace: None,
             timestamp: datetime!(2026-08-02 10:00 UTC),
-            tokens: TokenBreakdown { input: 10, ..Default::default() },
+            tokens: TokenBreakdown {
+                input: 10,
+                ..Default::default()
+            },
             dedup_key: None,
             turn_start: false,
             reported_cost: None,

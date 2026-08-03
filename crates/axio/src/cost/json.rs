@@ -21,7 +21,10 @@ pub(super) fn emit_json(
     let breakdown = |by: GroupBy| {
         let mut totals: BTreeMap<String, Totals> = BTreeMap::new();
         for message in report.messages() {
-            totals.entry(by.key(message)).or_default().add(message, prices);
+            totals
+                .entry(by.key(message))
+                .or_default()
+                .add(message, prices);
         }
         totals
             .into_iter()

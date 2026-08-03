@@ -130,7 +130,10 @@ mod tests {
     #[test]
     fn an_explicit_vendor_prefix_wins() {
         assert_eq!(provider_of("anthropic/claude-fable-5"), "Anthropic");
-        assert_eq!(provider_of("openrouter/anthropic/claude-opus-5"), "Anthropic");
+        assert_eq!(
+            provider_of("openrouter/anthropic/claude-opus-5"),
+            "Anthropic"
+        );
         assert_eq!(provider_of("anthropic.claude-opus-5"), "Anthropic");
         assert_eq!(provider_of("z-ai/glm-5.2"), "Z.ai");
     }

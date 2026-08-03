@@ -16,9 +16,9 @@
 //! Nothing here opens a socket. The feed is fetched by whoever calls this crate and handed
 //! in already read, so pricing stays testable without a network and usable without one.
 
-mod table;
 pub mod feed;
 pub mod provider;
+mod table;
 
 pub use provider::provider_of;
 pub use table::normalize;
@@ -107,11 +107,7 @@ pub(super) fn vendor_rates(input: f64, output: f64, cache_read: f64) -> ModelPri
 /// OpenAI sells no 1-hour cache product, so the 1-hour column repeats the 5-minute rate
 /// rather than inventing a premium — a log that somehow reports a 1-hour write against an
 /// OpenAI model is then billed as an ordinary write instead of being overcharged.
-pub(super) fn openai_rates(
-    input: f64,
-    output: f64,
-    long: Option<(u64, f64, f64)>,
-) -> ModelPricing {
+pub(super) fn openai_rates(input: f64, output: f64, long: Option<(u64, f64, f64)>) -> ModelPricing {
     ModelPricing {
         input,
         output,
@@ -314,8 +310,14 @@ mod tests {
     #[test]
     fn the_one_hour_cache_write_costs_more_than_the_five_minute_one() {
         let opus = anthropic_rates(5.0, 25.0);
-        let short = TokenBreakdown { cache_write_5m: 545_900, ..Default::default() };
-        let long = TokenBreakdown { cache_write_1h: 545_900, ..Default::default() };
+        let short = TokenBreakdown {
+            cache_write_5m: 545_900,
+            ..Default::default()
+        };
+        let long = TokenBreakdown {
+            cache_write_1h: 545_900,
+            ..Default::default()
+        };
         assert!(opus.cost(&long) > opus.cost(&short) * 1.5);
     }
 
@@ -332,8 +334,8 @@ mod tests {
     #[test]
     fn the_bundle_outranks_an_overlay_for_a_model_it_knows() {
         let repriced = anthropic_rates(4.0, 20.0);
-        let prices = Prices::bundled()
-            .with_overlay("models.dev", [("claude-opus-5".to_string(), repriced)]);
+        let prices =
+            Prices::bundled().with_overlay("models.dev", [("claude-opus-5".to_string(), repriced)]);
 
         let resolved = prices.resolve("claude-opus-5", "2026-08-02");
         assert_eq!(resolved.pricing.map(|p| p.input), Some(5.0));
@@ -354,7 +356,12 @@ mod tests {
             "litellm",
             [("unlisted-model-1".to_string(), anthropic_rates(1.0, 2.0))],
         );
-        assert!(priced.resolve("unlisted-model-1", "2026-08-02").pricing.is_some());
+        assert!(
+            priced
+                .resolve("unlisted-model-1", "2026-08-02")
+                .pricing
+                .is_some()
+        );
     }
 
     #[test]
