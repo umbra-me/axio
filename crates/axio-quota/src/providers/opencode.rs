@@ -114,6 +114,70 @@ fn number_near(text: &str, label: &str, field: &str) -> Option<f64> {
     digits.parse().ok()
 }
 
+/// What a window's percentage might be called.
+///
+/// A list rather than a name because the response is not a documented API — it is whatever
+/// the site's own server function returns this week. Spelling it one way and failing on the
+/// others turns a working session into "no rolling usage found", which is what happened.
+const PERCENT_KEYS: &[&str] = &[
+    "usagePercent",
+    "usedPercent",
+    "percentUsed",
+    "usage_percent",
+    "used_percent",
+    "utilizationPercent",
+    "utilization",
+    "percent",
+];
+
+/// What a countdown to the reset might be called.
+const RESET_KEYS: &[&str] = &[
+    "resetInSec",
+    "resetInSeconds",
+    "resetSeconds",
+    "reset_in_sec",
+    "reset_sec",
+    "resetsInSec",
+    "resetIn",
+    "resetSec",
+];
+
+/// What each window might be called.
+const ROLLING_LABELS: &[&str] = &["rollingUsage", "rolling_usage", "rolling"];
+const WEEKLY_LABELS: &[&str] = &["weeklyUsage", "weekly_usage", "weekly"];
+
+/// The first of `fields` that appears near any of `labels`.
+fn first_number(text: &str, labels: &[&str], fields: &[&str]) -> Option<f64> {
+    labels
+        .iter()
+        .find_map(|label| fields.iter().find_map(|field| number_near(text, label, field)))
+}
+
+/// The identifier-like keys in a document, for an error that says what it saw.
+///
+/// Names only. This runs when parsing has already failed, which is exactly when the useful
+/// thing is what the response *does* contain — and exactly when nobody can see it.
+fn keys_in(text: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for (index, _) in text.match_indices('"') {
+        let rest = &text[index + 1..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        // A key is a quoted name followed by a colon, allowing for a closing quote.
+        if name.is_empty() || name.len() > 40 {
+            continue;
+        }
+        let after = &rest[name.len()..];
+        if after.starts_with("\":") && !keys.contains(&name) {
+            keys.push(name);
+        }
+    }
+    keys.truncate(40);
+    keys
+}
+
 /// Lift the usage windows out of the serialized response.
 ///
 /// `now` is a parameter because the response gives a countdown rather than a timestamp:
@@ -122,14 +186,14 @@ fn number_near(text: &str, label: &str, field: &str) -> Option<f64> {
 pub fn parse_usage(text: &str, now: OffsetDateTime) -> Result<UsageSnapshot, ProbeError> {
     let mut snapshot = UsageSnapshot::new(ProviderId::Opencode);
 
-    for (label, name, minutes) in [
-        ("rollingUsage", "5h", Some(300u32)),
-        ("weeklyUsage", "Weekly", Some(10_080)),
+    for (labels, name, minutes) in [
+        (ROLLING_LABELS, "5h", Some(300u32)),
+        (WEEKLY_LABELS, "Weekly", Some(10_080)),
     ] {
-        let Some(used) = number_near(text, label, "usagePercent") else {
+        let Some(used) = first_number(text, labels, PERCENT_KEYS) else {
             continue;
         };
-        let resets_at = number_near(text, label, "resetInSec")
+        let resets_at = first_number(text, labels, RESET_KEYS)
             .filter(|seconds| *seconds > 0.0)
             .map(|seconds| now + Duration::seconds(seconds as i64));
         snapshot.windows.push(
@@ -143,9 +207,14 @@ pub fn parse_usage(text: &str, now: OffsetDateTime) -> Result<UsageSnapshot, Pro
     // both means the response was not the one expected, which is a parse failure and not
     // an idle account.
     if snapshot.windows.is_empty() {
+        let keys = keys_in(text);
         return Err(ProbeError::decode(
             "opencode subscription response",
-            "no rolling usage found — the session may have expired",
+            if keys.is_empty() {
+                format!("no usage in a {}-byte response with no field names", text.len())
+            } else {
+                format!("no usage found. The response has: {}", keys.join(", "))
+            },
         ));
     }
     Ok(snapshot)
@@ -314,6 +383,37 @@ mod tests {
     fn the_first_workspace_listed_is_the_one_taken() {
         let body = r#"[{"id":"wrk_zzz"},{"id":"wrk_aaa"}]"#;
         assert_eq!(find_workspace(body).as_deref(), Some("wrk_zzz"));
+    }
+
+    /// The response is not a documented API, so one spelling is a guess. This is the
+    /// alternative spelling actually listed by another client for the same endpoint.
+    #[test]
+    fn a_window_is_found_under_an_alternative_spelling() {
+        let body = r#"{"rolling":{"percentUsed":33,"resetIn":7200}}"#;
+        let snapshot = parse_usage(body, now()).expect("parses");
+        assert_eq!(snapshot.windows[0].used_percent, 33.0);
+        assert_eq!(
+            snapshot.windows[0].resets_at,
+            Some(now() + Duration::hours(2))
+        );
+    }
+
+    /// When parsing fails the useful information is what the response *did* contain, and
+    /// that is exactly the moment nobody can see it.
+    #[test]
+    fn a_failure_names_the_fields_it_saw() {
+        let body = r#"{"error":"unauthorized","requestId":"abc"}"#;
+        let message = parse_usage(body, now()).unwrap_err().to_string();
+        assert!(message.contains("error"), "{message}");
+        assert!(message.contains("requestId"), "{message}");
+    }
+
+    /// Values must never be reported, only names — the response may name an account.
+    #[test]
+    fn only_key_names_are_reported() {
+        let keys = keys_in(r#"{"email":"someone@example.com","plan":"pro"}"#);
+        assert_eq!(keys, vec!["email", "plan"]);
+        assert!(!keys.iter().any(|key| key.contains("example.com")));
     }
 
     /// A countdown of zero or less is a window already turned over, not a reset due now.
