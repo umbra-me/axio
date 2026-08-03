@@ -44,6 +44,54 @@ pub(crate) async fn quota_command(provider: Option<&str>, json: bool, diagnose: 
                 enabled,
                 state
             );
+
+            // For a cookie provider, "is a header set" is not the useful question. A
+            // header can be pasted perfectly and still carry no session, because the panel
+            // lists analytics and consent cookies in the same string — and a request to a
+            // static asset carries those and nothing else. Naming the cookie that is
+            // missing is the difference between a diagnostic and a shrug.
+            let names = providers::session_cookie_names(probe.id());
+            if names.is_empty() {
+                continue;
+            }
+            let raw = config
+                .provider(probe.id())
+                .and_then(|entry| entry.cookie_header.as_deref())
+                .filter(|text| !text.trim().is_empty());
+            let Some(raw) = raw else {
+                println!("             cookie: none pasted yet");
+                continue;
+            };
+
+            // Whether the paste even looked like a header is the interesting half. A
+            // string with no `=` in it anywhere is a lone cookie value, which is what the
+            // Application panel's copy gives you — and saying that is far more use than
+            // reporting that it did not work.
+            let bare = !raw.contains('=');
+            match providers::cookie_header_for(probe.id(), raw) {
+                None => println!("             cookie: {} chars, unusable", raw.trim().len()),
+                Some(header) => {
+                    let found = providers::cookies_present(&header, names);
+                    let count = header.split(';').filter(|pair| pair.contains('=')).count();
+                    if bare {
+                        println!(
+                            "             cookie: a bare value, no name — read as {}",
+                            found.first().map(String::as_str).unwrap_or("nothing usable")
+                        );
+                    } else if found.is_empty() {
+                        println!(
+                            "             cookie: {count} pasted, none of them a session. \
+                             Needs one of: {}",
+                            names.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "             cookie: {count} pasted, carries {}",
+                            found.join(", ")
+                        );
+                    }
+                }
+            }
         }
         return 0;
     }

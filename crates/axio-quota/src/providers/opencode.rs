@@ -15,7 +15,7 @@ use time::{Duration, OffsetDateTime};
 use crate::error::ProbeError;
 use crate::model::{ProviderId, RateWindow, UsageSnapshot};
 use crate::paths::Env;
-use crate::provider::{FetchContext, Provider};
+use crate::provider::{FetchContext, Provider, redirect_target};
 
 const PROVIDER: &str = "opencode";
 const SERVER_URL: &str = "https://opencode.ai/_server";
@@ -34,9 +34,7 @@ fn cookie(ctx: &FetchContext) -> Result<String, ProbeError> {
     ctx.config
         .cookie_header
         .as_deref()
-        .map(str::trim)
-        .filter(|header| !header.is_empty())
-        .map(str::to_string)
+        .and_then(|raw| super::cookie_header_for(ProviderId::Opencode, raw))
         .ok_or_else(|| {
             ProbeError::NotConfigured(
                 "No opencode session. Open opencode.ai signed in, copy the Cookie header from \
@@ -118,19 +116,45 @@ impl Provider for OpenCodeProvider {
             .filter(|id| !id.is_empty())
             .unwrap_or_default();
 
+        if workspace.is_empty() {
+            return Err(ProbeError::NotConfigured(
+                "No opencode workspace. Open your billing page and paste either the wrk_… id or \
+                 the whole https://opencode.ai/workspace/…/billing URL into Settings."
+                    .to_string(),
+            ));
+        }
+
+        // A GET with the function id in the query, not a POST with it in a header — the
+        // server routes on `?id=` and answers anything else with its own error page. The
+        // argument list is the JSON array the function takes, which here is just the id.
+        //
+        // Encoded by hand rather than with a query builder: the three characters that need
+        // it are the JSON punctuation, and a workspace id is `wrk_` and hex.
+        let args = format!("%5B%22{workspace}%22%5D");
+        let url = format!("{SERVER_URL}?id={SUBSCRIPTION_FN}&args={args}");
         let response = ctx
             .http
-            .post(SERVER_URL)
+            .get(&url)
             .header("Cookie", cookie(ctx)?)
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/javascript, application/json")
-            .header("X-Server-Fn", SUBSCRIPTION_FN)
-            .body(format!("[{{\"workspaceID\":\"{workspace}\"}}]"))
+            .header("X-Server-Id", SUBSCRIPTION_FN)
+            // The framework tags each call with an instance id. A fixed one is enough —
+            // it distinguishes calls, and nothing here makes two at once.
+            .header("X-Server-Instance", "server-fn:axio")
+            // Origin and Referer are not decoration. This is a browser endpoint, and one
+            // that answers a request without them as a cross-site call rather than a
+            // session — which looks exactly like a rejected cookie from the outside.
+            .header("Origin", "https://opencode.ai")
+            .header(
+                "Referer",
+                format!("https://opencode.ai/workspace/{workspace}/billing"),
+            )
+            .header("Accept", "text/javascript, application/json;q=0.9, */*;q=0.8")
             .send()
             .await
             .map_err(|err| ProbeError::network(PROVIDER, err))?;
 
         let status = response.status();
+        let location = redirect_target(&response);
         let body = response
             .text()
             .await
@@ -138,11 +162,13 @@ impl Provider for OpenCodeProvider {
 
         match status.as_u16() {
             200..=299 => parse_usage(&body, OffsetDateTime::now_utc()),
-            300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(
-                "opencode rejected the session cookie. Sign in at opencode.ai and paste a fresh \
-                 Cookie header."
-                    .to_string(),
-            )),
+            300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(format!(
+                "opencode answered {status}{}. Sign in at opencode.ai and paste a fresh Cookie \
+                 header, and check the workspace id belongs to that account.",
+                location
+                    .map(|to| format!(" redirecting to {to}"))
+                    .unwrap_or_default()
+            ))),
             429 => Err(ProbeError::RateLimited { retry_after: None }),
             other => Err(ProbeError::Http {
                 provider: PROVIDER,

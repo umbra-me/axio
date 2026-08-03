@@ -17,7 +17,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::error::ProbeError;
 use crate::model::{ProviderId, RateWindow, UsageSnapshot};
 use crate::paths::{Env, non_empty};
-use crate::provider::{FetchContext, Provider};
+use crate::provider::{FetchContext, Provider, redirect_target};
 
 const PROVIDER: &str = "Ollama";
 const SETTINGS_URL: &str = "https://ollama.com/settings";
@@ -29,9 +29,7 @@ fn cookie(ctx: &FetchContext) -> Result<String, ProbeError> {
     ctx.config
         .cookie_header
         .as_deref()
-        .map(str::trim)
-        .filter(|header| !header.is_empty())
-        .map(str::to_string)
+        .and_then(|raw| super::cookie_header_for(ProviderId::Ollama, raw))
         .ok_or_else(|| {
             ProbeError::NotConfigured(
                 "No Ollama session. The Cloud Usage bars are not on the API — open \
@@ -122,12 +120,14 @@ impl Provider for OllamaProvider {
             .http
             .get(SETTINGS_URL)
             .header("Cookie", cookie(ctx)?)
-            .header("Accept", "text/html")
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("Referer", "https://ollama.com/")
             .send()
             .await
             .map_err(|err| ProbeError::network(PROVIDER, err))?;
 
         let status = response.status();
+        let location = redirect_target(&response);
         let body = response
             .text()
             .await
@@ -137,10 +137,13 @@ impl Provider for OllamaProvider {
             200..=299 => parse_settings(&body),
             // A redirect is how an expired session usually arrives here, and
             // `Policy::none` leaves it to be read rather than followed.
-            300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(
-                "Ollama rejected the session cookie. Sign in and paste a fresh Cookie header."
-                    .to_string(),
-            )),
+            300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(format!(
+                "Ollama answered {status}{}. The header needs the session cookie — on the \
+                 current site that is `wos-session`.",
+                location
+                    .map(|to| format!(", redirecting to {to}"))
+                    .unwrap_or_default()
+            ))),
             429 => Err(ProbeError::RateLimited { retry_after: None }),
             other => Err(ProbeError::Http {
                 provider: PROVIDER,

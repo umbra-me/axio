@@ -17,7 +17,7 @@ use crate::error::ProbeError;
 use crate::json::{as_f64, as_i64, as_string, pick};
 use crate::model::{Credits, ProviderId, RateWindow, UsageSnapshot};
 use crate::paths::Env;
-use crate::provider::{FetchContext, Provider};
+use crate::provider::{FetchContext, Provider, redirect_target};
 
 const PROVIDER: &str = "Cursor";
 const SUMMARY_URL: &str = "https://cursor.com/api/usage-summary";
@@ -28,9 +28,7 @@ fn cookie(ctx: &FetchContext) -> Result<String, ProbeError> {
     ctx.config
         .cookie_header
         .as_deref()
-        .map(str::trim)
-        .filter(|header| !header.is_empty())
-        .map(str::to_string)
+        .and_then(|raw| super::cookie_header_for(ProviderId::Cursor, raw))
         .ok_or_else(|| {
             ProbeError::NotConfigured(
                 "No Cursor session. Open cursor.com signed in, copy the Cookie header from any \
@@ -143,11 +141,17 @@ impl Provider for CursorProvider {
             .get(SUMMARY_URL)
             .header("Cookie", cookie(ctx)?)
             .header("Accept", "application/json")
+            // A dashboard endpoint that sees no Origin or Referer treats the call as
+            // cross-site rather than as a session, which from outside is indistinguishable
+            // from a rejected cookie.
+            .header("Origin", "https://cursor.com")
+            .header("Referer", "https://cursor.com/dashboard")
             .send()
             .await
             .map_err(|err| ProbeError::network(PROVIDER, err))?;
 
         let status = response.status();
+        let location = redirect_target(&response);
         let body = response
             .text()
             .await
@@ -157,11 +161,13 @@ impl Provider for CursorProvider {
             200..=299 => parse_usage(&body),
             // A dashboard endpoint answers an expired session with a redirect to sign-in
             // as readily as with a 401, and `Policy::none` leaves the 3xx to be read here.
-            300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(
-                "Cursor rejected the session cookie. Sign in at cursor.com and paste a fresh \
-                 Cookie header."
-                    .to_string(),
-            )),
+            300..=399 | 401 | 403 => Err(ProbeError::Unauthorized(format!(
+                "Cursor answered {status}{}. The header needs the WorkosCursorSessionToken \
+                 cookie — copy the whole `cookie:` line from a cursor.com request.",
+                location
+                    .map(|to| format!(", redirecting to {to}"))
+                    .unwrap_or_default()
+            ))),
             429 => Err(ProbeError::RateLimited { retry_after: None }),
             other => Err(ProbeError::Http {
                 provider: PROVIDER,

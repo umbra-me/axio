@@ -332,10 +332,25 @@ fn hint(id: ProviderId) -> &'static str {
         ProviderId::Zai => "From z.ai — the same API token the coding plan uses.",
         ProviderId::Deepseek => "From platform.deepseek.com. Shows the prepaid balance.",
         // Worth stating: the console offers two kinds of key and only one works here.
-        ProviderId::Xai => "A Management API key, not an inference key — xAI console,                             Settings > Management Keys.",
+        ProviderId::Xai => {
+            "A Management API key, not an inference key — xAI console, \
+             Settings > Management Keys."
+        }
         ProviderId::Grok => "Signed in with the `grok` CLI — no key needed here.",
-        ProviderId::Cursor => "Cursor has no usage API. Paste a Cookie header from a                                cursor.com request.",
-        ProviderId::Ollama => "The Cloud Usage bars are not on the API. Paste a Cookie                                header from ollama.com/settings.",
-        ProviderId::Opencode => "Paste a Cookie header from an opencode.ai request.",
+        // Naming the cookie is the whole hint. A site sets dozens, and copying the value
+        // alone — which is what the Application tab's copy gives — produces a string with
+        // no name in it that every site refuses.
+        ProviderId::Cursor => {
+            "Network tab on cursor.com, any request, Request Headers: copy the whole \
+             `cookie:` line. Must contain WorkosCursorSessionToken."
+        }
+        ProviderId::Ollama => {
+            "Network tab on ollama.com/settings, the settings request: copy the whole \
+             `cookie:` line. Must contain wos-session."
+        }
+        ProviderId::Opencode => {
+            "Network tab on opencode.ai, any request: copy the whole `cookie:` line. \
+             Must contain __Host-auth."
+        }
     }
 }
