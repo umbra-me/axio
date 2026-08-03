@@ -319,8 +319,15 @@ understand.
 ## Quota
 
 `axio quota` reports how much of each provider's limit is left and when it
-resets. It reads the credentials the providers' own CLIs already wrote — it does
-not use axio's stored credentials and cannot sign you in to anything.
+resets, across ten providers: Codex, Claude, OpenRouter, z.ai, DeepSeek, xAI,
+Grok, Cursor, Ollama and opencode. **It never reads axio's own stored
+credentials** — a quota probe and an agent turn are different trust boundaries.
+
+They arrive by three routes, because the vendors offer three. Six are read from
+a credential another tool already wrote — the files `codex`, `claude`, `grok`
+and Cursor keep for themselves — so those need no configuration at all. Three
+are API-key providers with one endpoint each. The rest have no API for it, and
+are reached with a browser session you grant from the desktop app.
 
 ```
 > axio quota
@@ -344,13 +351,52 @@ npm --prefix crates/axio-quota/ui run build
 cargo build --release -p axio-quota --features app
 ```
 
+For the providers that expose usage only to a signed-in browser, the app signs
+you in rather than asking you to paste a cookie header. A button opens the
+**provider's own page** in a window, you sign in to that vendor as you would in
+a browser, and the session lands in that webview. The credential goes only to
+the vendor — no relay, no extension — and nothing on your machine is decrypted:
+reading the browser's own cookie jar would mean going after a key the OS holds
+for another application, which is a lot of machinery to take a credential you
+can simply grant. The window is deliberately decorated, so a vendor's sign-in
+form never appears inside chrome that looks like ours, and it cannot reach
+axio's command surface.
+
 Provider knowledge was derived by reading
 [CodexBar](https://github.com/steipete/codexbar) (MIT); no source is included.
 See [`crates/axio-quota/README.md`](crates/axio-quota/README.md) and `NOTICE`.
 
+## Cost
+
+`axio cost` reports what the coding agents on this machine have spent, read from
+the session transcripts they already write. No network, no credentials, nothing
+to configure.
+
+```sh
+axio cost                                   # everything, grouped by model
+axio cost --by client|session|day|workspace|week|month|hour
+axio cost --calendar                        # the year as a shaded calendar
+axio cost --wide                            # cache share, $/M, share of total
+axio cost --json                            # for scripting
+axio cost --cached                          # read the saved scan, skip rescanning
+axio cost --diagnose                        # what each parser found and skipped
+curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.json
+```
+
+Twenty-three agents are covered. Fifteen in a default build; the other eight
+keep their sessions in SQLite and sit behind the non-default `sqlite` feature,
+because reaching them means compiling SQLite's C source and `cargo install axio`
+must not need a C toolchain. An agent whose directory is absent reports *not
+installed*, which is a different answer from *recorded nothing*.
+
+Two rules the numbers rest on. **A model with no known rate is reported
+unpriced, never as zero**, and no total prints without the share of tokens it
+accounts for. And every total is broken down by provider and by harness —
+different questions, which genuinely diverge when a CLI is pointed at a proxy.
+
 ## Shape
 
-Five crates, and one binary serving both surfaces:
+Six crates and two binaries:
 
 | Crate           | Contains                                                        |
 | --------------- | --------------------------------------------------------------- |
@@ -358,7 +404,13 @@ Five crates, and one binary serving both surfaces:
 | `axio-provider` | Provider HTTP client, streaming, request/response types          |
 | `axio-tools`    | `read`, `write`, `edit`, `bash`, `glob`, `grep`                  |
 | `axio-quota`    | Provider limit probes, local history, and the desktop app behind `app` |
+| `axio-cost`     | What the agents on this machine have spent, read from their own transcripts |
 | `axio`          | The binary — one-shot CLI when piped or given `-p`, interactive on a TTY |
+
+`axio-quota` and `axio-cost` are leaves: they depend on no other crate here, and
+only `axio` depends on them. Both read files that belong to *other* tools rather
+than to axio, which is a different trust boundary and why each sits behind its
+own name.
 
 The core emits a stream of events and knows nothing about rendering, so each
 surface is a consumer of the same channel. `--json` is a second renderer, never

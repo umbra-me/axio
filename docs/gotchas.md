@@ -618,3 +618,130 @@ host the hop names. Redirects are refused outright.
 **Redaction is an invariant, not a variant.** Every error carrying
 provider-supplied text carries it as `Redacted`. A 401 or 403 body is the
 response most likely to quote back what was sent.
+
+## Reading other programs' numbers
+
+These apply to `axio-quota` and `axio-cost`, which differ from everything above
+in one way that generates most of the traps: **the formats are not ours and are
+mostly undocumented.** A parser here is reading something written for its
+author's own use, and every assumption fails silently.
+
+**Never `#[derive(Deserialize)]` over a whole provider payload.** Parse into
+`serde_json::Value` and pick fields by name. Provider APIs send numbers as
+strings and add fields without notice; a strict decode turns that into an
+outage. A live payload proved it within an hour: `"balance": "0"`, a string.
+
+**A response with no parseable figure is an error, never a zero.** "Nothing
+left" and "we could not tell" must not render the same. An early build summed
+the one message in 77,525 whose model it knew and printed `$0.30` next to a
+vendor's name.
+
+**Do not guess one spelling of an undocumented field.** These responses are
+whatever a site's own server function returns; one endpoint carries eight
+spellings of the percentage and eight of the reset countdown. Try the list. When
+nothing matches, report the identifier-like keys the response actually
+contained — **names only, never values**, because these payloads carry account
+emails. A parser that fails silently on an undocumented shape is one nobody can
+fix; one that names the fields it saw can be fixed from a screenshot.
+
+**Bound the search window around a label when lifting a figure out of a
+document.** Unbounded, a rolling window with no percentage silently reports the
+weekly one's, and a scraped page borrows an unrelated number from further down.
+An unrecognised layout is an error rather than a guess: the page will change,
+and a number that is not usage is worse than no number.
+
+**Reset stamps disagree on their unit across vendors.** Claude's `expiresAt` is
+milliseconds, Codex's `reset_at` is seconds, z.ai's is milliseconds. Read
+milliseconds as seconds and the timestamp lands in 1970, which renders as a
+window that is permanently resetting.
+
+**A percentage below one is still a percentage.** `0.36` means 0.36%. Read as a
+fraction it turns a reading the dashboard rounds to zero into a third of the
+plan.
+
+**Currencies are not summable and unit codes are not stable.** A balance
+reported per currency takes one, never a sum — adding CNY to USD produces a
+number that is not money in any currency. A vendor's unit vocabulary gains
+entries, so an unrecognised unit keeps its percentage under a vague label rather
+than being dropped: the one dropped could be the one about to run out.
+
+**Reasoning tokens are not counted the same way twice.** One agent's own total
+proves `total = input + output + reasoning + cache.read` — reasoning *added* to
+output — where another contains reasoning within output. `TokenBreakdown` holds
+it as a subset, so a parser for the first convention folds it in. Mapped
+straight across, one observed message carrying 9,459 reasoning tokens against
+171 of output would have read 98% short.
+
+**Cache tokens as a multiple of fresh input cannot be compared across vendors.**
+OpenAI counts the whole prompt as input, Anthropic counts only what missed
+cache, so the same column read 31x for one model and 121,077x for another. As a
+*share of the row's tokens* it means the same thing whoever reported it.
+
+**A shading ramp scaled against the busiest day says nothing.** With a peak
+thirty times the median, linear puts nearly every day in the lowest bucket and
+logarithmic puts nearly every day in the highest. Quartiles of the active days
+compare a day to a typical day, which is what someone reading their own calendar
+means.
+
+**Every date here is UTC and says so.** Converting to local time moves messages
+across midnight and silently changes a streak depending on where the machine is.
+
+**Do not key a series by joining fields and splitting the string back.** Joining
+provider and window label on a space truncated every label containing one:
+`Weekly (Fable)` became a second `Weekly` charted against the wrong data, and
+`GPT-5.3-Codex-Spark Weekly` matched nothing and vanished. Group on the pair.
+
+**Send our own User-Agent.** Presenting another client's identifier to a
+vendor's endpoint is outside what a third-party client is authorised to do.
+`scripts/firewall.sh` fails the build if one returns to `crates/`.
+
+**Quota's config is a different file from axio's own credential store, and both
+are called `auth.json`.** `axio_core::auth` writes axio's; `axio-quota` reads
+the ones other tools wrote. Debug-level logs contain the raw provider response,
+including account id and email.
+
+## The desktop app
+
+**A Tauri command declared `fn` rather than `async fn` runs on the main
+thread** — which is also the thread that paints and handles input. One keyword
+froze the window for the length of a scan, and because the command held a mutex
+throughout, the second view queued behind the first and froze again. Nothing
+that can be slow runs on a caller's thread.
+
+**`Webview::cookies` posts a message to the event loop and blocks on the
+reply.** Calling it from a synchronous command deadlocks — Tauri documents this
+and the first version ignored it. Building a webview waits on the event loop for
+the same reason, so *opening* a window from a synchronous command hangs too.
+
+**Tauri v2 denies a permission that no `capabilities/` file grants, silently.**
+No error, no warning: the frameless window simply did not move, while the
+minimise and close buttons kept working because Rust-side calls bypass the
+permission layer entirely — which made one bug look like two unrelated ones.
+
+**A window showing a third party's sign-in form must be decorated, and must not
+be listed in `capabilities/default.json`.** Undecorated, someone else's password
+form appears inside chrome that looks like ours, which is the shape of a
+phishing screen. Listed, a remote page reaches axio's command surface.
+
+**A cookie's name is not proof that anyone signed in.** One provider sets a
+cookie called `auth` while its OAuth handshake is still in flight, so a
+name-only check captured a pre-sign-in artifact, saved it and closed the window
+with nobody signed in. Use the candidate once against the provider's own
+endpoint and accept only what authenticates — and treat *only* Unauthorized as
+keep-waiting, since a missing workspace or a network blip both mean the session
+was recognised, which is the one thing being established.
+
+**Poll by waiting for each answer, never on a timer.** A check slower than the
+interval stacks another on top of a page still loading.
+
+**Refreshes pile up from more places than the schedule.** Saving settings
+triggers one, so does capturing a sign-in, so does the button — and under a run
+of edits those became a burst against an endpoint that rate limits, which the
+view then reported as the *vendor* rate limiting us. A throttle collapses the
+burst; an explicit Refresh press bypasses it, because someone pressing it is
+asking a question the throttle would otherwise decline to answer silently.
+
+**A source file can contain NUL bytes and git will call it binary.** Two of them
+got into a stylesheet through an editing pipeline that wrote a separator
+character as a real byte rather than as source text, and the only symptom was
+git refusing to diff the file. No other tracked source file has any.

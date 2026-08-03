@@ -14,18 +14,30 @@ a minor bump may break things.
   No network, no credentials. Group with `--by model|client|session|day|workspace`,
   `--json` for scripting, `--diagnose` for what each parser found and skipped.
 
-  Twenty-two agents are covered. Three have hand-written parsers — Claude Code,
-  Codex and Grok — because each carries knowledge a generic walk cannot infer:
-  which of two token figures is cumulative, which repeated events must be
-  suppressed, which vendor reports its own cost. The other twelve are rows in
-  `sources::catalog`, driven by one table-driven parser, because these formats
-  log the same event and differ only in where they put it.
+  Twenty-three agents are covered. Four have hand-written parsers — Claude Code,
+  Codex, Grok and opencode — because each carries knowledge a generic walk
+  cannot infer: which of two token figures is cumulative, which repeated events
+  must be suppressed, which vendor reports its own cost, which convention
+  counts reasoning twice. The other twelve are rows in `sources::catalog`,
+  driven by one table-driven parser, because these formats log the same event
+  and differ only in where they put it.
 
-  Seven of them keep sessions in SQLite rather than files and sit behind the
+  Eight of them keep sessions in SQLite rather than files and sit behind the
   non-default `sqlite` feature, because reaching them means compiling SQLite's C
-  source and `cargo install axio` must not need a C toolchain. They reuse the
+  source and `cargo install axio` must not need a C toolchain. Seven reuse the
   same walker: nearly every one keeps a JSON blob in a column, so the database
-  part is only getting to the JSON.
+  part is only getting to the JSON. A default build therefore covers fifteen,
+  and the Settings tab lists the absent ones greyed rather than omitting them —
+  *not installed* is an answer, and a list that hides them cannot distinguish it
+  from *found nothing*.
+
+  opencode is the fourth hand-written parser and the one that could not be a
+  table row: its own total proves that `total = input + output + reasoning +
+  cache.read`, so **reasoning is added to output there where Codex contains it
+  within output**. `TokenBreakdown` holds reasoning as a subset, so the parser
+  folds it in and keeps a copy for reporting. Mapped straight across it would
+  vanish from every total — one observed message carries 9,459 reasoning tokens
+  against 171 of output, so that row would have read 98% short.
 
   An agent whose directory is absent reports *not installed*, which is a
   different answer from *recorded nothing* and is what `--diagnose` prints.
@@ -89,12 +101,156 @@ a minor bump may break things.
   cannot be formatted without confronting its own coverage.
 
 - **`axio quota`, and a desktop app behind it.** How much of each provider's
-  limit is left and when it resets, for Codex, Claude and OpenRouter. It reads
-  the credential files those vendors' own CLIs already wrote — never axio's own
-  stored credentials — so it cannot sign you in to anything and needs no
-  configuration before it works. `--json` emits one object per provider,
-  `--diagnose` prints where each probe looks and whether the credential is
-  there.
+  limit is left and when it resets, across ten providers — Codex, Claude,
+  OpenRouter, z.ai, DeepSeek, xAI, Grok, Cursor, Ollama and opencode. `--json`
+  emits one object per provider, `--diagnose` prints where each probe looks and
+  whether the credential is there.
+
+  They arrive by three different routes, because the vendors offer three. Six
+  are read from a credential another tool already wrote — the files `codex`,
+  `claude`, `grok` and Cursor keep for themselves — so those need no
+  configuration at all. Three are API-key providers with one endpoint each.
+  The rest have no API for it, and are reached with the browser session
+  described below. Nothing here reads axio's own stored credentials; a quota
+  probe and an agent turn are different trust boundaries.
+
+  Each vendor needed one thing decided rather than copied. z.ai reports windows
+  in its own vocabulary of unit codes, and stamps them in milliseconds — read as
+  seconds that lands in 1970 and reports the window as permanently resetting; an
+  unrecognised unit keeps its percentage under a vague label rather than being
+  dropped, because the one dropped could be the one about to run out. DeepSeek
+  returns a balance per currency as strings, and USD is preferred rather than
+  summed, since adding CNY to USD produces a number that is not money in any
+  currency. xAI posts an inverted ledger in string cents, so $10 arrives as
+  `-1000`. Cursor's percentages are percentages even below one — `0.36` means
+  0.36%, and reading it as a fraction would turn a reading the dashboard rounds
+  to zero into a third of the plan. Ollama is scraped, because the Cloud Usage
+  bars are not on the API at all, and an unrecognised layout is an error rather
+  than a guess.
+
+  **A response with no parseable figure is an error, never a zero.** "Nothing
+  left" and "we could not tell" must not render the same.
+
+- **Signing in to a cookie provider, in a window.** Pasting a `cookie:` header
+  asks someone to know which of thirty cookies is the session, and both obvious
+  ways to copy one produce something every server refuses: a bare value with no
+  name, or the header with its own name still attached. The pastes on this
+  machine were all the first kind.
+
+  So the app signs in instead. A button opens the provider's own page in a
+  window, the user signs in to that vendor as they would in a browser, and the
+  cookies land in that webview where they are read back. The whole jar for the
+  origin is kept, because a dashboard request carries all of them and some of
+  these endpoints check a CSRF or region cookie alongside the session.
+
+  Two properties this shape has that the alternatives do not. The credential
+  goes only to the vendor — no relay, no extension, and the password is typed
+  into the provider's own page over TLS. And **nothing is decrypted**: reading
+  the browser's own jar would mean DPAPI and AES-GCM against a key the OS holds
+  for another application, which is a lot of machinery to take a credential the
+  user can simply grant.
+
+  The window is deliberately decorated, so somebody else's sign-in form does not
+  appear inside chrome that looks like ours — that is the shape of a phishing
+  screen. It is absent from `capabilities/default.json`, which is the
+  load-bearing part: a remote page must not reach axio's command surface.
+
+  Capture is polled rather than pushed, because a site can set its session on a
+  redirect, on a background request, or after a second factor, and none of those
+  is a navigation event. **A cookie's name is not proof it is a session**: the
+  candidate is used once against the provider's own endpoint, and only a
+  credential that actually authenticates is accepted. Only Unauthorized means
+  keep waiting — a missing workspace or a network blip both mean the session
+  *was* recognised, and treating either as "not yet" would leave the window open
+  forever on an account that is signed in and has nothing to report.
+
+- **Cursor's session is imported from Cursor's own store.** Anyone with Cursor
+  installed and signed in already holds the credential its dashboard uses, so
+  there is nothing to sign in to and nothing to paste. Worth being precise about
+  what this reads, because the neighbouring idea is much worse: it opens
+  Cursor's own state database, not a browser's cookie store. No decryption, no
+  DPAPI, no key belonging to another application — the token is sitting there in
+  plain text because Cursor put it there for itself. The database is copied
+  before it is read, since opening a live SQLite file either fails or recovers a
+  journal into a file another program is still using. A pasted header still
+  wins: that is very likely a second account, and silently preferring the local
+  one would report the wrong account's usage.
+
+- **Refresh intervals are computed, not chosen.** The five-minute constant this
+  replaces documented its own problem — far more often than a weekly window
+  needs, far too slow to watch a session window drain under load — and the cost
+  of being wrong is asymmetric in both directions: too often and the usage
+  endpoint rate-limits the tray that was reading it, too rarely and a window
+  empties, resets and refills without ever being shown.
+
+  Adaptive paces at a twentieth of the time remaining on the nearest window,
+  which gives about twenty readings before it turns over, clamped to half an
+  hour; inside ten minutes of a reset or above 90% used it drops to a
+  one-minute floor. A failed probe *shortens* the interval, because treating an
+  error as 0% used would slow the loop down at exactly the moment a retry is
+  wanted. The policy takes the current time as an argument rather than reading
+  it, so every branch is a test rather than something you find out by waiting.
+
+- **The year as a calendar, and a Stats tab.** The tables answer what was spent;
+  a year of days answers when the work actually happened, which is a shape
+  rather than a number and no grouping of a table reaches it. `axio cost
+  --calendar` and the app's Stats tab run over the same `summarise()`, so a day
+  is shaded identically in each.
+
+  Levels are quartiles of the active days, not a ramp scaled against the busiest
+  one. Both scalings were tried against real data: with a peak thirty times the
+  median, linear puts nearly every day in the lowest bucket and logarithmic puts
+  nearly every day in the highest — 50M against 1.8B is 83% of the way up a log
+  scale. Quartiles compare a day to a typical day instead, which is what someone
+  reading their own calendar means.
+
+  Stats also carries daily spend, tokens by hour and weekday, the token mix, and
+  the top providers, harnesses and workspaces as ranked bars. The token mix
+  earns its place: cache reads are most of a coding agent's volume and a tenth
+  of its price, so a total that does not separate them points at the wrong
+  culprit. Reasoning is shown as a share of output rather than beside it,
+  because it is billed as output and listing the two side by side reads as
+  double counting. Hours are UTC and labelled UTC rather than converted — a
+  histogram that shifts when you travel is worse than one honest about its
+  clock.
+
+- **Derived columns, and coarser groupings.** Rows carry the share of their
+  tokens that were cache reads, the blended dollars per million priced tokens,
+  and their share of the total. Groupings gain week, month and hour — hour
+  pooled across every day, which answers when the work happens rather than when
+  it happened.
+
+  The cache column began as a multiple of fresh input and was wrong to: measured
+  against real data it put one model at 31x and another at 121,077x, because the
+  vendors do not mean the same thing by "input" — OpenAI counts the whole
+  prompt, Anthropic counts only what missed cache. Two numbers in one column
+  that cannot be compared to each other is worse than no column. As a share of
+  the row's tokens it means the same thing whoever reported it, and reads 90-99%
+  across every vendor. Dollars per million divides by the tokens that were
+  *priced*, since dividing a partial cost by a whole volume understates the rate
+  by exactly the share that had no price.
+
+  The wide table is behind `--wide` in the CLI, where eighty columns is still a
+  constraint, and always on in the window, which has the room.
+
+- **The scan is saved, and reads back in a fraction of the time.** Nothing about
+  it changes between runs — the transcripts are append-only and mostly untouched
+  — so paying half a minute to rediscover it on every launch was the whole cost
+  of not writing it down. JSONL, one record per line. Reading it back is 0.67s
+  against 2.3s to scan, and the totals round-trip exactly. `axio cost --cached`
+  reads the same file the app does, so the CLI and the window share one scan and
+  either can produce it. It lives under `LOCALAPPDATA` rather than the roaming
+  profile: it is tens of megabytes of rebuildable data describing files on this
+  machine only.
+
+  Flattening the scan onto one pool came with it. It had spawned a thread per
+  agent and split each agent's files across workers again, so the thread count
+  was the product of the two — twenty-two agents against sixteen workers
+  reserves stacks for over a hundred threads on a machine that runs eight — and
+  it balanced badly, because one agent here holds 449 files and another holds 2,
+  and the second got a whole worker while the first queued. Gathering the file
+  lists first and splitting once took the speedup against
+  `AXIO_COST_THREADS=1` from 2.2x to 3x, with totals unchanged run for run.
 
   `crates/axio-quota` is the fifth workspace member, and the reason is
   dependency isolation rather than size. Behind its `app` feature it also
@@ -154,6 +310,102 @@ a minor bump may break things.
   Clipboard API exists, so it is never a control that silently does nothing.
 
 ### Fixed
+
+- **The app no longer freezes on the first Cost or Stats view**, and the cause
+  was one keyword: a Tauri command declared `fn` rather than `async fn` runs on
+  the main thread, which is also the thread that paints and handles input. The
+  cache scanned inline on first use, so the window was dead for the whole scan —
+  and it held the mutex throughout, so the second view queued behind the first
+  and froze again. The scan now runs on a worker started at launch, in two
+  phases: the saved scan is published within milliseconds so a tab has real
+  figures before anyone reaches it, then the live scan replaces it and emits
+  `cost://updated`. Refreshing returns as soon as the worker starts rather than
+  blocking until it finishes, with the previous figures left on screen flagged
+  as scanning — a stale number beats an empty table.
+
+- **Opening the sign-in window no longer deadlocks the app.** Reading cookies
+  posts a message to the event loop and blocks on the reply, so doing it from a
+  synchronous command deadlocks — Tauri documents this on `Webview::cookies` and
+  the first version ignored it. The capture is async now and reads on a thread
+  of its own, a missing window is checked before anything blocking rather than
+  after, and opening the window was moved off the main thread too: building a
+  webview waits on the event loop, and a synchronous command *is* the event
+  loop. The poll also waits for each answer before scheduling the next, rather
+  than stacking a fresh check on top of a page still loading.
+
+- **The "rate limited by provider" was ours.** Saving settings triggers a
+  refresh, so does capturing a sign-in, so does the schedule, and so does the
+  button — under a run of edits those pile onto an endpoint that rate limits,
+  and the view reported the vendor's 429 as though the vendor were at fault.
+  Twenty seconds between probes collapses a burst into one. The Refresh button
+  bypasses it, because someone pressing it is asking a question the throttle
+  would otherwise decline to answer silently.
+
+- **The History tab stopped losing and duplicating series.** A series was keyed
+  by joining the provider and the window label into one string and splitting it
+  back on a space, which silently truncated every label containing one: "Weekly
+  (Fable)" became a second "Weekly" and drew a duplicate chart against the wrong
+  data, while "GPT-5.3-Codex-Spark Weekly" matched no reading at all and
+  vanished from the tab entirely. It groups on the pair now, keyed as JSON
+  rather than on a separator character.
+
+- **The History charts are styled, and the file is no longer binary.** The tab
+  had no CSS at all, so each chart fell back to its viewBox ratio and stood
+  130px tall; they are 46px sparklines now, framed, dated at both ends. The line
+  was also amber, which breaks the sheet's first rule — amber is the product
+  accent and draws an edge or a mark, never a fill — so a line stating
+  consumption now takes the ok/warn/crit ramp and agrees with the rail on the
+  Providers tab for the same number. The same file carried two NUL bytes, which
+  is why git had been treating it as binary and refusing to diff it; no other
+  tracked source file has any. Also in it: the password field rendered as a
+  white box on a black page, the cost table's total row fell below the fold and
+  is now pinned, and the Stats cards ellipsed `18,374,235,696` to
+  `18,374,235,6...` — which reads as a smaller number rather than a truncated
+  one, and is now `18.37B` with the digits on hover.
+
+- **The frameless window can be dragged again.** The app had no `capabilities/`
+  directory at all, so Tauri v2 denied `core:window:allow-start-dragging` and
+  the window simply did not move — no error, no warning. The minimise and close
+  buttons kept working because Rust-side calls bypass the permission layer
+  entirely, which made the two look like unrelated problems. The drag rule is
+  inverted while there: everything drags except what responds to a click, so the
+  next element somebody adds is draggable without anyone remembering to say so.
+
+- **A refused cookie paste now says why it was refused.** The stored headers for
+  all three cookie providers contained no `=` anywhere — they were bare cookie
+  *values*, which is what the browser's cookie table gives you when you click a
+  row, and much easier to find than the request headers. A bare value is now
+  named rather than rejected, taken as the value of the provider's own session
+  cookie; a leading `Cookie:` from the other copy route is stripped, since sent
+  verbatim it produces `Cookie: Cookie: a=1`. Errors name the status and, on a
+  redirect, where it pointed — minus the query string, which on a sign-in
+  redirect carries the original URL and sometimes a token. `--diagnose` reports
+  how many cookies a paste holds, whether any is a session cookie, and which
+  names would count: that is the question someone actually has when a paste is
+  refused.
+
+- **opencode's usage fields are no longer guessed at one spelling.** The session
+  and workspace lookup were both working, and the parser still reported "no
+  rolling usage found — the session may have expired", which is a confident
+  diagnosis of the wrong thing that sends anyone reading it to sign in again for
+  no reason. The response is not a documented API but whatever the site's own
+  server function returns, and it names things several ways. It now tries the
+  full list of spellings for both the percentage and the reset countdown, and
+  when it still finds nothing it reports the identifier-like keys the response
+  actually contained — **names only, never values**, because these payloads can
+  carry an account's email. A parser that fails silently on an undocumented
+  shape is one nobody can fix.
+
+- **The opencode workspace is found rather than asked for.** It had needed a
+  workspace id typed into Settings before it would report anything, and a
+  session that had just been granted still showed "no workspace" — which reads
+  as a failed sign-in. The site already knows which workspaces a session can
+  see, so it is asked; an explicitly configured id still wins and skips the
+  lookup. The cookie is checked before the workspace now, because the other
+  order reported every signed-out probe as a workspace problem and sent the fix
+  in the wrong direction. Half-configured providers also stopped vanishing from
+  the view: a provider with some credential keeps its error, where before the
+  work was done and there was neither acknowledgement nor instruction.
 
 - **A fresh install can reach `/login`.** The interactive surface used to build
   its provider before drawing the first frame, so an empty `~/.axio` failed for

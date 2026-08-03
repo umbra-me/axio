@@ -15,11 +15,15 @@ bash scripts/deps.sh                                # axio-core links no transpo
 bash scripts/check-windows.sh                       # cfg-gated code still compiles for windows
 
 axio quota                                          # provider limits; --json, --diagnose
-axio cost --by model|client|day|workspace|session   # what the agents here have spent
+axio cost --by model|client|day|workspace|session|week|month|hour
+axio cost --calendar | --wide | --cached            # shape; derived columns; skip the rescan
 curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.json
 cargo build --release -p axio-quota --features app              # tray + flyout + window
 npm --prefix crates/axio-quota/ui run build                     # frontend, before that
 node crates/axio-quota/icons/make-icon.mjs                      # regenerate icon.ico
+cargo test -p axio-cost --features sqlite           # the database-backed agents
+AXIO_COST_THREADS=1 axio cost                       # pin the scan to one thread
+AXIO_CONNECT_PROBE=1                                # open the sign-in window, print cookie names
 
 INSTA_UPDATE=always cargo test -p axio-provider     # re-accept request-body snapshots
 bash scripts/live-check.sh                          # a real turn against a real model
@@ -110,6 +114,23 @@ Three invariants everything else follows from:
 
 ### axio-quota
 
+- **A Tauri command declared `fn` rather than `async fn` runs on the main
+  thread**, which is also the thread that paints. Anything that can be slow —
+  a scan, a cookie read, opening a webview — hangs the window from there. And
+  `Webview::cookies` posts to the event loop and blocks on the reply, so a
+  synchronous command calling it deadlocks outright.
+- **Tauri v2 denies any permission no `capabilities/` file grants, silently.**
+  No error, no warning. Rust-side calls bypass the permission layer, so a
+  denied frontend permission and a working button look like unrelated bugs.
+- **A window showing a vendor's sign-in form stays decorated and stays out of
+  `capabilities/default.json`.** Undecorated it is shaped like a phishing
+  screen; listed, a remote page reaches axio's command surface.
+- **A cookie's name is not proof anyone signed in.** One provider sets `auth`
+  mid-handshake. Use the candidate against the provider's own endpoint and
+  accept only what authenticates; only Unauthorized means keep waiting.
+- **Refreshes pile up from four places** — settings, capture, schedule, button
+  — and the resulting 429 gets reported as the vendor's fault. Throttle, and
+  let an explicit Refresh bypass it.
 - **Tauri picks dev-versus-production from a feature, not the cargo profile.**
   `tauri-build` emits `cfg(dev)` unless `tauri/custom-protocol` is on, so a
   `--release` build without it still loads `devUrl` and shows

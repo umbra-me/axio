@@ -91,6 +91,42 @@ rather than at the moment of choosing.
 The home moved to `~/.axio` on every platform, which needed the project-config
 walk taught that the user's own file is not a project's.
 
+### M9 — what the limits are, and a desktop surface
+
+`axio quota` and the fifth crate behind it: how much of each provider's limit is
+left and when it resets, across ten providers reached by three different routes —
+a credential another tool already wrote, an API key, or a browser session the
+user grants. None of it touches axio's own credential store, which is the point
+of it being a separate crate rather than a subcommand's module.
+
+Behind an `app` feature, a Tauri desktop surface — tray icon, flyout and window,
+with a React frontend built by Vite — carrying 189 packages that must never
+reach a default `cargo install axio`, and verified absent from the default tree.
+
+Signing in happens in a window against the vendor's own page rather than by
+pasting a cookie header, because both obvious ways to copy a cookie produce
+something every server refuses. Nothing on the machine is decrypted to do it.
+Refresh intervals are computed from what the last probe found rather than fixed,
+since the cost of being wrong is asymmetric in both directions.
+
+### M10 — what it all cost
+
+`axio cost` and the sixth crate: what the coding agents on this machine have
+spent, read from the transcripts they already write. No network, no credentials.
+Twenty-three agents — four hand-written parsers, twelve catalog rows, and eight
+whose store is a database, behind a `sqlite` feature for the same
+no-C-toolchain reason the `app` feature exists for.
+
+Every token rule verified against real transcripts, three of them contradicting
+what the formats look like at a glance. A model with no known rate is reported
+unpriced, never as zero, and no total prints without the share of tokens it
+accounts for.
+
+The scan runs across one worker pool and is saved to disk, so the CLI and the
+window share it and neither pays half a minute to rediscover what has not
+changed. `--calendar` and the app's Stats tab draw the year as a shape rather
+than a number.
+
 ## Next
 
 ### v0.1 — the release itself

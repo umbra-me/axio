@@ -1,11 +1,12 @@
 # Architecture
 
-Four crates and one binary, in a tree rooted at a dependency-free core.
+Six crates and two binaries, in a tree rooted at a dependency-free core.
 
 ```
                     ┌──────────────────── axio (bin) ─────────────────────┐
                     │ clap · surface selection · renderers                │
                     │ inline TUI · sandbox · signal handling · exit codes │
+                    │ axio quota · axio cost                              │
                     └──────┬──────────────────────────┬───────────────────┘
                            │ constructs               │ constructs
                            ▼                          ▼
@@ -29,7 +30,41 @@ Four crates and one binary, in a tree rooted at a dependency-free core.
         │  Messages transport  │   │  read write edit             │
         │  SSE decoder         │   │  glob grep bash · subprocess  │
         └──────────────────────┘   └───────────────────────────────┘
+
+   ─── off the tree entirely: two leaves that depend on nothing here ───
+
+        ┌──────────────────────┐   ┌───────────────────────────────┐
+        │ axio-quota           │   │ axio-cost                     │
+        │  provider probes     │   │  one parser per agent         │
+        │  history · schedule  │   │  normalize · dedupe · price   │
+        │  [app] tray+window   │   │  [sqlite] database stores     │
+        └──────────────────────┘   └───────────────────────────────┘
+             axio-quota --features app is the second binary
 ```
+
+## The two leaf crates
+
+`axio-quota` and `axio-cost` hang off `axio` and off nothing else. Neither
+depends on another crate here, so neither thickens a boundary — `axio-core` is
+as isolated as it was, and the tree still has one root.
+
+They are separate crates for the same reason, and it is isolation rather than
+size. **Both read files that belong to other programs**, which is a different
+trust boundary from axio's own credential store and belongs behind a different
+name. `axio-quota`'s `app` feature carries a Tauri desktop surface pulling 189
+packages and a webview runtime, none of which may reach a default `cargo install
+axio`; `axio-cost`'s `sqlite` feature compiles SQLite's own C source, which a
+clean install is promised not to need. Both are off by default and verified
+absent from the default tree.
+
+They are also different problems wearing a similar hat. Quota asks each vendor's
+API what is left, and fails with an HTTP status; cost reads transcripts other
+programs wrote and adds them up, and fails with a line it cannot understand. One
+crate each keeps both budgets in `scripts/limits.sh` meaningful.
+
+**A long file is still not evidence for a seventh crate.** A file past 300 lines
+becomes child modules — never another crate. Crates are how the dependency graph
+is kept honest, and a module that has grown says nothing about dependencies.
 
 ## The three invariants
 
@@ -406,15 +441,18 @@ file aside to prove it.
 
 ## Providers
 
-Two implementations, selected by name in configuration. Deliberately not a
+Four names over three implementations, selected by name in configuration — the
+list is `PROVIDERS` in `crates/axio-core/src/auth.rs`. Deliberately not a
 registry: a second provider is a second implementation, not an extension point,
-until something needs it to be.
+until something needs it to be. The third is where that stopped holding, and the
+reason is below.
 
 | `[model] provider` | Speaks | Credential |
 | --- | --- | --- |
 | `anthropic` (default) | the Messages API | `ANTHROPIC_API_KEY` |
 | `ollama` | the OpenAI chat-completions dialect | `OLLAMA_API_KEY` |
 | `openai-compatible` | the same dialect and the same implementation; set `base_url` to reach an endpoint of your own | `OLLAMA_API_KEY` |
+| `openai-codex` | the Responses dialect, at the subscription endpoint | a browser sign-in, renewed before it expires |
 
 The second one exists to answer a question the design could not answer by
 inspection: is `Provider` actually provider-shaped, or is it one API wearing a
