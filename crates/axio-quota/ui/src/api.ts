@@ -111,6 +111,8 @@ export interface CostReport {
   unpricedModels: string[];
   agents: AgentRow[];
   loading: boolean;
+  /// A scan is running behind these figures. They are real, just about to be replaced.
+  scanning: boolean;
 }
 
 export const api = {
@@ -133,6 +135,13 @@ export const api = {
 /// Fires whenever a probe finishes, so neither surface has to poll.
 export const onUpdated = (handler: () => void) =>
   listen("quota://updated", handler);
+
+/// Fires when the cost scan publishes: once from the saved scan, once from the live one.
+///
+/// Listening rather than polling, because those two arrive seconds apart at launch and an
+/// interval short enough to catch the second would then run for the rest of the session.
+export const onCostUpdated = (handler: () => void) =>
+  listen("cost://updated", handler);
 
 /// Severity bands, kept identical to `Severity::from_used_percent` in Rust. Duplicated
 /// deliberately: the alternative is a round trip to compute a CSS class.

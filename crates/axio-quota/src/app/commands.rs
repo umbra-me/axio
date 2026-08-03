@@ -58,9 +58,11 @@ pub fn refresh_now(app: AppHandle) {
     refresh(&app);
 }
 
+/// `async` so it runs on a worker rather than the main thread: a sync Tauri command
+/// occupies the thread that paints, and this one reads a file off disk.
 #[tauri::command]
-pub fn history(state: State<'_, Arc<AppState>>) -> Vec<Reading> {
-    crate::history::load(&state.env)
+pub async fn history(state: State<'_, Arc<AppState>>) -> Result<Vec<Reading>, ()> {
+    Ok(crate::history::load(&state.env))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -148,23 +150,35 @@ pub fn save_settings(
 /// happens per call, scanning is not and happens once. That module explains why a few
 /// minutes of staleness beats a window that blocks for thirty seconds.
 #[tauri::command]
-pub fn cost_report(
+pub async fn cost_report(
     group: String,
     cost: State<'_, Arc<super::cost::CostCache>>,
-) -> super::cost::CostReport {
-    cost.report(&group)
+) -> Result<super::cost::CostReport, ()> {
+    Ok(cost.report(&group))
 }
 
 /// The usage calendar and the habit it implies, off the same cached scan.
 #[tauri::command]
-pub fn cost_stats(cost: State<'_, Arc<super::cost::CostCache>>) -> super::cost::StatsView {
-    cost.stats()
+pub async fn cost_stats(
+    cost: State<'_, Arc<super::cost::CostCache>>,
+) -> Result<super::cost::StatsView, ()> {
+    Ok(cost.stats())
 }
 
-/// Drop the cached scan so the next `cost_report` reads the transcripts again.
+/// Read the transcripts again, on a worker.
+///
+/// Returns as soon as the worker is started, not when it finishes — the window stays live
+/// throughout and reloads when `cost://updated` arrives. The previous figures stay on
+/// screen in the meantime, flagged as `scanning`.
 #[tauri::command]
-pub fn refresh_cost(cost: State<'_, Arc<super::cost::CostCache>>) {
+pub fn refresh_cost(app: AppHandle, cost: State<'_, Arc<super::cost::CostCache>>) {
     cost.invalidate();
+    let cost = Arc::clone(&cost);
+    let notify = app.clone();
+    cost.rescan(move || {
+        use tauri::Emitter;
+        let _ = notify.emit(super::cost::EVENT_COST_UPDATED, ());
+    });
 }
 
 #[tauri::command]

@@ -4,7 +4,7 @@
 // grouping of a table reaches: a run of days is a shape, and a shape has to be drawn.
 
 import { useEffect, useState } from "react";
-import { api, type DayPoint, type Stats as StatsData } from "./api";
+import { api, onCostUpdated, type DayPoint, type Stats as StatsData } from "./api";
 
 const WEEKS = 53;
 const DAYS = 7;
@@ -32,6 +32,23 @@ function iso(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+/// A big count, short enough to fit a card.
+///
+/// 18,374,235,696 does not fit in a 150px column and was being ellipsed to
+/// "18,374,235,6…", which is worse than useless — it reads as a smaller number. The exact
+/// figure stays in the card's tooltip; the table is where someone goes for digits.
+function compact(value: number): string {
+  if (value < 1_000) return `${value}`;
+  const units = ["K", "M", "B", "T"];
+  let scaled = value;
+  let unit = -1;
+  while (scaled >= 1_000 && unit < units.length - 1) {
+    scaled /= 1_000;
+    unit += 1;
+  }
+  return `${scaled.toFixed(scaled < 10 ? 2 : 1)}${units[unit]}`;
+}
+
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -41,7 +58,13 @@ export function Stats() {
   const [stats, setStats] = useState<StatsData | null>(null);
 
   useEffect(() => {
-    api.costStats().then(setStats);
+    const load = () => api.costStats().then(setStats);
+    load();
+    // The saved scan publishes first and the live one replaces it a moment later.
+    const unlisten = onCostUpdated(load);
+    return () => {
+      unlisten.then((off) => off());
+    };
   }, []);
 
   if (!stats) {
@@ -49,7 +72,8 @@ export function Stats() {
       <>
         <h3>Reading session transcripts…</h3>
         <p className="muted">
-          The first scan walks every agent's logs on this machine.
+          The first scan walks every agent's logs on this machine. The result is saved, so
+          later launches draw this straight away.
         </p>
       </>
     );
@@ -87,6 +111,11 @@ export function Stats() {
       ? ""
       : MONTHS[first.getUTCMonth()];
   });
+
+  const busiest = stats.days.reduce<DayPoint | null>(
+    (best, day) => (best === null || day.tokens > best.tokens ? day : best),
+    null,
+  );
 
   return (
     <>
@@ -131,20 +160,40 @@ export function Stats() {
 
       <dl className="figures">
         <Figure label="Total cost" value={stats.totalCostUsd !== null ? `$${stats.totalCostUsd.toFixed(2)}` : "unpriced"} />
-        <Figure label="Total tokens" value={stats.totalTokens.toLocaleString()} />
+        <Figure
+          label="Total tokens"
+          value={compact(stats.totalTokens)}
+          exact={stats.totalTokens.toLocaleString()}
+        />
         <Figure label="Sessions" value={stats.sessions.toLocaleString()} />
         <Figure label="Active days" value={`${stats.activeDays}`} />
         <Figure label="Current streak" value={`${stats.currentStreak} ${stats.currentStreak === 1 ? "day" : "days"}`} />
         <Figure label="Longest streak" value={`${stats.longestStreak} ${stats.longestStreak === 1 ? "day" : "days"}`} />
         <Figure label="Most used" value={stats.topModel ?? "—"} />
+        {busiest && (
+          <Figure
+            label="Busiest day"
+            value={busiest.date}
+            exact={`${busiest.tokens.toLocaleString()} tokens`}
+          />
+        )}
       </dl>
     </>
   );
 }
 
-function Figure({ label, value }: { label: string; value: string }) {
+function Figure({
+  label,
+  value,
+  exact,
+}: {
+  label: string;
+  value: string;
+  /// The unrounded figure, shown on hover where the card had to shorten it.
+  exact?: string;
+}) {
   return (
-    <div className="figure">
+    <div className="figure" title={exact ?? value}>
       <dt>{label}</dt>
       <dd>{value}</dd>
     </div>

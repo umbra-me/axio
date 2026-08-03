@@ -39,6 +39,13 @@ pub(crate) enum Command {
         #[arg(long, conflicts_with_all = ["json", "diagnose"])]
         calendar: bool,
 
+        /// Use the saved scan instead of reading the transcripts again.
+        ///
+        /// Answers in milliseconds rather than tens of seconds, at the cost of being as
+        /// old as the last scan — which is printed. A fresh scan is saved either way.
+        #[arg(long)]
+        cached: bool,
+
         /// Maximum rows to print before summarising the remainder.
         #[arg(long, default_value_t = 25)]
         limit: usize,

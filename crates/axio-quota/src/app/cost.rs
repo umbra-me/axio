@@ -5,19 +5,27 @@
 //! that re-scanned on every tab click would be unusable, so the scan happens once and the
 //! grouping, which is cheap, happens per call.
 //!
-//! The cache is deliberately dumb: filled on first use, replaced only when the view asks
-//! for a refresh. Sessions are append-only and minutes old at worst, and a cost figure
-//! that is a few minutes stale is not wrong in any way that matters — whereas a UI that
-//! blocks for half a minute is.
+//! The scan runs on a worker and is saved to disk when it finishes, so a relaunch shows
+//! last session's figures immediately and replaces them a moment later. Sessions are
+//! append-only and minutes old at worst, and a cost figure that is a few minutes stale is
+//! not wrong in any way that matters — whereas a window that blocks for half a minute is.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use axio_cost::pricing::Prices;
 use axio_cost::sources::{registry, scan};
 use axio_cost::totals::{Cost, Totals};
 use axio_cost::{CostMessage, ScanReport};
 use serde::Serialize;
+
+/// Emitted whenever the scan behind the Cost and Stats views changes — once when the
+/// saved scan is published, once when a live scan replaces it. The frontend listens
+/// rather than polling, because the two arrive seconds apart and a poll interval short
+/// enough to catch that would be running constantly for the rest of the session.
+pub const EVENT_COST_UPDATED: &str = "cost://updated";
 
 /// One row of the table, already rendered into what the view needs.
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +92,9 @@ pub struct CostReport {
     /// True while nothing has been scanned yet, so the view can say so rather than
     /// showing an empty table that looks like a zero.
     pub loading: bool,
+    /// True while a scan is running behind this answer. Distinct from `loading`: these
+    /// figures are real, they are just about to be replaced by fresher ones.
+    pub scanning: bool,
 }
 
 impl CostReport {
@@ -100,46 +111,103 @@ impl CostReport {
             unpriced_models: Vec::new(),
             agents: Vec::new(),
             loading: true,
+            scanning: true,
         }
     }
 }
 
 /// The scan, held so the window can regroup without paying for it again.
-#[derive(Default)]
+///
+/// Nothing here scans on the calling thread, and that is the entire point of the type.
+/// A Tauri command declared `fn` rather than `async fn` runs on the main thread, which is
+/// also the thread that paints and handles input — so the previous version, which scanned
+/// inline on first use, froze the window solid for the half-minute a scan takes. Worse, it
+/// held this mutex for the duration, so every other Cost call queued behind it.
+///
+/// Scanning happens on a worker started by [`CostCache::rescan`]. The lock is taken twice,
+/// briefly: once to publish a warm cache from disk, once to swap in the finished scan.
 pub struct CostCache {
     scanned: Mutex<Option<ScanReport>>,
+    /// True from the moment a worker starts until it swaps its result in. Also the
+    /// interlock that keeps two rescans from walking the same files at once.
+    scanning: AtomicBool,
+    /// Where a finished scan is written so the next launch has something to show
+    /// immediately. Machine-local: this is derived data, and large.
+    cache_file: PathBuf,
 }
 
 impl CostCache {
-    /// Group the cached scan, scanning first if nothing is cached yet.
-    pub fn report(&self, group: &str) -> CostReport {
-        let mut cached = self
-            .scanned
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
-
-        if cached.is_none() {
-            let Some(home) = home_dir() else {
-                return CostReport::empty();
-            };
-            *cached = Some(scan(&home, &registry()));
+    pub fn new(cache_file: PathBuf) -> Self {
+        CostCache {
+            scanned: Mutex::new(None),
+            scanning: AtomicBool::new(false),
+            cache_file,
         }
+    }
 
+    /// Start a scan on a worker thread, unless one is already running.
+    ///
+    /// Two phases, because they answer different questions. The saved scan is published
+    /// first so the window has real figures within milliseconds of launch; the live scan
+    /// then replaces it. Anyone watching sees last session's numbers, then this session's
+    /// — never an empty table, and never a frozen window.
+    ///
+    /// `finished` is called after each phase that produced data, so the caller can tell
+    /// the frontend to reload.
+    pub fn rescan(self: &Arc<Self>, finished: impl Fn() + Send + 'static) {
+        if self.scanning.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let cache = Arc::clone(self);
+        std::thread::spawn(move || {
+            if cache.warm() {
+                finished();
+            }
+            if let Some(home) = home_dir() {
+                // `scan` is already parallel across agents — see `axio_cost::sources`.
+                // What it was missing was a thread of its own to be parallel *on*.
+                let fresh = scan(&home, &registry());
+                let _ = axio_cost::store::save(&cache.cache_file, &fresh);
+                *cache.scanned.lock().unwrap_or_else(|err| err.into_inner()) = Some(fresh);
+            }
+            cache.scanning.store(false, Ordering::SeqCst);
+            finished();
+        });
+    }
+
+    /// Publish the saved scan if there is one and nothing better is loaded yet.
+    fn warm(&self) -> bool {
+        let mut cached = self.scanned.lock().unwrap_or_else(|err| err.into_inner());
+        if cached.is_some() {
+            return false;
+        }
+        match axio_cost::store::load(&self.cache_file) {
+            Some(saved) => {
+                *cached = Some(saved.report);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn is_scanning(&self) -> bool {
+        self.scanning.load(Ordering::SeqCst)
+    }
+
+    /// Group whatever has been scanned so far.
+    pub fn report(&self, group: &str) -> CostReport {
+        let cached = self.scanned.lock().unwrap_or_else(|err| err.into_inner());
         let Some(report) = cached.as_ref() else {
             return CostReport::empty();
         };
-        group_report(report, group)
+        let mut report = group_report(report, group);
+        report.scanning = self.is_scanning();
+        report
     }
 
     /// The calendar and the habit it implies, from the same cached scan.
     pub fn stats(&self) -> StatsView {
-        let mut cached = self.scanned.lock().unwrap_or_else(|err| err.into_inner());
-        if cached.is_none() {
-            let Some(home) = home_dir() else {
-                return StatsView::default();
-            };
-            *cached = Some(scan(&home, &registry()));
-        }
+        let cached = self.scanned.lock().unwrap_or_else(|err| err.into_inner());
         let Some(report) = cached.as_ref() else {
             return StatsView::default();
         };
@@ -168,9 +236,12 @@ impl CostCache {
         }
     }
 
-    /// Drop the cache so the next call rescans.
+    /// Forget the saved scan on disk, so a rescan cannot be short-circuited by it.
+    ///
+    /// The in-memory report is deliberately left alone: dropping it would blank the table
+    /// for the half-minute the rescan takes, and stale figures beat no figures.
     pub fn invalidate(&self) {
-        *self.scanned.lock().unwrap_or_else(|err| err.into_inner()) = None;
+        let _ = std::fs::remove_file(&self.cache_file);
     }
 }
 
@@ -214,6 +285,8 @@ fn group_report(report: &ScanReport, group: &str) -> CostReport {
             })
             .collect(),
         loading: false,
+        // Set by the caller, which is the only thing that knows whether a worker is up.
+        scanning: false,
     }
 }
 
@@ -279,6 +352,51 @@ mod tests {
             turn_start: false,
             reported_cost: None,
         }
+    }
+
+    /// The regression the user reported as "it freezes": `report` used to scan inline on
+    /// the calling thread, which for a Tauri command is the thread that paints. It must
+    /// now answer immediately and say it has nothing, whatever the cache file says.
+    #[test]
+    fn report_never_scans_on_the_calling_thread() {
+        let cache = CostCache::new(std::env::temp_dir().join("axio-absent-cache.jsonl"));
+        let before = std::time::Instant::now();
+        let report = cache.report("model");
+        assert!(report.loading, "nothing has been scanned yet");
+        assert!(report.rows.is_empty());
+        assert!(
+            before.elapsed() < std::time::Duration::from_secs(1),
+            "a scan would take seconds; this must return at once"
+        );
+        assert!(cache.stats().days.is_empty());
+    }
+
+    /// The other half of the complaint — "it's not really saving". A scan written on one
+    /// run has to come back on the next without touching a transcript.
+    #[test]
+    fn a_saved_scan_comes_back_without_rescanning() {
+        let path = std::env::temp_dir().join("axio-warm-cache").join("cost-scan.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let saved = ScanReport {
+            agents: vec![axio_cost::AgentReport {
+                client: "codex",
+                display_name: "Codex",
+                present: true,
+                files_read: 2,
+                files_failed: 0,
+                outcome: Default::default(),
+                messages: vec![message("claude-opus-5", "codex")],
+            }],
+        };
+        axio_cost::store::save(&path, &saved).expect("write");
+
+        let cache = CostCache::new(path);
+        assert!(cache.warm(), "the saved scan is published");
+        let report = cache.report("model");
+        assert!(!report.loading);
+        assert_eq!(report.total.messages, 1);
+        assert_eq!(report.rows[0].key, "claude-opus-5");
+        assert!(!cache.warm(), "a second warm must not replace live data");
     }
 
     fn report_of(messages: Vec<CostMessage>) -> ScanReport {

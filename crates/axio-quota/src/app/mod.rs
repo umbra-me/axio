@@ -37,11 +37,15 @@ pub fn run() -> Result<(), String> {
             commands::quit,
         ])
         .setup(|app| {
-            app.manage(Arc::new(AppState::new()));
+            let state = Arc::new(AppState::new());
             // Separate from AppState: the quota probes refresh on a timer, the cost scan
             // is expensive and refreshes only when asked. One lock each keeps a slow
             // scan from blocking the tray's next update.
-            app.manage(Arc::new(cost::CostCache::default()));
+            let costs = Arc::new(cost::CostCache::new(axio_cost::store::cache_path(
+                &crate::paths::local_data_dir(&state.env).join("axio"),
+            )));
+            app.manage(Arc::clone(&state));
+            app.manage(Arc::clone(&costs));
             let handle = app.handle().clone();
 
             // Both windows exist from the start and are only shown on demand. Creating a
@@ -53,6 +57,15 @@ pub fn run() -> Result<(), String> {
             tray::build(&handle)?;
             tray::update_icon(&handle);
             state::spawn_refresh_loop(&handle);
+
+            // Start scanning now rather than when the Cost tab is first opened. The saved
+            // scan lands in milliseconds and the live one replaces it while the user is
+            // still looking at Providers, so the tab is populated before it is reached.
+            let notify = handle.clone();
+            costs.rescan(move || {
+                use tauri::Emitter;
+                let _ = notify.emit(cost::EVENT_COST_UPDATED, ());
+            });
             Ok(())
         })
         .on_window_event(|window, event| match event {

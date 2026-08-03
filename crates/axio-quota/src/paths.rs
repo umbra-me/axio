@@ -45,6 +45,19 @@ pub fn app_data_dir(env: &Env) -> PathBuf {
     home_dir(env).join("AppData").join("Roaming")
 }
 
+/// Machine-local application data — `%LOCALAPPDATA%`.
+///
+/// The counterpart to [`app_data_dir`], and the difference matters for anything large.
+/// Settings roam with a user because they are worth carrying to another machine; a cached
+/// scan of *this* machine's transcripts is tens of megabytes of rebuildable data that
+/// describes files the other machine does not have.
+pub fn local_data_dir(env: &Env) -> PathBuf {
+    if let Some(local) = non_empty(env, "LOCALAPPDATA") {
+        return PathBuf::from(local);
+    }
+    home_dir(env).join("AppData").join("Local")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

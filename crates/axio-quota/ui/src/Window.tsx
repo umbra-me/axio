@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  onCostUpdated,
   onUpdated,
   type CostGroup,
   type CostReport,
@@ -127,24 +128,32 @@ function Cost() {
     // Grouping is regrouping a cached scan, not rescanning, so this is cheap.
   }, [group]);
 
+  // The scan runs on a worker and publishes twice — the saved scan, then the live one.
+  // Without this the view would show last session's figures until something else made it
+  // reload, which is exactly the "it isn't saving properly" it was meant to fix.
+  useEffect(() => {
+    const unlisten = onCostUpdated(() => load(group));
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [group]);
+
+  // Returns as soon as the worker starts. The result arrives via `cost://updated`, so
+  // there is nothing to await here beyond the request itself.
   const rescan = () => {
     setBusy(true);
-    api
-      .refreshCost()
-      .then(() => api.costReport(group))
-      .then(setReport)
-      .finally(() => setBusy(false));
+    api.refreshCost().finally(() => setBusy(false));
   };
 
-  // The first scan reads every transcript on disk and takes tens of seconds. Saying so is
-  // the whole difference between "working" and "broken" from the other side of a window.
+  // Only before anything at all has been read. Once a saved scan is published this view
+  // shows real figures and says a fresher scan is running, rather than hiding both.
   if (!report || report.loading) {
     return (
       <>
         <h3>Reading session transcripts…</h3>
         <p className="muted">
-          First run walks every agent's logs on this machine. Later views regroup a cached
-          scan and are instant.
+          First run walks every agent's logs on this machine. The result is saved, so
+          later launches show it straight away.
         </p>
       </>
     );
@@ -173,8 +182,8 @@ function Cost() {
             {name}
           </button>
         ))}
-        <button className="tab" onClick={rescan} disabled={busy}>
-          {busy ? "scanning…" : "rescan"}
+        <button className="tab" onClick={rescan} disabled={busy || report.scanning}>
+          {busy || report.scanning ? "scanning…" : "rescan"}
         </button>
       </div>
 

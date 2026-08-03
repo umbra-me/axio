@@ -73,6 +73,7 @@ pub(crate) fn cost_command(
     json: bool,
     diagnose: bool,
     calendar: bool,
+    cached: bool,
     limit: usize,
 ) -> u8 {
     let Some(home) = home_dir() else {
@@ -80,7 +81,7 @@ pub(crate) fn cost_command(
         return 1;
     };
 
-    let report = scan(&home, &registry());
+    let report = read_scan(&home, cached, json);
     let prices = prices::prices_for(&home);
 
     if diagnose {
@@ -163,6 +164,45 @@ pub(crate) fn cost_command(
         println!("\nunpriced models: {}", names.join(", "));
     }
     0
+}
+
+/// Where the desktop app saves its scan, so the two surfaces share one.
+///
+/// Machine-local rather than roaming: this describes files on *this* machine and is tens
+/// of megabytes of data that can be rebuilt from them in half a minute.
+fn cache_path() -> Option<std::path::PathBuf> {
+    let dir = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".local").join("share")))?;
+    Some(axio_cost::store::cache_path(&dir.join("axio")))
+}
+
+/// Scan the transcripts, or read the saved scan when the caller asked for speed.
+///
+/// Scanning is the default and stays the default: this command's output is the answer
+/// someone quotes, and a cache is by construction a few minutes behind. `--cached` is for
+/// the case where that does not matter and thirty seconds does.
+///
+/// A fresh scan is always written back, whoever asked for it, so the desktop app opens on
+/// figures the CLI produced and the reverse.
+fn read_scan(home: &std::path::Path, cached: bool, quiet: bool) -> ScanReport {
+    let path = cache_path();
+
+    if cached && let Some(saved) = path.as_deref().and_then(axio_cost::store::load) {
+        if !quiet {
+            // Never silently. A figure from a cache is a different claim from a figure
+            // from the transcripts, and the difference is one line to state.
+            let minutes = saved.age().whole_minutes().max(0);
+            eprintln!("axio: saved scan from {minutes} minutes ago; omit --cached to rescan");
+        }
+        return saved.report;
+    }
+
+    let report = scan(home, &registry());
+    if let Some(path) = path {
+        let _ = axio_cost::store::save(&path, &report);
+    }
+    report
 }
 
 /// A compact breakdown under the total, so provider and harness are always visible.
