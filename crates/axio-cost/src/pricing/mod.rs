@@ -72,6 +72,28 @@ pub(super) fn anthropic_rates(input: f64, output: f64) -> ModelPricing {
     }
 }
 
+/// Build rates for a vendor that publishes its own cache-read price.
+///
+/// The multiplier helpers only fit vendors whose cache read is a tenth of input. Several
+/// are nowhere near it — DeepSeek charges 2% of input for a cache hit, Z.ai 19%, xAI 25% —
+/// so deriving those would be wrong by up to an order of magnitude, in the direction that
+/// flatters the bill.
+///
+/// `cache_write` repeats the input rate. None of these vendors sells a cache write as a
+/// separate product: the cache is populated as a side effect of an ordinary request, so
+/// those tokens were already billed as input once. Charging a premium on top would invent
+/// a line item the vendor does not have.
+pub(super) fn vendor_rates(input: f64, output: f64, cache_read: f64) -> ModelPricing {
+    ModelPricing {
+        input,
+        output,
+        cache_read,
+        cache_write_5m: input,
+        cache_write_1h: input,
+        long_context: None,
+    }
+}
+
 /// Build OpenAI rates, which use the same cache multipliers as Anthropic.
 ///
 /// OpenAI sells no 1-hour cache product, so the 1-hour column repeats the 5-minute rate
@@ -308,21 +330,21 @@ mod tests {
     fn an_overlay_can_price_a_model_the_bundle_does_not_know() {
         let prices = Prices::bundled();
         assert_eq!(
-            prices.resolve("glm-5.2", "2026-08-02").source,
+            prices.resolve("unlisted-model-1", "2026-08-02").source,
             PriceSource::Unpriced
         );
 
         let priced = Prices::bundled().with_overlay(
             "litellm",
-            [("glm-5.2".to_string(), anthropic_rates(1.0, 2.0))],
+            [("unlisted-model-1".to_string(), anthropic_rates(1.0, 2.0))],
         );
-        assert!(priced.resolve("glm-5.2", "2026-08-02").pricing.is_some());
+        assert!(priced.resolve("unlisted-model-1", "2026-08-02").pricing.is_some());
     }
 
     #[test]
     fn an_unpriced_model_yields_no_cost_rather_than_zero() {
         let prices = Prices::bundled();
-        let resolved = prices.resolve("glm-5.2", "2026-08-02");
+        let resolved = prices.resolve("unlisted-model-1", "2026-08-02");
         assert_eq!(resolved.cost(&tokens(1_000, 1_000, 0)), None);
     }
 }

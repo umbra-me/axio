@@ -72,12 +72,46 @@ pub(super) const OPENAI: &[(&str, f64, f64, Option<(u64, f64, f64)>)] = &[
     ("gpt-5.3-codex", 1.75, 14.00, None),
 ];
 
+/// Everyone else, as `(id, input, output, cache read)`.
+///
+/// Cache reads are listed rather than derived because these vendors are nowhere near the
+/// tenth-of-input that Anthropic and OpenAI share: DeepSeek charges 2% of input for a hit,
+/// Z.ai 19%, xAI 25%. A derived column would be wrong by up to an order of magnitude.
+///
+/// Two caveats worth knowing when reading a total that includes these:
+///
+/// * **`glm-5.2` is quoted per provider.** Z.ai's own rate is 1.40/4.40; routing the same
+///   model through a gateway has been quoted as low as 0.28/0.87. The vendor's price is
+///   used, which cannot understate the bill. Z.ai also applies a peak-hours surcharge this
+///   table does not model.
+/// * **`gpt-5.3-codex-spark` is a research preview** whose credit rates OpenAI describes
+///   as not final. It is priced at its published API rate, which is the same as
+///   `gpt-5.3-codex`.
+pub(super) const VENDORS: &[(&str, f64, f64, f64)] = &[
+    ("deepseek-v4-flash", 0.14, 0.28, 0.0028),
+    ("glm-5.2", 1.40, 4.40, 0.26),
+    ("grok-4.5", 2.00, 6.00, 0.50),
+    // The Grok CLI logs its build variants under their own names. Both bill as grok-4.5;
+    // where the transcript carries the vendor's own `costUsdTicks` that figure wins over
+    // this row anyway.
+    ("grok-4.5-build", 2.00, 6.00, 0.50),
+    ("grok-4.5-build-free", 2.00, 6.00, 0.50),
+    ("gpt-5.3-codex-spark", 1.75, 14.00, 0.175),
+];
+
 /// Resolve a model to its rates as of `date` (`YYYY-MM-DD`).
 ///
 /// The date is the message's own timestamp, not today's — pricing a January session at
 /// August's rates is the same class of error as ignoring a promotional window.
 pub(super) fn lookup(id: &str, date: &str) -> Option<ModelPricing> {
-    anthropic(id, date).or_else(|| openai(id))
+    anthropic(id, date).or_else(|| openai(id)).or_else(|| vendor(id))
+}
+
+fn vendor(id: &str) -> Option<ModelPricing> {
+    VENDORS
+        .iter()
+        .find(|(row, ..)| *row == id)
+        .map(|&(_, input, output, cache_read)| super::vendor_rates(input, output, cache_read))
 }
 
 fn openai(id: &str) -> Option<ModelPricing> {
@@ -292,10 +326,79 @@ mod openai_tests {
         assert!(opus.long_context.is_none());
     }
 
-    /// Not on the vendor's rate card, and described elsewhere as an unfinalised research
-    /// preview. Guessing it would be inventing a price.
+    /// Absent from the vendor's own rate card, but published elsewhere at the same rate
+    /// as `gpt-5.3-codex`. Priced at that, with the preview caveat recorded on VENDORS.
     #[test]
-    fn the_codex_spark_preview_stays_unpriced() {
-        assert!(lookup("gpt-5.3-codex-spark", "2026-08-02").is_none());
+    fn the_codex_spark_preview_is_priced_like_its_sibling() {
+        let spark = lookup("gpt-5.3-codex-spark", "2026-08-03").expect("priced");
+        let codex = lookup("gpt-5.3-codex", "2026-08-03").expect("priced");
+        assert_eq!((spark.input, spark.output), (codex.input, codex.output));
+    }
+}
+
+#[cfg(test)]
+mod vendor_tests {
+    use super::*;
+
+    /// The published cache-read rates, none of which is a tenth of input. Deriving them
+    /// would have been wrong by up to 5x in the direction that flatters the bill.
+    #[test]
+    fn vendor_cache_rates_are_listed_not_derived() {
+        for (id, input, cached) in [
+            ("deepseek-v4-flash", 0.14, 0.0028),
+            ("glm-5.2", 1.40, 0.26),
+            ("grok-4.5", 2.00, 0.50),
+        ] {
+            let rates = lookup(id, "2026-08-03").unwrap_or_else(|| panic!("{id} is priced"));
+            assert_eq!(rates.input, input, "{id} input");
+            assert_eq!(rates.cache_read, cached, "{id} cache read");
+            assert_ne!(
+                rates.cache_read,
+                input * 0.10,
+                "{id} would have been wrong if derived"
+            );
+        }
+    }
+
+    /// Every model seen in the local transcripts must now resolve. This is the list the
+    /// scan reported as unpriced before these rows existed.
+    #[test]
+    fn every_locally_observed_model_is_priced() {
+        for id in [
+            "claude-opus-5",
+            "claude-fable-5",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-haiku-4-5-20251001",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.3-codex-spark",
+            "deepseek-v4-flash",
+            "glm-5.2",
+            "grok-4.5-build",
+            "grok-4.5-build-free",
+            "anthropic/claude-fable-5",
+        ] {
+            assert!(
+                lookup(&normalize(id), "2026-08-03").is_some(),
+                "{id} is still unpriced"
+            );
+        }
+    }
+
+    /// A cache write is not a separate product for these vendors — the cache is filled by
+    /// an ordinary request whose tokens were billed as input once already.
+    #[test]
+    fn a_vendor_cache_write_is_charged_as_plain_input() {
+        let deepseek = lookup("deepseek-v4-flash", "2026-08-03").expect("priced");
+        assert_eq!(deepseek.cache_write_5m, deepseek.input);
+        assert_eq!(deepseek.cache_write_1h, deepseek.input);
+    }
+
+    #[test]
+    fn an_unknown_model_is_still_unpriced_rather_than_free() {
+        assert!(lookup("some-model-nobody-published", "2026-08-03").is_none());
     }
 }

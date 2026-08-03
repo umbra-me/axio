@@ -207,7 +207,7 @@ mod tests {
         let mut totals = Totals::default();
         totals.add(&message("claude-fable-5", 30_410), &Prices::bundled());
         for _ in 0..100 {
-            totals.add(&message("glm-5.2", 10_000_000), &Prices::bundled());
+            totals.add(&message("unlisted-model-1", 10_000_000), &Prices::bundled());
         }
 
         assert_eq!(totals.cost(), Cost::Unknown);
@@ -220,7 +220,7 @@ mod tests {
     fn a_materially_priced_group_shows_its_coverage() {
         let mut totals = Totals::default();
         totals.add(&message("claude-opus-5", 700_000), &Prices::bundled());
-        totals.add(&message("glm-5.2", 300_000), &Prices::bundled());
+        totals.add(&message("unlisted-model-1", 300_000), &Prices::bundled());
 
         let cost = totals.cost();
         let (dollars, covered) = cost.partial().expect("partial");
@@ -236,7 +236,7 @@ mod tests {
         for _ in 0..999 {
             totals.add(&message("claude-opus-5", 1), &Prices::bundled());
         }
-        totals.add(&message("glm-5.2", 1_000_000), &Prices::bundled());
+        totals.add(&message("unlisted-model-1", 1_000_000), &Prices::bundled());
         assert!(totals.coverage() < 0.01, "{}", totals.coverage());
         assert_eq!(totals.cost(), Cost::Unknown);
     }
@@ -244,12 +244,12 @@ mod tests {
     #[test]
     fn unpriced_models_are_named_so_a_report_can_say_what_is_missing() {
         let mut totals = Totals::default();
-        totals.add(&message("deepseek-v4-flash", 10), &Prices::bundled());
-        totals.add(&message("glm-5.2", 10), &Prices::bundled());
-        totals.add(&message("deepseek-v4-flash", 10), &Prices::bundled());
+        totals.add(&message("unlisted-model-2", 10), &Prices::bundled());
+        totals.add(&message("unlisted-model-1", 10), &Prices::bundled());
+        totals.add(&message("unlisted-model-2", 10), &Prices::bundled());
         assert_eq!(
             totals.unpriced_models.iter().cloned().collect::<Vec<_>>(),
-            vec!["deepseek-v4-flash".to_string(), "glm-5.2".to_string()]
+            vec!["unlisted-model-1".to_string(), "unlisted-model-2".to_string()]
         );
     }
 
@@ -257,7 +257,7 @@ mod tests {
     fn merging_preserves_both_the_cost_and_the_doubt() {
         let (mut priced, mut unpriced) = (Totals::default(), Totals::default());
         priced.add(&message("claude-opus-5", 1_000_000), &Prices::bundled());
-        unpriced.add(&message("glm-5.2", 1_000_000), &Prices::bundled());
+        unpriced.add(&message("unlisted-model-1", 1_000_000), &Prices::bundled());
 
         priced.merge(&unpriced);
         assert_eq!(priced.messages, 2);
@@ -272,7 +272,7 @@ mod tests {
     fn a_nearly_complete_total_never_rounds_up_to_a_hundred() {
         let mut totals = Totals::default();
         totals.add(&message("claude-opus-5", 9_996), &Prices::bundled());
-        totals.add(&message("glm-5.2", 4), &Prices::bundled());
+        totals.add(&message("unlisted-model-1", 4), &Prices::bundled());
         let rendered = render(&totals.cost());
         assert!(rendered.ends_with("(99.9% priced)"), "{rendered}");
         assert!(!rendered.contains("only"), "not a warning at 99.9%: {rendered}");

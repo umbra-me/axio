@@ -57,6 +57,11 @@ a minor bump may break things.
   cost it, and that figure is preferred over the table wherever it appears — it is the only number here computed by the party doing
   the charging.
 
+  Every model observed in the local transcripts is priced, so the totals carry
+  no coverage caveat. Three vendors needed their cache-read rate listed rather
+  than derived: the tenth-of-input that Anthropic and OpenAI share is nowhere
+  near right for DeepSeek (2% of input), Z.ai (19%) or xAI (25%).
+
   **A model with no known rate is reported unpriced, never as zero**, and no total
   is printed without the share of tokens it accounts for. That rule has teeth: an
   early build summed the one Codex message in 77,525 whose model it knew and
