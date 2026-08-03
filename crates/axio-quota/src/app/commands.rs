@@ -76,6 +76,11 @@ pub struct ProviderSetting {
     /// lie than no input at all.
     pub api_key: Option<String>,
     pub takes_api_key: bool,
+    /// A second field, for providers that scope a key to a team or project in the URL
+    /// rather than in the credential. Only xAI needs one today.
+    pub workspace_id: Option<String>,
+    pub takes_workspace_id: bool,
+    pub workspace_hint: String,
     pub hint: String,
 }
 
@@ -92,6 +97,9 @@ pub fn settings(state: State<'_, Arc<AppState>>) -> Vec<ProviderSetting> {
                 enabled: entry.is_enabled(),
                 api_key: entry.api_key.clone(),
                 takes_api_key: takes_api_key(*id),
+                workspace_id: entry.workspace_id.clone(),
+                takes_workspace_id: takes_workspace_id(*id),
+                workspace_hint: workspace_hint(*id).to_string(),
                 hint: hint(*id).to_string(),
             }
         })
@@ -134,6 +142,12 @@ pub fn save_settings(
                 .api_key
                 .map(|key| key.trim().to_string())
                 .filter(|key| !key.is_empty());
+        }
+        if takes_workspace_id(id) {
+            entry.workspace_id = setting
+                .workspace_id
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty());
         }
     }
 
@@ -246,7 +260,21 @@ pub fn quit(app: AppHandle) {
 }
 
 fn takes_api_key(id: ProviderId) -> bool {
-    matches!(id, ProviderId::Openrouter)
+    matches!(
+        id,
+        ProviderId::Openrouter | ProviderId::Zai | ProviderId::Deepseek | ProviderId::Xai
+    )
+}
+
+fn takes_workspace_id(id: ProviderId) -> bool {
+    matches!(id, ProviderId::Xai)
+}
+
+fn workspace_hint(id: ProviderId) -> &'static str {
+    match id {
+        ProviderId::Xai => "Team ID — it is in the xAI console URL.",
+        _ => "",
+    }
 }
 
 fn hint(id: ProviderId) -> &'static str {
@@ -254,5 +282,9 @@ fn hint(id: ProviderId) -> &'static str {
         ProviderId::Codex => "Signed in with the `codex` CLI — no key needed here.",
         ProviderId::Claude => "Signed in with the `claude` CLI — no key needed here.",
         ProviderId::Openrouter => "From openrouter.ai/settings/keys.",
+        ProviderId::Zai => "From z.ai — the same API token the coding plan uses.",
+        ProviderId::Deepseek => "From platform.deepseek.com. Shows the prepaid balance.",
+        // Worth stating: the console offers two kinds of key and only one works here.
+        ProviderId::Xai => "A Management API key, not an inference key — xAI console,                             Settings > Management Keys.",
     }
 }

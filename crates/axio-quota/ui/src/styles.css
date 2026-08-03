@@ -529,6 +529,15 @@ input[type="checkbox"] {
   gap: 0.5rem;
 }
 
+/* Indented under their provider, so a key field is visibly subordinate to the toggle that
+ * decides whether it is used at all. */
+.fields {
+  display: grid;
+  gap: 0.3rem;
+  padding-left: 1.6rem;
+  margin-top: 0.35rem;
+}
+
 .hint {
   font-size: 11px;
   color: var(--muted);

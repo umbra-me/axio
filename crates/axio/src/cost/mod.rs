@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 use axio_cost::pricing::Prices;
 
 pub(crate) mod calendar;
+pub(crate) mod columns;
+pub(crate) mod json;
 pub(crate) mod prices;
 pub(crate) use prices::import_prices;
 use axio_cost::sources::{registry, scan};
@@ -33,6 +35,13 @@ pub(crate) enum GroupBy {
     Session,
     /// One row per calendar day, UTC.
     Day,
+    /// One row per ISO week, labelled by its Monday.
+    Week,
+    /// One row per calendar month.
+    Month,
+    /// One row per hour of the day, pooled across every day — when the work happens
+    /// rather than when it happened.
+    Hour,
     /// Project or working directory, where the agent records one.
     Workspace,
 }
@@ -49,6 +58,18 @@ impl GroupBy {
             GroupBy::Harness => message.client.to_string(),
             GroupBy::Session => message.session_id.clone(),
             GroupBy::Day => message.timestamp.date().to_string(),
+            // Labelled by the Monday rather than by an ISO week number: "2026-W31" needs
+            // a lookup table to place, and a date does not.
+            GroupBy::Week => {
+                let date = message.timestamp.date();
+                let back = date.weekday().number_days_from_monday() as i64;
+                (date - time::Duration::days(back)).to_string()
+            }
+            GroupBy::Month => {
+                let date = message.timestamp.date();
+                format!("{:04}-{:02}", date.year(), u8::from(date.month()))
+            }
+            GroupBy::Hour => format!("{:02}:00 UTC", message.timestamp.hour()),
             GroupBy::Workspace => message
                 .workspace
                 .clone()
@@ -63,6 +84,9 @@ impl GroupBy {
             GroupBy::Harness => "harness",
             GroupBy::Session => "session",
             GroupBy::Day => "day",
+            GroupBy::Week => "week",
+            GroupBy::Month => "month",
+            GroupBy::Hour => "hour",
             GroupBy::Workspace => "workspace",
         }
     }
@@ -74,6 +98,7 @@ pub(crate) fn cost_command(
     diagnose: bool,
     calendar: bool,
     cached: bool,
+    wide: bool,
     limit: usize,
 ) -> u8 {
     let Some(home) = home_dir() else {
@@ -106,7 +131,7 @@ pub(crate) fn cost_command(
     }
 
     if json {
-        return emit_json(by, &groups, &grand, &report, &prices);
+        return json::emit_json(by, &groups, &grand, &report, &prices);
     }
 
     // Sorted by spend rather than by name: the row someone is looking for is nearly
@@ -118,22 +143,49 @@ pub(crate) fn cost_command(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    println!(
-        "{:<34} {:>10} {:>16}  {}",
-        by.heading(),
-        "messages",
-        "tokens",
-        "cost"
-    );
-    let shown = rows.len().min(limit);
-    for (key, totals) in rows.iter().take(shown) {
+    let grand_dollars = spend(&grand);
+    if wide {
+        println!(
+            "{:<30} {:>9} {:>15} {:>7} {:>9} {:>6}  {}",
+            by.heading(),
+            "messages",
+            "tokens",
+            "cached",
+            "$/1M",
+            "share",
+            "cost"
+        );
+    } else {
         println!(
             "{:<34} {:>10} {:>16}  {}",
-            truncate(key, 34),
-            totals.messages,
-            totals.tokens.total(),
-            render(&totals.cost()),
+            by.heading(),
+            "messages",
+            "tokens",
+            "cost"
         );
+    }
+    let shown = rows.len().min(limit);
+    for (key, totals) in rows.iter().take(shown) {
+        if wide {
+            println!(
+                "{:<30} {:>9} {:>15} {:>7} {:>9} {:>6}  {}",
+                truncate(key, 30),
+                totals.messages,
+                totals.tokens.total(),
+                columns::cache_ratio(totals),
+                columns::per_million(totals),
+                columns::share(totals, grand_dollars),
+                render(&totals.cost()),
+            );
+        } else {
+            println!(
+                "{:<34} {:>10} {:>16}  {}",
+                truncate(key, 34),
+                totals.messages,
+                totals.tokens.total(),
+                render(&totals.cost()),
+            );
+        }
     }
     if rows.len() > shown {
         // Never truncate silently — a table that hides rows without saying so reads as
@@ -141,13 +193,27 @@ pub(crate) fn cost_command(
         println!("... {} more rows, use --limit to see them", rows.len() - shown);
     }
 
-    println!(
-        "\n{:<34} {:>10} {:>16}  {}",
-        "total",
-        grand.messages,
-        grand.tokens.total(),
-        render(&grand.cost()),
-    );
+    // The total has to line up with the columns above it, so it follows the same branch.
+    if wide {
+        println!(
+            "\n{:<30} {:>9} {:>15} {:>7} {:>9} {:>6}  {}",
+            "total",
+            grand.messages,
+            grand.tokens.total(),
+            columns::cache_ratio(&grand),
+            columns::per_million(&grand),
+            "100.0%",
+            render(&grand.cost()),
+        );
+    } else {
+        println!(
+            "\n{:<34} {:>10} {:>16}  {}",
+            "total",
+            grand.messages,
+            grand.tokens.total(),
+            render(&grand.cost()),
+        );
+    }
 
     // The two questions a total prompts — who is going to invoice me, and which tool spent
     // it — are different cuts of the same money, and neither is answerable from a table
@@ -281,73 +347,6 @@ fn diagnose_report(report: &ScanReport, prices: &Prices) -> u8 {
         }
     }
     0
-}
-
-fn emit_json(
-    by: GroupBy,
-    groups: &BTreeMap<String, Totals>,
-    grand: &Totals,
-    report: &ScanReport,
-    prices: &Prices,
-) -> u8 {
-    let breakdown = |by: GroupBy| {
-        let mut totals: BTreeMap<String, Totals> = BTreeMap::new();
-        for message in report.messages() {
-            totals.entry(by.key(message)).or_default().add(message, prices);
-        }
-        totals
-            .into_iter()
-            .map(|(key, totals)| {
-                serde_json::json!({
-                    "key": key,
-                    "messages": totals.messages,
-                    "tokens": totals.tokens.total(),
-                    "costUsd": totals.cost().partial().map(|(dollars, _)| dollars),
-                })
-            })
-            .collect::<Vec<_>>()
-    };
-
-    let rows: Vec<_> = groups
-        .iter()
-        .map(|(key, totals)| {
-            let (dollars, covered) = match totals.cost().partial() {
-                Some((dollars, covered)) => (Some(dollars), Some(covered)),
-                None => (None, None),
-            };
-            serde_json::json!({
-                "key": key,
-                "messages": totals.messages,
-                "tokens": totals.tokens,
-                "costUsd": dollars,
-                "priceCoverage": covered,
-                "unpricedModels": totals.unpriced_models,
-            })
-        })
-        .collect();
-
-    let document = serde_json::json!({
-        "groupedBy": by.heading(),
-        "rows": rows,
-        "byProvider": breakdown(GroupBy::Provider),
-        "byHarness": breakdown(GroupBy::Harness),
-        "total": {
-            "messages": grand.messages,
-            "tokens": grand.tokens,
-            "costUsd": grand.cost().partial().map(|(dollars, _)| dollars),
-            "priceCoverage": grand.coverage(),
-        },
-    });
-    match serde_json::to_string_pretty(&document) {
-        Ok(text) => {
-            println!("{text}");
-            0
-        }
-        Err(err) => {
-            eprintln!("axio: {err}");
-            1
-        }
-    }
 }
 
 fn truncate(text: &str, width: usize) -> String {

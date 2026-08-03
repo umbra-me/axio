@@ -164,7 +164,10 @@ function Cost() {
     "model",
     "provider",
     "harness",
+    "hour",
     "day",
+    "week",
+    "month",
     "workspace",
     "session",
   ];
@@ -194,6 +197,13 @@ function Cost() {
             <th>{group}</th>
             <th className="num">messages</th>
             <th className="num">tokens</th>
+            <th className="num" title="Cache reads as a share of this row's tokens. A share rather than a multiple of fresh input, because the vendors disagree about what input means.">
+              cached
+            </th>
+            <th className="num" title="Blended dollars per million priced tokens — what this row actually cost per unit, across every rate its models charge.">
+              $/1M
+            </th>
+            <th className="num">share</th>
             <th className="num">cost</th>
           </tr>
         </thead>
@@ -205,6 +215,11 @@ function Cost() {
               </td>
               <td className="num">{row.messages.toLocaleString()}</td>
               <td className="num">{row.tokens.toLocaleString()}</td>
+              <td className="num muted">{percent(row.cacheRatio)}</td>
+              <td className="num muted">
+                {row.perMillion !== null ? `$${row.perMillion.toFixed(2)}` : "—"}
+              </td>
+              <td className="num muted">{percent(row.share)}</td>
               <td className="num">
                 <Money row={row} />
               </td>
@@ -216,6 +231,13 @@ function Cost() {
             <td>total</td>
             <td className="num">{report.total.messages.toLocaleString()}</td>
             <td className="num">{report.total.tokens.toLocaleString()}</td>
+            <td className="num muted">{percent(report.total.cacheRatio)}</td>
+            <td className="num muted">
+              {report.total.perMillion !== null
+                ? `$${report.total.perMillion.toFixed(2)}`
+                : "—"}
+            </td>
+            <td className="num muted">100%</td>
             <td className="num">
               <Money row={report.total} />
             </td>
@@ -236,6 +258,13 @@ function Cost() {
       </p>
     </>
   );
+}
+
+function percent(value: number | null): string {
+  if (value === null) return "—";
+  // Whole percent: these are proportions read at a glance beside a column of money, and a
+  // decimal place here competes with the figure that matters.
+  return `${Math.round(value * 100)}%`;
 }
 
 /// A figure, never claiming more than it knows.
@@ -303,15 +332,26 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
             <strong>{entry.name}</strong>
           </div>
           {entry.takesApiKey ? (
-            <div className="setting-row" style={{ paddingLeft: "1.5rem" }}>
+            <div className="fields">
               <input
                 type="password"
-                placeholder={entry.hint}
+                placeholder="API key"
                 value={entry.apiKey ?? ""}
                 onChange={(event) =>
                   update(entry.id, { apiKey: event.target.value })
                 }
               />
+              {entry.takesWorkspaceId && (
+                <input
+                  type="text"
+                  placeholder={entry.workspaceHint}
+                  value={entry.workspaceId ?? ""}
+                  onChange={(event) =>
+                    update(entry.id, { workspaceId: event.target.value })
+                  }
+                />
+              )}
+              <div className="hint">{entry.hint}</div>
             </div>
           ) : (
             <div className="hint">{entry.hint}</div>

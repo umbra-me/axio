@@ -8,6 +8,7 @@ mod commands;
 mod cost;
 mod icon;
 mod state;
+mod view;
 mod tray;
 
 use std::sync::Arc;

@@ -55,6 +55,10 @@ export interface ProviderSetting {
   enabled: boolean;
   apiKey: string | null;
   takesApiKey: boolean;
+  /// A second field, for a provider that scopes its key to a team in the URL.
+  workspaceId: string | null;
+  takesWorkspaceId: boolean;
+  workspaceHint: string;
   hint: string;
 }
 
@@ -63,7 +67,10 @@ export type CostGroup =
   | "provider"
   | "harness"
   | "session"
+  | "hour"
   | "day"
+  | "week"
+  | "month"
   | "workspace";
 
 export interface CostRow {
@@ -74,6 +81,12 @@ export interface CostRow {
   costUsd: number | null;
   /** Share of this row's tokens carrying a price, 0..1. */
   coverage: number;
+  /// Cache reads as a share of this row's tokens.
+  cacheRatio: number | null;
+  /// Blended dollars per million priced tokens.
+  perMillion: number | null;
+  /// This row's share of the report total.
+  share: number;
 }
 
 export interface AgentRow {

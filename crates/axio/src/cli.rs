@@ -46,6 +46,11 @@ pub(crate) enum Command {
         #[arg(long)]
         cached: bool,
 
+        /// Add the cache ratio, the blended dollars per million tokens, and each row's
+        /// share of the total.
+        #[arg(long, conflicts_with_all = ["json", "diagnose", "calendar"])]
+        wide: bool,
+
         /// Maximum rows to print before summarising the remainder.
         #[arg(long, default_value_t = 25)]
         limit: usize,

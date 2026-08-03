@@ -19,140 +19,14 @@ use axio_cost::pricing::Prices;
 use axio_cost::sources::{registry, scan};
 use axio_cost::totals::{Cost, Totals};
 use axio_cost::{CostMessage, ScanReport};
-use serde::Serialize;
+
+pub use super::view::{AgentRow, CostReport, CostRow, DayPoint, StatsView, StoredScan, TokenMix};
 
 /// Emitted whenever the scan behind the Cost and Stats views changes — once when the
 /// saved scan is published, once when a live scan replaces it. The frontend listens
 /// rather than polling, because the two arrive seconds apart and a poll interval short
 /// enough to catch that would be running constantly for the rest of the session.
 pub const EVENT_COST_UPDATED: &str = "cost://updated";
-
-/// One row of the table, already rendered into what the view needs.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CostRow {
-    pub key: String,
-    pub messages: usize,
-    pub tokens: u64,
-    /// `None` when too little of the row could be priced to mean anything. The view shows
-    /// "unpriced" rather than a number, for the reason `axio_cost::totals` documents.
-    pub cost_usd: Option<f64>,
-    /// Share of this row's tokens that carry a price, `0.0..=1.0`.
-    pub coverage: f64,
-}
-
-/// One day of the calendar, flattened for the view.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DayPoint {
-    /// `YYYY-MM-DD`, UTC. The view builds the grid from this rather than being handed
-    /// empty days, so the two cannot disagree about what a week is.
-    pub date: String,
-    pub messages: usize,
-    pub tokens: u64,
-    pub cost_usd: Option<f64>,
-}
-
-/// The year, and what its shape says.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StatsView {
-    pub days: Vec<DayPoint>,
-    pub busiest_day_tokens: u64,
-    /// The three cuts that split a day into one of four heat levels. Computed here so the
-    /// window and the CLI shade the same day the same way — see `Stats::thresholds`.
-    pub thresholds: [u64; 3],
-    pub active_days: usize,
-    pub current_streak: usize,
-    pub longest_streak: usize,
-    pub sessions: usize,
-    pub top_model: Option<String>,
-    pub total_tokens: u64,
-    pub total_cost_usd: Option<f64>,
-    /// Tokens by hour of day, UTC — labelled as UTC in the view for the reason
-    /// `Stats::by_hour` documents.
-    pub by_hour: Vec<u64>,
-    /// Tokens by weekday, Sunday first, so it lines up with the calendar above it.
-    pub by_weekday: Vec<u64>,
-    /// Where the money went, three ways. Each is the same grouping the Cost tab offers,
-    /// cut to the rows worth drawing as bars — a chart with forty bars is a table.
-    pub by_provider: Vec<CostRow>,
-    pub by_harness: Vec<CostRow>,
-    pub by_workspace: Vec<CostRow>,
-    /// What the tokens actually were. Cache reads are the majority of a coding agent's
-    /// volume and a tenth of its price, so a total that does not separate them invites
-    /// the wrong conclusion about where the money goes.
-    pub mix: TokenMix,
-}
-
-/// The four kinds of token, which are billed at four different rates.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenMix {
-    pub input: u64,
-    pub output: u64,
-    pub cache_read: u64,
-    pub cache_write: u64,
-    /// Output tokens spent on reasoning. A subset of `output`, never billed separately —
-    /// shown because it is the part of a bill nobody remembers asking for.
-    pub reasoning: u64,
-}
-
-/// The saved scan, as the Settings tab describes it.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StoredScan {
-    pub path: String,
-    /// Zero when nothing has been written yet, which the view reads as "not saved".
-    pub bytes: u64,
-    pub scanned_at: Option<String>,
-    pub scanning: bool,
-}
-
-/// What one agent contributed, for the view's footer.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentRow {
-    pub name: &'static str,
-    /// False when the agent is not installed — a different answer from "recorded nothing".
-    pub present: bool,
-    pub files: usize,
-    pub messages: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CostReport {
-    pub rows: Vec<CostRow>,
-    pub total: CostRow,
-    pub unpriced_models: Vec<String>,
-    pub agents: Vec<AgentRow>,
-    /// True while nothing has been scanned yet, so the view can say so rather than
-    /// showing an empty table that looks like a zero.
-    pub loading: bool,
-    /// True while a scan is running behind this answer. Distinct from `loading`: these
-    /// figures are real, they are just about to be replaced by fresher ones.
-    pub scanning: bool,
-}
-
-impl CostReport {
-    fn empty() -> Self {
-        CostReport {
-            rows: Vec::new(),
-            total: CostRow {
-                key: "total".into(),
-                messages: 0,
-                tokens: 0,
-                cost_usd: None,
-                coverage: 1.0,
-            },
-            unpriced_models: Vec::new(),
-            agents: Vec::new(),
-            loading: true,
-            scanning: true,
-        }
-    }
-}
 
 /// The scan, held so the window can regroup without paying for it again.
 ///
@@ -337,9 +211,20 @@ fn group_report(report: &ScanReport, group: &str) -> CostReport {
         grand.add(message, &prices);
     }
 
+    let grand_dollars = grand.cost().partial().map(|(dollars, _)| dollars);
     let mut rows: Vec<CostRow> = groups
         .into_iter()
-        .map(|(key, totals)| row(key, &totals))
+        .map(|(key, totals)| {
+            let mut row = row(key, &totals);
+            // Against the report's own total rather than a running sum, so the shares of
+            // the rows shown add to less than one when the table is truncated — which is
+            // the honest reading of a truncated table.
+            row.share = match (row.cost_usd, grand_dollars) {
+                (Some(dollars), Some(total)) if total > 0.0 => dollars / total,
+                _ => 0.0,
+            };
+            row
+        })
         .collect();
     // By spend, because the row anyone is looking for is the expensive one.
     rows.sort_by(|a, b| {
@@ -351,7 +236,7 @@ fn group_report(report: &ScanReport, group: &str) -> CostReport {
 
     CostReport {
         rows,
-        total: row("total".into(), &grand),
+        total: CostRow { share: 1.0, ..row("total".into(), &grand) },
         unpriced_models: grand.unpriced_models.iter().cloned().collect(),
         agents: report
             .agents
@@ -377,12 +262,25 @@ fn row(key: String, totals: &Totals) -> CostRow {
         Cost::Partial { dollars, covered } => (Some(dollars), covered),
         Cost::Unknown => (None, totals.coverage()),
     };
+    let tokens = totals.tokens.total();
     CostRow {
         key,
         messages: totals.messages,
-        tokens: totals.tokens.total(),
+        tokens,
         cost_usd,
         coverage,
+        cache_ratio: (tokens > 0).then(|| totals.tokens.cache_read as f64 / tokens as f64),
+        // Divided by the tokens that were actually priced, not by every token in the row:
+        // dividing a partial cost by a whole volume understates the rate by exactly the
+        // share that could not be priced.
+        per_million: match cost_usd {
+            Some(dollars) if tokens > totals.unpriced_tokens => {
+                let priced = (tokens - totals.unpriced_tokens) as f64;
+                Some(dollars / (priced / 1_000_000.0))
+            }
+            _ => None,
+        },
+        share: 0.0,
     }
 }
 
@@ -392,6 +290,16 @@ fn key_of(message: &CostMessage, group: &str) -> String {
         // in: a Claude Code transcript here bills OpenAI, DeepSeek and Z.ai as well.
         "provider" => axio_cost::provider_of(&message.model).to_string(),
         "harness" | "client" => message.client.to_string(),
+        "week" => {
+            let date = message.timestamp.date();
+            let back = date.weekday().number_days_from_monday() as i64;
+            (date - time::Duration::days(back)).to_string()
+        }
+        "month" => {
+            let date = message.timestamp.date();
+            format!("{:04}-{:02}", date.year(), u8::from(date.month()))
+        }
+        "hour" => format!("{:02}:00 UTC", message.timestamp.hour()),
         "session" => message.session_id.clone(),
         "day" => message.timestamp.date().to_string(),
         "workspace" => message
