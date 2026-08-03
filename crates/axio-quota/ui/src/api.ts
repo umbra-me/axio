@@ -83,6 +83,28 @@ export interface AgentRow {
   messages: number;
 }
 
+export interface DayPoint {
+  date: string;
+  messages: number;
+  tokens: number;
+  costUsd: number | null;
+}
+
+export interface Stats {
+  days: DayPoint[];
+  busiestDayTokens: number;
+  /// The three cuts that split a day into four heat levels, from the Rust side so the
+  /// window and the CLI shade a day the same way.
+  thresholds: [number, number, number];
+  activeDays: number;
+  currentStreak: number;
+  longestStreak: number;
+  sessions: number;
+  topModel: string | null;
+  totalTokens: number;
+  totalCostUsd: number | null;
+}
+
 export interface CostReport {
   rows: CostRow[];
   total: CostRow;
@@ -100,6 +122,7 @@ export const api = {
     invoke<string>("save_settings", { settings }),
   costReport: (group: CostGroup) => invoke<CostReport>("cost_report", { group }),
   refreshCost: () => invoke<void>("refresh_cost"),
+  costStats: () => invoke<Stats>("cost_stats"),
   openMainWindow: () => invoke<void>("open_main_window"),
   minimizeWindow: () => invoke<void>("minimize_window"),
   closeWindow: () => invoke<void>("close_window"),

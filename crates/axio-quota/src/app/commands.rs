@@ -155,6 +155,12 @@ pub fn cost_report(
     cost.report(&group)
 }
 
+/// The usage calendar and the habit it implies, off the same cached scan.
+#[tauri::command]
+pub fn cost_stats(cost: State<'_, Arc<super::cost::CostCache>>) -> super::cost::StatsView {
+    cost.stats()
+}
+
 /// Drop the cached scan so the next `cost_report` reads the transcripts again.
 #[tauri::command]
 pub fn refresh_cost(cost: State<'_, Arc<super::cost::CostCache>>) {

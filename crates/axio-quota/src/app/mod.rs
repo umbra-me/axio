@@ -28,6 +28,7 @@ pub fn run() -> Result<(), String> {
             commands::settings,
             commands::save_settings,
             commands::cost_report,
+            commands::cost_stats,
             commands::refresh_cost,
             commands::open_main_window,
             commands::minimize_window,

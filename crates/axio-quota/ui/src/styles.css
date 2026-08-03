@@ -525,3 +525,145 @@ table.cost tfoot td {
     transition: none;
   }
 }
+
+/* ---- the calendar ----------------------------------------------------------
+ *
+ * A third geometry, and so a third colour family. The rules elsewhere reserve amber for
+ * identity (edges and marks) and the green-amber-red ramp for signal (rail fills); a heat
+ * map is neither, and borrowing either would make "busy" read as "warning".
+ *
+ * Violet was already in the token set and unused. A single-hue sequential ramp is the
+ * right encoding for one quantity at five steps, and keeping it to one hue means the
+ * squares cannot be mistaken for a status.
+ */
+
+.heatmap {
+  padding: 0.2rem 0 1rem;
+}
+
+.heatmap-months,
+.heatmap-cells {
+  display: grid;
+  grid-template-columns: repeat(53, 9px);
+  gap: 2px;
+}
+
+.heatmap-months {
+  margin-left: 30px;
+  margin-bottom: 0.25rem;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* A label belongs to its column but is wider than one, so it is allowed to spill right
+ * rather than be clipped to 9px of nothing. */
+.heatmap-months span {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.heatmap-grid {
+  display: flex;
+  gap: 4px;
+}
+
+.heatmap-days {
+  display: grid;
+  grid-template-rows: repeat(7, 9px);
+  gap: 2px;
+  width: 26px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+/* Mon, Wed, Fri only: seven labels on 9px rows is unreadable, and three is enough to
+ * orient by. They sit on rows 2, 4 and 6 of a Sunday-first week. */
+.heatmap-days span:nth-child(1) {
+  grid-row: 2;
+}
+.heatmap-days span:nth-child(2) {
+  grid-row: 4;
+}
+.heatmap-days span:nth-child(3) {
+  grid-row: 6;
+}
+
+.heatmap-week {
+  display: grid;
+  grid-template-rows: repeat(7, 9px);
+  gap: 2px;
+}
+
+.cell {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--surface);
+  display: block;
+}
+
+/* Five steps, one hue. More steps would imply a precision the log scale does not have. */
+.cell.level-1 {
+  background: color-mix(in srgb, var(--violet) 30%, var(--surface));
+}
+.cell.level-2 {
+  background: color-mix(in srgb, var(--violet) 52%, var(--surface));
+}
+.cell.level-3 {
+  background: color-mix(in srgb, var(--violet) 76%, var(--surface));
+}
+.cell.level-4 {
+  background: var(--violet);
+}
+
+.heatmap-key {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0.6rem 0 0 30px;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.heatmap-key span {
+  margin: 0 0.3rem;
+}
+
+/* ---- headline figures ------------------------------------------------------ */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.figure {
+  background: var(--bg);
+  padding: 0.55rem 0.7rem;
+}
+
+.figure dt {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.figure dd {
+  margin: 0.1rem 0 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

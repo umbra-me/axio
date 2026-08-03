@@ -27,11 +27,13 @@
 pub mod message;
 pub mod pricing;
 pub mod sources;
+pub mod stats;
 pub mod tokens;
 pub mod totals;
 
 pub use message::{ClientId, CostMessage, DedupLedger};
 pub use pricing::{ModelPricing, PriceSource, Prices, Resolved, provider_of};
 pub use sources::{AgentReport, ScanReport, Source, registry, scan};
+pub use stats::{Day, Stats};
 pub use tokens::TokenBreakdown;
 pub use totals::{Cost, Totals};

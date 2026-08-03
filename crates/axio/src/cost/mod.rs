@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use axio_cost::pricing::Prices;
 
+pub(crate) mod calendar;
 pub(crate) mod prices;
 pub(crate) use prices::import_prices;
 use axio_cost::sources::{registry, scan};
@@ -67,7 +68,13 @@ impl GroupBy {
     }
 }
 
-pub(crate) fn cost_command(by: GroupBy, json: bool, diagnose: bool, limit: usize) -> u8 {
+pub(crate) fn cost_command(
+    by: GroupBy,
+    json: bool,
+    diagnose: bool,
+    calendar: bool,
+    limit: usize,
+) -> u8 {
     let Some(home) = home_dir() else {
         eprintln!("axio: no home directory to scan");
         return 1;
@@ -78,6 +85,13 @@ pub(crate) fn cost_command(by: GroupBy, json: bool, diagnose: bool, limit: usize
 
     if diagnose {
         return diagnose_report(&report, &prices);
+    }
+    if calendar {
+        // Colour is a property of the sink, never of the session — the same rule the
+        // agent surfaces follow, so a redirected calendar carries no escape bytes.
+        let colour = std::io::IsTerminal::is_terminal(&std::io::stdout())
+            && std::env::var_os("NO_COLOR").is_none();
+        return calendar::calendar_command(&report, &prices, colour);
     }
 
     let mut groups: BTreeMap<String, Totals> = BTreeMap::new();

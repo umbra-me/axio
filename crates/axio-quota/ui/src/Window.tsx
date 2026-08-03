@@ -12,8 +12,9 @@ import {
 } from "./api";
 import { ProviderList } from "./Providers";
 import { History } from "./History";
+import { Stats } from "./Stats";
 
-type Tab = "providers" | "history" | "cost" | "settings";
+type Tab = "providers" | "history" | "cost" | "stats" | "settings";
 
 export function Window() {
   const [tab, setTab] = useState<Tab>("providers");
@@ -38,7 +39,7 @@ export function Window() {
     <div className="app">
       <TitleBar />
       <div className="tabs">
-        {(["providers", "history", "cost", "settings"] as Tab[]).map((name) => (
+        {(["providers", "history", "cost", "stats", "settings"] as Tab[]).map((name) => (
           <button
             key={name}
             className="tab"
@@ -63,6 +64,7 @@ export function Window() {
         )}
         {tab === "history" && <History />}
         {tab === "cost" && <Cost />}
+        {tab === "stats" && <Stats />}
         {tab === "settings" && <Settings onStatus={setStatus} />}
       </div>
 

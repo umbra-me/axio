@@ -34,6 +34,11 @@ pub(crate) enum Command {
         #[arg(long, conflicts_with = "json")]
         diagnose: bool,
 
+        /// Draw the year as a calendar instead of a table: when the work happened,
+        /// how long the streaks ran, and which day was the busiest.
+        #[arg(long, conflicts_with_all = ["json", "diagnose"])]
+        calendar: bool,
+
         /// Maximum rows to print before summarising the remainder.
         #[arg(long, default_value_t = 25)]
         limit: usize,

@@ -33,6 +33,36 @@ pub struct CostRow {
     pub coverage: f64,
 }
 
+/// One day of the calendar, flattened for the view.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayPoint {
+    /// `YYYY-MM-DD`, UTC. The view builds the grid from this rather than being handed
+    /// empty days, so the two cannot disagree about what a week is.
+    pub date: String,
+    pub messages: usize,
+    pub tokens: u64,
+    pub cost_usd: Option<f64>,
+}
+
+/// The year, and what its shape says.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsView {
+    pub days: Vec<DayPoint>,
+    pub busiest_day_tokens: u64,
+    /// The three cuts that split a day into one of four heat levels. Computed here so the
+    /// window and the CLI shade the same day the same way — see `Stats::thresholds`.
+    pub thresholds: [u64; 3],
+    pub active_days: usize,
+    pub current_streak: usize,
+    pub longest_streak: usize,
+    pub sessions: usize,
+    pub top_model: Option<String>,
+    pub total_tokens: u64,
+    pub total_cost_usd: Option<f64>,
+}
+
 /// What one agent contributed, for the view's footer.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +129,43 @@ impl CostCache {
             return CostReport::empty();
         };
         group_report(report, group)
+    }
+
+    /// The calendar and the habit it implies, from the same cached scan.
+    pub fn stats(&self) -> StatsView {
+        let mut cached = self.scanned.lock().unwrap_or_else(|err| err.into_inner());
+        if cached.is_none() {
+            let Some(home) = home_dir() else {
+                return StatsView::default();
+            };
+            *cached = Some(scan(&home, &registry()));
+        }
+        let Some(report) = cached.as_ref() else {
+            return StatsView::default();
+        };
+
+        let stats = axio_cost::stats::summarise(report.messages(), &Prices::bundled());
+        StatsView {
+            busiest_day_tokens: stats.busiest(),
+            thresholds: stats.thresholds(),
+            days: stats
+                .days
+                .iter()
+                .map(|day| DayPoint {
+                    date: day.date.to_string(),
+                    messages: day.messages,
+                    tokens: day.tokens,
+                    cost_usd: day.cost,
+                })
+                .collect(),
+            active_days: stats.active_days,
+            current_streak: stats.current_streak,
+            longest_streak: stats.longest_streak,
+            sessions: stats.sessions,
+            top_model: stats.top_model.clone(),
+            total_tokens: stats.totals.tokens.total(),
+            total_cost_usd: stats.totals.cost().partial().map(|(dollars, _)| dollars),
+        }
     }
 
     /// Drop the cache so the next call rescans.
