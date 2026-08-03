@@ -4,10 +4,19 @@
 // information in a narrower column. Two components would drift.
 
 import type { ProviderView, RateWindow } from "./api";
-import { resetText, severity } from "./api";
+import { elapsedFraction, pace, resetText, severity } from "./api";
 
+/// One quota window, drawn as a rail.
+///
+/// The fill is how much is gone. The tick is how far through the period we are. Reading
+/// one against the other answers the question a bare percentage cannot: at this rate, does
+/// the quota outlast the window? Both surfaces use this — the flyout is not a summary of
+/// the window, it is the same instrument in a narrower column.
 export function Meter({ window }: { window: RateWindow }) {
   const used = Math.min(100, Math.max(0, window.used_percent));
+  const elapsed = elapsedFraction(window);
+  const running = pace(window);
+
   return (
     <div className="window">
       <div className="window-label" title={window.label}>
@@ -17,12 +26,31 @@ export function Meter({ window }: { window: RateWindow }) {
         {Math.round(used)}%{" "}
         <span className="muted">{resetText(window.resets_at)}</span>
       </div>
-      <div className="meter">
+      <div
+        className="rail"
+        role="meter"
+        aria-valuenow={Math.round(used)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${window.label}: ${Math.round(used)}% used${running ? `, ${running.label}` : ""}`}
+      >
         <div
-          className={`meter-fill ${severity(used)}`}
+          className={`rail-fill ${severity(used)}`}
           style={{ width: `${used}%` }}
         />
+        {elapsed !== null && (
+          <div
+            className="rail-tick"
+            style={{ left: `${elapsed * 100}%` }}
+            title="where the clock is"
+          />
+        )}
       </div>
+      {running && (
+        <div className={`pace ${running.over ? "over" : ""}`}>
+          {running.label}
+        </div>
+      )}
     </div>
   );
 }

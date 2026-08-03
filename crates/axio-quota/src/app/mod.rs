@@ -30,6 +30,8 @@ pub fn run() -> Result<(), String> {
             commands::cost_report,
             commands::refresh_cost,
             commands::open_main_window,
+            commands::minimize_window,
+            commands::close_window,
             commands::hide_flyout,
             commands::quit,
         ])
@@ -72,8 +74,16 @@ pub fn run() -> Result<(), String> {
 fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
         .title("axio quota")
-        .inner_size(860.0, 620.0)
-        .min_inner_size(620.0, 420.0)
+        .inner_size(880.0, 640.0)
+        .min_inner_size(640.0, 440.0)
+        // The frontend draws its own titlebar. A tray app is a panel rather than a
+        // document window, and the OS chrome — a title, an icon, a menu strip — states
+        // things this surface has no use for while costing 32px of the only vertical
+        // space the tables have.
+        .decorations(false)
+        // Without decorations the OS stops rounding the corners, so the window says what
+        // shape it is.
+        .shadow(true)
         .visible(false)
         .build()?;
     Ok(())

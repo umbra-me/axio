@@ -171,6 +171,25 @@ pub fn open_main_window(app: AppHandle) {
     super::tray::hide_flyout(&app);
 }
 
+/// Minimise the window the titlebar belongs to.
+#[tauri::command]
+pub fn minimize_window(app: AppHandle) {
+    if let Some(window) = app.get_webview_window(super::MAIN_WINDOW) {
+        let _ = window.minimize();
+    }
+}
+
+/// Close the window, which for a tray app means hide.
+///
+/// The process outlives it deliberately — the tray icon is the app, and quitting is a
+/// menu item rather than a side effect of dismissing a panel.
+#[tauri::command]
+pub fn close_window(app: AppHandle) {
+    if let Some(window) = app.get_webview_window(super::MAIN_WINDOW) {
+        let _ = window.hide();
+    }
+}
+
 #[tauri::command]
 pub fn hide_flyout(app: AppHandle) {
     super::tray::hide_flyout(&app);

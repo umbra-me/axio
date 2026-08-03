@@ -101,6 +101,8 @@ export const api = {
   costReport: (group: CostGroup) => invoke<CostReport>("cost_report", { group }),
   refreshCost: () => invoke<void>("refresh_cost"),
   openMainWindow: () => invoke<void>("open_main_window"),
+  minimizeWindow: () => invoke<void>("minimize_window"),
+  closeWindow: () => invoke<void>("close_window"),
   hideFlyout: () => invoke<void>("hide_flyout"),
   quit: () => invoke<void>("quit"),
 };
@@ -127,4 +129,39 @@ export function resetText(resetsAt?: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `resets in ${hours}h`;
   return `resets in ${Math.floor(hours / 24)}d`;
+}
+
+/// How far through a quota window we are, 0..1, or null when the log does not say.
+///
+/// Needs both the reset time and the nominal window length: the first gives the end, the
+/// second gives the span, and the elapsed fraction is what is left over. A window missing
+/// either is drawn without a tick rather than with a guessed one.
+export function elapsedFraction(window: RateWindow, now = Date.now()): number | null {
+  if (!window.resets_at || !window.window_minutes) return null;
+  const resetsAt = Date.parse(window.resets_at);
+  if (Number.isNaN(resetsAt)) return null;
+
+  const spanMs = window.window_minutes * 60_000;
+  if (spanMs <= 0) return null;
+
+  const remaining = (resetsAt - now) / spanMs;
+  return Math.min(1, Math.max(0, 1 - remaining));
+}
+
+/// Whether consumption is running ahead of the clock.
+///
+/// The reading the rail exists for: quota refills on a timer, so spending it faster than
+/// the timer runs means hitting the limit before the window turns over. A five point
+/// tolerance keeps the label from flickering between states on every refresh.
+export function pace(
+  window: RateWindow,
+): { over: boolean; label: string } | null {
+  const elapsed = elapsedFraction(window);
+  if (elapsed === null) return null;
+
+  const gap = window.used_percent - elapsed * 100;
+  if (Math.abs(gap) < 5) return { over: false, label: "on pace" };
+  return gap > 0
+    ? { over: true, label: `${Math.round(gap)}pt ahead of clock` }
+    : { over: false, label: `${Math.round(-gap)}pt spare` };
 }

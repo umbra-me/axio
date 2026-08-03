@@ -36,6 +36,7 @@ export function Window() {
 
   return (
     <div className="app">
+      <TitleBar />
       <div className="tabs">
         {(["providers", "history", "cost", "settings"] as Tab[]).map((name) => (
           <button
@@ -66,6 +67,42 @@ export function Window() {
       </div>
 
       <div className="status">{status}</div>
+    </div>
+  );
+}
+
+/// The window's own titlebar, because the OS one was removed.
+///
+/// `data-tauri-drag-region` is what lets a frameless window be moved, and it has to sit on
+/// the inert parts only — a button inside the region drags instead of pressing, which is
+/// the single failure mode of every custom titlebar.
+function TitleBar() {
+  return (
+    <div className="titlebar" data-tauri-drag-region>
+      <span className="brand" data-tauri-drag-region>
+        <i />
+        <b>axio</b> quota
+      </span>
+      <div className="spacer" data-tauri-drag-region />
+      <div className="win-controls">
+        <button onClick={() => api.minimizeWindow()} aria-label="Minimise" title="Minimise">
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <line x1="1" y1="5" x2="9" y2="5" />
+          </svg>
+        </button>
+        {/* Close hides the window. The tray icon is the app; quitting is a menu item. */}
+        <button
+          className="close"
+          onClick={() => api.closeWindow()}
+          aria-label="Close"
+          title="Close to tray"
+        >
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" />
+            <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

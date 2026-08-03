@@ -7,6 +7,18 @@
  * Two surfaces share this sheet. The window is a normal page; the flyout is a floating
  * panel that has to read as part of the shell, so it gets a border and a shadow and
  * nothing else differs.
+ *
+ * Two rules hold the visual language together.
+ *
+ * 1. AMBER IS IDENTITY, NEVER SIGNAL. The product accent and the "caution" colour are the
+ *    same hue, which would be ambiguous if both could appear the same way. They are given
+ *    different geometry instead and never overlap: the accent only ever draws a 2px edge
+ *    or a 4px mark, the signal ramp only ever fills a rail. A filled bar always means
+ *    consumption; an amber edge always means "you are here".
+ *
+ * 2. NUMBERS ARE MONOSPACED AND TABULAR. This is an instrument and every figure in it
+ *    changes on a timer. Proportional digits make a settled number look like it is still
+ *    moving, and columns that re-align on each refresh read as instability.
  */
 
 :root {
@@ -22,6 +34,9 @@
   --warn: #fbbf24;
   --crit: #ef4444;
   --radius: 0.5rem;
+
+  --titlebar: 34px;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", "Menlo", "Consolas", monospace;
 }
 
 * {
@@ -58,28 +73,123 @@ button {
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
-  border-color: #3a3a3a;
-}
-
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
   cursor: default;
 }
 
-input[type="password"],
-input[type="text"] {
-  font: inherit;
-  color: var(--fg);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.3rem 0.5rem;
-  width: 100%;
-  user-select: text;
+button:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
-/* Layout ------------------------------------------------------------------ */
+h3 {
+  margin: 0 0 0.4rem;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--crit);
+  font-size: 12px;
+  margin: 0.2rem 0 0.4rem;
+}
+
+/* ---- custom titlebar -------------------------------------------------------
+ *
+ * The window is built with `decorations(false)`, so this strip is the only thing that can
+ * move it: `data-tauri-drag-region` is what makes it draggable, and every interactive
+ * child has to sit outside that attribute or its click drags instead of pressing.
+ *
+ * The OS chrome was worth removing rather than restyling. It states a title, an icon and a
+ * system menu — none of which a single-purpose tray panel needs — while spending the only
+ * vertical space the tables have.
+ */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: var(--titlebar);
+  padding-left: 0.75rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.titlebar .brand {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.titlebar .brand b {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* Rule 1's one concession: the accent as a fill, at 4px, where it reads as a mark
+ * rather than a quantity. */
+.titlebar .brand i {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 0.45rem 0 0.1rem;
+  background: var(--accent);
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.titlebar .spacer {
+  flex: 1;
+  align-self: stretch;
+}
+
+.win-controls {
+  display: flex;
+  align-self: stretch;
+}
+
+.win-controls button {
+  width: 46px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.win-controls button:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+
+/* The platform convention, though this one only hides — the tray icon is the app,
+ * and quitting is a menu item rather than a side effect of dismissing a panel. */
+.win-controls button.close:hover {
+  background: var(--crit);
+  color: #fff;
+}
+
+.win-controls svg {
+  width: 10px;
+  height: 10px;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  fill: none;
+}
+
+/* ---- shell ---------------------------------------------------------------- */
 
 .app {
   display: flex;
@@ -87,184 +197,220 @@ input[type="text"] {
   height: 100%;
 }
 
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.9rem 1rem 1.2rem;
+}
+
 .tabs {
   display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border);
+  gap: 0.15rem;
+  padding: 0 0.6rem;
   background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
 
 .tab {
-  background: transparent;
-  border: 1px solid transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
-  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--fg);
 }
 
 .tab[aria-selected="true"] {
   color: var(--fg);
-  background: var(--surface);
-  border-color: var(--border);
+  border-bottom-color: var(--accent);
 }
 
-.spacer {
-  flex: 1;
-}
-
-.body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.75rem 1rem 1.25rem;
-}
-
-.status {
-  border-top: 1px solid var(--border);
-  padding: 0.35rem 0.75rem;
-  color: var(--muted);
-  font-size: 12px;
-  min-height: 1.9rem;
-}
-
-/* Provider rows ----------------------------------------------------------- */
+/* ---- providers, and the rail ----------------------------------------------
+ *
+ * THE SIGNATURE. A quota window is two facts — how much is gone, and how far through the
+ * period we are — and a progress bar shows only the first.
+ *
+ * The rail carries both on one geometry: the fill is consumption, the tick is the clock.
+ * Fill ahead of the tick means burning faster than the window refills; fill behind it
+ * means finishing with quota to spare. That comparison is the reason this is a rail and
+ * not a bar, and it is why the tick is drawn over the fill rather than beside it — the
+ * reading has to be spatial to work at a glance.
+ */
 
 .provider {
-  margin-bottom: 1.1rem;
+  padding: 0.55rem 0 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.provider:last-child {
+  border-bottom: 0;
 }
 
 .provider-head {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.5rem;
 }
 
 .provider-name {
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .plan {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
-  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
 }
 
 .window {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.15rem 0.75rem;
-  margin-bottom: 0.5rem;
+  grid-template-columns: 1fr auto;
+  gap: 0.2rem 0.6rem;
+  margin-bottom: 0.6rem;
 }
 
 .window-label {
-  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .window-reset {
-  color: var(--muted);
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
 }
 
-.meter {
+.rail {
   grid-column: 1 / -1;
+  position: relative;
   height: 6px;
-  border-radius: 999px;
   background: var(--surface);
+  border-radius: 999px;
   overflow: hidden;
 }
 
+.rail-fill,
 .meter-fill {
   height: 100%;
+  background: var(--ok);
   border-radius: 999px;
-  /* The same 75/90 bands the tray icon uses, so the two never disagree about whether a
-   * number is alarming. */
-  background: var(--accent);
   transition: width 240ms ease;
 }
 
+.rail-fill.warn,
 .meter-fill.warn {
   background: var(--warn);
 }
 
+.rail-fill.crit,
 .meter-fill.crit {
   background: var(--crit);
 }
 
-.error {
-  color: #f0a0a0;
+/* The clock. Deliberately the foreground colour rather than a signal colour: it is a
+ * reference mark, not a reading, and tinting it would make it argue with the fill it
+ * exists to be compared against. */
+.rail-tick {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--fg);
+  opacity: 0.55;
+}
+
+.pace {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pace.over {
+  color: var(--warn);
+}
+
+/* ---- cost ------------------------------------------------------------------ */
+
+table.cost {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 12px;
 }
 
-.muted {
-  color: var(--muted);
-}
-
-.empty {
-  text-align: center;
-  color: var(--muted);
-  padding: 3rem 1rem;
-}
-
-/* Flyout ------------------------------------------------------------------ */
-
-.flyout {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.flyout-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.8rem;
+table.cost th,
+table.cost td {
+  padding: 0.35rem 0.5rem;
   border-bottom: 1px solid var(--border);
+  text-align: left;
 }
 
-.brand {
-  font-weight: 600;
-  background: linear-gradient(110deg, #fbbf24 0%, #f59e0b 52%, #8b5cf6 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+table.cost th {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
-.flyout-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.7rem 0.8rem;
+table.cost .num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.flyout-foot {
-  display: flex;
-  gap: 0.4rem;
-  padding: 0.55rem 0.8rem;
-  border-top: 1px solid var(--border);
+/* Keys are session ids and directory paths: long, and distinguished at the end. The
+ * ellipsis goes on the left so what survives is the half that differs. */
+table.cost .key {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
 }
 
-/* History ----------------------------------------------------------------- */
-
-.chart {
-  width: 100%;
-  height: 90px;
+table.cost tbody tr:hover {
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 0.9rem;
 }
+
+table.cost tfoot td {
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+  font-weight: 600;
+}
+
+/* ---- history, settings, flyout --------------------------------------------- */
 
 .setting {
-  padding: 0.6rem 0;
+  padding: 0.5rem 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -275,57 +421,107 @@ input[type="text"] {
 }
 
 .hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0.4rem 1rem;
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.empty {
   color: var(--muted);
   font-size: 12px;
-  padding-left: 1.5rem;
+  padding: 1.5rem 0;
+  text-align: center;
+}
+
+.matches,
+.file,
+.key,
+.binary {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.flyout {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.6);
+  overflow: hidden;
+}
+
+.flyout-head,
+.flyout-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+}
+
+.flyout-head {
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.flyout-foot {
+  border-top: 1px solid var(--border);
+}
+
+.flyout-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0.7rem;
+}
+
+.spacer {
+  flex: 1;
 }
 
 .source {
   display: flex;
   gap: 0.6rem;
   align-items: baseline;
-  padding: 0.2rem 0;
-  font-size: 12px;
+  font-size: 11px;
+  padding: 0.15rem 0;
 }
 
 .found {
   color: var(--ok);
 }
 
-/* The Cost table. Numbers are tabular so columns line up when they change on rescan —
-   proportional digits make a settled figure look like it is still moving. */
-table.cost {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
+/* A tray panel has one job and no scrollbar aesthetic worth defending. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-table.cost th,
-table.cost td {
-  padding: 0.35rem 0.5rem;
-  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
-  text-align: left;
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
 }
-table.cost th {
-  font-weight: 500;
-  opacity: 0.6;
-  text-transform: lowercase;
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
-table.cost .num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-/* Keys are session ids and directory paths: long, and distinguished at the end. Ellipsis
-   goes on the left so what survives is the half that differs. */
-table.cost .key {
-  max-width: 18rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-}
-table.cost tfoot td {
-  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.18));
-  border-bottom: none;
-  font-weight: 600;
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-fill,
+  .meter-fill {
+    transition: none;
+  }
 }

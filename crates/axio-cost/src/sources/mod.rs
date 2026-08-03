@@ -142,10 +142,66 @@ pub fn registry() -> Vec<Box<dyn Source>> {
     sources
 }
 
+/// How many workers to split a scan across.
+///
+/// The work is reading and parsing thousands of small files, so it is bound by neither
+/// CPU nor disk alone and oversubscribing slightly beats matching core count exactly.
+/// Capped because the gain flattens well before the thread count stops rising, and an
+/// agent with four files should not spawn thirty-two threads to read them.
+/// `AXIO_COST_THREADS` overrides it, which is how the parallel and sequential paths get
+/// compared on the same machine — and how a scan gets pinned to one thread when a parser
+/// is being debugged and interleaved output would be unreadable.
+fn worker_count(files: usize) -> usize {
+    if let Some(forced) = std::env::var("AXIO_COST_THREADS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|count| *count > 0)
+    {
+        return forced.min(files.max(1));
+    }
+    let cores = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    cores.clamp(1, 16).min(files.max(1))
+}
+
 /// Walk every agent's log directories under `home`.
+///
+/// Agents are scanned on separate threads, and each agent's files are split across
+/// workers again. Both levels are needed: one agent usually holds most of the files, so
+/// per-agent parallelism alone leaves one thread doing nearly all the work.
 pub fn scan(home: &Path, sources: &[Box<dyn Source>]) -> ScanReport {
+    let mut agents: Vec<Option<AgentReport>> = (0..sources.len()).map(|_| None).collect();
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(sources.len());
+        for source in sources {
+            handles.push(scope.spawn(move || scan_one(home, source.as_ref())));
+        }
+        for (slot, handle) in agents.iter_mut().zip(handles) {
+            // A worker that panicked yields an empty report for that agent rather than
+            // bringing down the scan: one agent's malformed store must not cost the
+            // other twenty-one their numbers.
+            *slot = handle.join().ok();
+        }
+    });
+
     ScanReport {
-        agents: sources.iter().map(|source| scan_one(home, source.as_ref())).collect(),
+        agents: agents
+            .into_iter()
+            .zip(sources)
+            .map(|(report, source)| {
+                report.unwrap_or_else(|| AgentReport {
+                    client: source.client(),
+                    display_name: source.display_name(),
+                    present: false,
+                    files_read: 0,
+                    files_failed: 0,
+                    outcome: FileOutcome::default(),
+                    messages: Vec::new(),
+                })
+            })
+            .collect(),
     }
 }
 
@@ -153,26 +209,58 @@ fn scan_one(home: &Path, source: &dyn Source) -> AgentReport {
     let roots = source.roots(home);
     let present = roots.iter().any(|root| root.exists());
 
+    // The walk itself is cheap and inherently sequential; the parse is neither, so the
+    // file list is gathered first and the expensive half is what gets split.
+    let paths: Vec<_> = roots
+        .iter()
+        .filter(|root| root.exists())
+        .flat_map(|root| walk(root))
+        .filter(|path| source.owns(path))
+        .collect();
+
+    let workers = worker_count(paths.len());
     let mut ledger = DedupLedger::new();
     let mut outcome = FileOutcome::default();
     let (mut files_read, mut files_failed) = (0, 0);
 
-    for root in roots.iter().filter(|root| root.exists()) {
-        for path in walk(root) {
-            if !source.owns(&path) {
-                continue;
-            }
-            match source.open(&path, &mut ledger) {
-                Some(file) => {
-                    files_read += 1;
-                    outcome.merge(file);
-                }
-                // A file we cannot read is worth counting but never worth stopping for:
-                // an agent that is running right now may hold a lock on its newest
-                // transcript, and that is the common case rather than an error.
-                None => files_failed += 1,
-            }
-        }
+    // Chunked rather than work-stolen: these files are of similar size, so a static split
+    // costs nothing and needs no shared queue.
+    let chunk = paths.len().div_ceil(workers.max(1)).max(1);
+    let parts: Vec<(DedupLedger, FileOutcome, usize, usize)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .chunks(chunk)
+            .map(|batch| {
+                scope.spawn(move || {
+                    let mut ledger = DedupLedger::new();
+                    let mut outcome = FileOutcome::default();
+                    let (mut read, mut failed) = (0, 0);
+                    for path in batch {
+                        match source.open(path, &mut ledger) {
+                            Some(file) => {
+                                read += 1;
+                                outcome.merge(file);
+                            }
+                            // A file we cannot read is worth counting but never worth
+                            // stopping for: an agent running right now may hold a lock on
+                            // its newest transcript, which is the common case, not an error.
+                            None => failed += 1,
+                        }
+                    }
+                    (ledger, outcome, read, failed)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
+            .collect()
+    });
+
+    for (part, part_outcome, read, failed) in parts {
+        ledger.absorb(part);
+        outcome.merge(part_outcome);
+        files_read += read;
+        files_failed += failed;
     }
 
     AgentReport {

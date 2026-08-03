@@ -142,6 +142,19 @@ impl DedupLedger {
         }
     }
 
+    /// Fold another ledger in, re-applying deduplication across the seam.
+    ///
+    /// Parsing happens in parallel and each worker keeps its own ledger, so two workers
+    /// can independently see the same streamed response — one agent's session can span
+    /// files, and files are split across threads. Merging by `push` rather than by
+    /// concatenating means the merge is subject to exactly the same rules as the original
+    /// insert, so a message split across two workers is still billed once.
+    pub fn absorb(&mut self, other: DedupLedger) {
+        for message in other.messages {
+            self.push(message);
+        }
+    }
+
     pub fn extend(&mut self, messages: impl IntoIterator<Item = CostMessage>) {
         for message in messages {
             self.push(message);
@@ -186,6 +199,21 @@ mod tests {
             turn_start: false,
             reported_cost: None,
         }
+    }
+
+    /// The property parallel scanning depends on: splitting the same input across two
+    /// ledgers and merging must produce what one ledger would have.
+    #[test]
+    fn merging_two_ledgers_dedupes_across_the_seam() {
+        let (mut left, mut right) = (DedupLedger::new(), DedupLedger::new());
+        left.push(message(Some("msg1:req1"), 1_006, 0));
+        right.push(message(Some("msg1:req1"), 1_006, 11));
+        right.push(message(Some("msg2:req2"), 50, 5));
+
+        left.absorb(right);
+        assert_eq!(left.len(), 2);
+        assert_eq!(left.messages()[0].tokens.input, 1_006, "not 2012");
+        assert_eq!(left.messages()[0].tokens.output, 11);
     }
 
     #[test]
