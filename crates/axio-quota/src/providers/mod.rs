@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod codex;
 pub mod cursor;
+pub mod cursor_local;
 pub mod deepseek;
 pub mod grok;
 pub mod ollama;

@@ -24,7 +24,12 @@ default = []
 # without it still points the webview at `devUrl` and shows ERR_CONNECTION_REFUSED. The
 # Tauri CLI adds the feature during `tauri build`; we build with plain cargo, so it has to
 # be named here.
+# Reading a provider's own local session store. Behind a feature because rusqlite compiles
+# SQLite's own C source, the same reason axio-cost gates it.
+sqlite = ["dep:rusqlite", "dep:base64"]
+
 app = ["dep:axio-cost", 
+    "sqlite",
     "dep:tauri",
     "dep:tauri-build",
     "dep:windows-sys",
@@ -40,6 +45,8 @@ required-features = ["app"]
 # Only the desktop surface shows cost, so the headless probe build links none of it.
 axio-cost = { workspace = true, optional = true }
 async-trait.workspace = true
+base64 = { workspace = true, optional = true }
+rusqlite = { version = "0.40.1", features = ["bundled"], optional = true }
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

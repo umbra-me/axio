@@ -24,18 +24,21 @@ const SUMMARY_URL: &str = "https://cursor.com/api/usage-summary";
 
 pub struct CursorProvider;
 
+/// A configured header wins; otherwise Cursor's own signed-in state is used.
+///
+/// That order matters. A pasted header is an explicit choice — very likely a second account
+/// — and silently preferring the locally installed one would quietly report the wrong
+/// account's usage, which is worse than reporting none.
 fn cookie(ctx: &FetchContext) -> Result<String, ProbeError> {
-    ctx.config
+    if let Some(header) = ctx
+        .config
         .cookie_header
         .as_deref()
         .and_then(|raw| super::cookie_header_for(ProviderId::Cursor, raw))
-        .ok_or_else(|| {
-            ProbeError::NotConfigured(
-                "No Cursor session. Open cursor.com signed in, copy the Cookie header from any \
-                 request in the Network tab, and paste it into Settings."
-                    .to_string(),
-            )
-        })
+    {
+        return Ok(header);
+    }
+    super::cursor_local::session(&ctx.env)
 }
 
 /// Build Cursor's session cookie from a user id and an access token.

@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use crate::error::ProbeError;
-use crate::paths::{Env, app_data_dir, home_dir};
+use crate::paths::Env;
 
 /// Where Cursor keeps its state database.
 ///
@@ -27,16 +27,17 @@ pub fn state_db(env: &Env) -> PathBuf {
     let relative = ["Cursor", "User", "globalStorage", "state.vscdb"];
 
     #[cfg(target_os = "windows")]
-    let base = app_data_dir(env);
+    let base = crate::paths::app_data_dir(env);
     #[cfg(target_os = "macos")]
-    let base = home_dir(env).join("Library").join("Application Support");
+    let base = crate::paths::home_dir(env).join("Library").join("Application Support");
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let base = home_dir(env).join(".config");
+    let base = crate::paths::home_dir(env).join(".config");
 
     relative.iter().fold(base, |path, part| path.join(part))
 }
 
 /// The key Cursor stores its bearer token under.
+#[cfg(feature = "sqlite")]
 const TOKEN_KEY: &str = "cursorAuth/accessToken";
 
 /// Read the token Cursor wrote for itself.
@@ -112,6 +113,7 @@ pub fn access_token(_env: &Env) -> Result<String, ProbeError> {
 /// Nothing is verified. There is no signature check here and there should not be — this is
 /// not authenticating anybody, it is reading a field out of a credential the user already
 /// holds, to hand straight back to the service that issued it.
+#[cfg(feature = "sqlite")]
 pub fn subject(token: &str) -> Option<String> {
     use base64::Engine;
 
@@ -129,6 +131,7 @@ pub fn subject(token: &str) -> Option<String> {
 /// Cursor's own cookie is URL-encoded — the `::` between the two halves is stored as
 /// `%3A%3A` — so the subject is encoded to match. Subjects look like `auth0|user_01ABC`,
 /// and the pipe is the character that matters.
+#[cfg(feature = "sqlite")]
 pub fn encode(value: &str) -> String {
     value
         .bytes()
@@ -141,7 +144,7 @@ pub fn encode(value: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::*;
 
@@ -189,4 +192,29 @@ mod tests {
         );
         assert!(path.to_string_lossy().contains("Cursor"));
     }
+}
+
+/// Cursor's own session, ready to send as a `Cookie` header.
+///
+/// The two halves come from the same token, which is the point: the id is the subject the
+/// credential was issued to, so the pair cannot describe two different accounts.
+#[cfg(feature = "sqlite")]
+pub fn session(env: &Env) -> Result<String, ProbeError> {
+    let token = access_token(env)?;
+    let subject = subject(&token).ok_or_else(|| {
+        ProbeError::NotConfigured(
+            "Cursor's stored token is not in the expected form. Paste a Cookie header instead."
+                .to_string(),
+        )
+    })?;
+    Ok(super::cursor::session_cookie(&encode(&subject), &token))
+}
+
+/// Without the feature there is no way to read Cursor's store, so the paste is the only
+/// route — said plainly rather than reported as a missing session.
+#[cfg(not(feature = "sqlite"))]
+pub fn session(_env: &Env) -> Result<String, ProbeError> {
+    Err(ProbeError::NotConfigured(
+        "No Cursor session. Sign in from Settings, or paste a Cookie header.".to_string(),
+    ))
 }
