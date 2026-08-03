@@ -4,6 +4,7 @@ pub mod cursor;
 pub mod deepseek;
 pub mod grok;
 pub mod ollama;
+pub mod opencode;
 pub mod openrouter;
 pub mod xai;
 pub mod zai;
@@ -23,6 +24,7 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(grok::GrokProvider),
         Box::new(cursor::CursorProvider),
         Box::new(ollama::OllamaProvider),
+        Box::new(opencode::OpenCodeProvider),
     ]
 }
 
@@ -37,6 +39,7 @@ pub fn by_id(id: ProviderId) -> Box<dyn Provider> {
         ProviderId::Grok => Box::new(grok::GrokProvider),
         ProviderId::Cursor => Box::new(cursor::CursorProvider),
         ProviderId::Ollama => Box::new(ollama::OllamaProvider),
+        ProviderId::Opencode => Box::new(opencode::OpenCodeProvider),
     }
 }
 

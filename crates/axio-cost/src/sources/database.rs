@@ -276,7 +276,7 @@ mod tests {
     fn client_ids_are_unique_and_distinct_from_the_file_catalog() {
         let mut ids: Vec<_> = CATALOG.iter().map(|agent| agent.client).collect();
         ids.extend(super::super::catalog::CATALOG.iter().map(|agent| agent.client));
-        ids.extend(["claude-code", "codex", "grok"]);
+        ids.extend(["claude-code", "codex", "grok", "opencode"]);
         let before = ids.len();
         ids.sort_unstable();
         ids.dedup();

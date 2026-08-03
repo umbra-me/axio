@@ -23,6 +23,8 @@ pub mod claude_code;
 #[cfg(feature = "sqlite")]
 pub mod database;
 pub mod codex;
+#[cfg(feature = "sqlite")]
+pub mod opencode;
 pub mod generic;
 pub mod grok;
 pub mod usage;
@@ -135,6 +137,10 @@ pub fn registry() -> Vec<Box<dyn Source>> {
             .iter()
             .map(|agent| Box::new(*agent) as Box<dyn Source>),
     );
+    // Hand-written rather than table-driven: its token convention is its own, and the
+    // catalog cannot express folding reasoning into output. See the module note.
+    #[cfg(feature = "sqlite")]
+    sources.push(Box::new(opencode::OpenCode));
     #[cfg(feature = "sqlite")]
     sources.extend(
         database::CATALOG

@@ -15,6 +15,7 @@ pub enum ProviderId {
     Grok,
     Cursor,
     Ollama,
+    Opencode,
 }
 
 impl ProviderId {
@@ -28,6 +29,7 @@ impl ProviderId {
         ProviderId::Grok,
         ProviderId::Cursor,
         ProviderId::Ollama,
+        ProviderId::Opencode,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -41,6 +43,7 @@ impl ProviderId {
             ProviderId::Grok => "grok",
             ProviderId::Cursor => "cursor",
             ProviderId::Ollama => "ollama",
+            ProviderId::Opencode => "opencode",
         }
     }
 
@@ -55,6 +58,7 @@ impl ProviderId {
             ProviderId::Grok => "Grok",
             ProviderId::Cursor => "Cursor",
             ProviderId::Ollama => "Ollama",
+            ProviderId::Opencode => "opencode",
         }
     }
 

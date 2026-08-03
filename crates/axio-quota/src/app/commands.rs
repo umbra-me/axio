@@ -306,16 +306,20 @@ fn takes_api_key(id: ProviderId) -> bool {
 /// Neither Cursor nor Ollama exposes these figures on an API key, so a pasted header is
 /// the whole credential rather than an escape hatch beside one.
 fn takes_cookie(id: ProviderId) -> bool {
-    matches!(id, ProviderId::Cursor | ProviderId::Ollama)
+    matches!(
+        id,
+        ProviderId::Cursor | ProviderId::Ollama | ProviderId::Opencode
+    )
 }
 
 fn takes_workspace_id(id: ProviderId) -> bool {
-    matches!(id, ProviderId::Xai)
+    matches!(id, ProviderId::Xai | ProviderId::Opencode)
 }
 
 fn workspace_hint(id: ProviderId) -> &'static str {
     match id {
         ProviderId::Xai => "Team ID — it is in the xAI console URL.",
+        ProviderId::Opencode => "Workspace ID or URL — optional, skips the lookup.",
         _ => "",
     }
 }
@@ -332,5 +336,6 @@ fn hint(id: ProviderId) -> &'static str {
         ProviderId::Grok => "Signed in with the `grok` CLI — no key needed here.",
         ProviderId::Cursor => "Cursor has no usage API. Paste a Cookie header from a                                cursor.com request.",
         ProviderId::Ollama => "The Cloud Usage bars are not on the API. Paste a Cookie                                header from ollama.com/settings.",
+        ProviderId::Opencode => "Paste a Cookie header from an opencode.ai request.",
     }
 }
