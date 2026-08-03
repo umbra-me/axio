@@ -81,6 +81,9 @@ pub struct ProviderSetting {
     pub workspace_id: Option<String>,
     pub takes_workspace_id: bool,
     pub workspace_hint: String,
+    /// A pasted `Cookie:` header, for providers whose usage is only on the dashboard.
+    pub cookie_header: Option<String>,
+    pub takes_cookie: bool,
     pub hint: String,
 }
 
@@ -100,6 +103,8 @@ pub fn settings(state: State<'_, Arc<AppState>>) -> Vec<ProviderSetting> {
                 workspace_id: entry.workspace_id.clone(),
                 takes_workspace_id: takes_workspace_id(*id),
                 workspace_hint: workspace_hint(*id).to_string(),
+                cookie_header: entry.cookie_header.clone(),
+                takes_cookie: takes_cookie(*id),
                 hint: hint(*id).to_string(),
             }
         })
@@ -142,6 +147,12 @@ pub fn save_settings(
                 .api_key
                 .map(|key| key.trim().to_string())
                 .filter(|key| !key.is_empty());
+        }
+        if takes_cookie(id) {
+            entry.cookie_header = setting
+                .cookie_header
+                .map(|header| header.trim().to_string())
+                .filter(|header| !header.is_empty());
         }
         if takes_workspace_id(id) {
             entry.workspace_id = setting
@@ -290,6 +301,14 @@ fn takes_api_key(id: ProviderId) -> bool {
     )
 }
 
+/// Providers whose usage lives only behind a dashboard session.
+///
+/// Neither Cursor nor Ollama exposes these figures on an API key, so a pasted header is
+/// the whole credential rather than an escape hatch beside one.
+fn takes_cookie(id: ProviderId) -> bool {
+    matches!(id, ProviderId::Cursor | ProviderId::Ollama)
+}
+
 fn takes_workspace_id(id: ProviderId) -> bool {
     matches!(id, ProviderId::Xai)
 }
@@ -310,5 +329,8 @@ fn hint(id: ProviderId) -> &'static str {
         ProviderId::Deepseek => "From platform.deepseek.com. Shows the prepaid balance.",
         // Worth stating: the console offers two kinds of key and only one works here.
         ProviderId::Xai => "A Management API key, not an inference key — xAI console,                             Settings > Management Keys.",
+        ProviderId::Grok => "Signed in with the `grok` CLI — no key needed here.",
+        ProviderId::Cursor => "Cursor has no usage API. Paste a Cookie header from a                                cursor.com request.",
+        ProviderId::Ollama => "The Cloud Usage bars are not on the API. Paste a Cookie                                header from ollama.com/settings.",
     }
 }

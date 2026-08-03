@@ -333,7 +333,19 @@ function Settings({ onStatus }: { onStatus: (text: string) => void }) {
             />
             <strong>{entry.name}</strong>
           </div>
-          {entry.takesApiKey ? (
+          {entry.takesCookie ? (
+            <div className="fields">
+              <input
+                type="password"
+                placeholder="Cookie: …"
+                value={entry.cookieHeader ?? ""}
+                onChange={(event) =>
+                  update(entry.id, { cookieHeader: event.target.value })
+                }
+              />
+              <div className="hint">{entry.hint}</div>
+            </div>
+          ) : entry.takesApiKey ? (
             <div className="fields">
               <input
                 type="password"

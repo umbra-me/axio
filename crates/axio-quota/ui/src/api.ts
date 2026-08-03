@@ -59,6 +59,9 @@ export interface ProviderSetting {
   workspaceId: string | null;
   takesWorkspaceId: boolean;
   workspaceHint: string;
+  /// A pasted Cookie header, for providers whose usage is only on the dashboard.
+  cookieHeader: string | null;
+  takesCookie: boolean;
   hint: string;
 }
 

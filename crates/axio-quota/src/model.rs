@@ -12,6 +12,9 @@ pub enum ProviderId {
     Zai,
     Deepseek,
     Xai,
+    Grok,
+    Cursor,
+    Ollama,
 }
 
 impl ProviderId {
@@ -22,6 +25,9 @@ impl ProviderId {
         ProviderId::Zai,
         ProviderId::Deepseek,
         ProviderId::Xai,
+        ProviderId::Grok,
+        ProviderId::Cursor,
+        ProviderId::Ollama,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -32,6 +38,9 @@ impl ProviderId {
             ProviderId::Zai => "zai",
             ProviderId::Deepseek => "deepseek",
             ProviderId::Xai => "xai",
+            ProviderId::Grok => "grok",
+            ProviderId::Cursor => "cursor",
+            ProviderId::Ollama => "ollama",
         }
     }
 
@@ -43,6 +52,9 @@ impl ProviderId {
             ProviderId::Zai => "z.ai",
             ProviderId::Deepseek => "DeepSeek",
             ProviderId::Xai => "xAI",
+            ProviderId::Grok => "Grok",
+            ProviderId::Cursor => "Cursor",
+            ProviderId::Ollama => "Ollama",
         }
     }
 

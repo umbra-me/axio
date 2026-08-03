@@ -1,6 +1,9 @@
 pub mod claude;
 pub mod codex;
+pub mod cursor;
 pub mod deepseek;
+pub mod grok;
+pub mod ollama;
 pub mod openrouter;
 pub mod xai;
 pub mod zai;
@@ -17,6 +20,9 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(zai::ZaiProvider),
         Box::new(deepseek::DeepSeekProvider),
         Box::new(xai::XaiProvider),
+        Box::new(grok::GrokProvider),
+        Box::new(cursor::CursorProvider),
+        Box::new(ollama::OllamaProvider),
     ]
 }
 
@@ -28,6 +34,9 @@ pub fn by_id(id: ProviderId) -> Box<dyn Provider> {
         ProviderId::Zai => Box::new(zai::ZaiProvider),
         ProviderId::Deepseek => Box::new(deepseek::DeepSeekProvider),
         ProviderId::Xai => Box::new(xai::XaiProvider),
+        ProviderId::Grok => Box::new(grok::GrokProvider),
+        ProviderId::Cursor => Box::new(cursor::CursorProvider),
+        ProviderId::Ollama => Box::new(ollama::OllamaProvider),
     }
 }
 
