@@ -54,7 +54,16 @@ export default function RootLayout({
       lang="en"
       className={`${GeistSans.variable} ${GeistMono.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        {children}
+        <script
+          defer
+          src={
+            process.env.NEXT_PUBLIC_UMBRA_ANALYTICS_URL ??
+            "https://api.umbra.me/api/v1/analytics/script.js"
+          }
+        />
+      </body>
     </html>
   );
 }
