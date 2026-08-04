@@ -9,6 +9,10 @@ calls against your workspace, and streams the result back to you.
 This repo is a from-scratch rewrite; the previous implementation is archived and
 read-only.
 
+The agent has no hosted accounts or product backend. Umbra operates the product
+record and axio.sh website centrally through `admin.umbra.me`; there is no
+standalone Axio admin site or Product Admin adapter.
+
 ## Status
 
 Early, but it works. `scripts/live-check.sh` has been run end to end against a

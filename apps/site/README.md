@@ -14,6 +14,10 @@ npm run typecheck
 Port 3311 is the host port the deployed container maps to. It sits between 3310
 and 3312, which the retired Axio cloud used and which are now free.
 
+Umbra manages this website's portfolio record, health, analytics identity, and
+public configuration through `admin.umbra.me`. The site does not expose a
+Product Admin adapter, and there is no standalone Axio admin site.
+
 ## A Node app inside a Rust workspace
 
 This directory is a leaf. It shares no lockfile, tsconfig or build with the
