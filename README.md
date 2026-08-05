@@ -16,6 +16,11 @@ portfolio surface with central health, non-secret configuration, and
 first-party page-load analytics. Axio's local sessions, provider credentials,
 and transcripts never become hosted account data.
 
+Documentation reconciliation (2026-08-05): the published product pin and
+control-plane checkout were synchronized without rebuilding this website. The
+local-first product boundary above is unchanged; checkout alignment is not a
+claim that a new runtime image was deployed.
+
 ## Status
 
 Early, but it works. `scripts/live-check.sh` has been run end to end against a
