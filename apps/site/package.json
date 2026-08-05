@@ -6,6 +6,7 @@
     "dev": "next dev -p 3311",
     "build": "next build --webpack",
     "start": "next start -p 3311",
+    "test": "node --experimental-strip-types --test src/lib/product-admin.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

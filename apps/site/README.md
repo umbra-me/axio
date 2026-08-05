@@ -15,8 +15,10 @@ Port 3311 is the host port the deployed container maps to. It sits between 3310
 and 3312, which the retired Axio cloud used and which are now free.
 
 Umbra manages this website's portfolio record, health, analytics identity, and
-public configuration through `admin.umbra.me`. The site does not expose a
-Product Admin adapter, and there is no standalone Axio admin site.
+public configuration through `admin.umbra.me`. The site also exposes a scoped,
+read-only Product Admin adapter that reports the current local-first product and
+website boundary. It does not revive hosted accounts or the retired Axio cloud,
+and there is no standalone Axio admin site.
 
 ## A Node app inside a Rust workspace
 

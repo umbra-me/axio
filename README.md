@@ -11,7 +11,9 @@ read-only.
 
 The agent has no hosted accounts or product backend. Umbra operates the product
 record and axio.sh website centrally through `admin.umbra.me`; there is no
-standalone Axio admin site or Product Admin adapter. The website is a managed
+standalone Axio admin site. The website exposes a read-only Product Admin
+adapter for current product and site status without reviving hosted accounts or
+the retired cloud. The website is a managed
 portfolio surface with central health, non-secret configuration, and
 first-party page-load analytics. Axio's local sessions, provider credentials,
 and transcripts never become hosted account data.
