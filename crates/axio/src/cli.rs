@@ -79,6 +79,74 @@ pub(crate) enum Command {
         #[arg(long, conflicts_with_all = ["provider", "json"])]
         diagnose: bool,
     },
+    /// Run and inspect supervised sessions, each isolated in its own worktree.
+    ///
+    /// A supervised session works in a git worktree on its own branch rather than in
+    /// the checkout you are using, so several can run at once without treading on each
+    /// other or on you. What one did is a branch you can read, land or delete.
+    ///
+    /// Everything here is also what a desktop surface drives; neither has a capability
+    /// the other lacks.
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SessionAction {
+    /// Start a session and run one turn in it.
+    Start {
+        /// The prompt to run. Without one the session is created and left idle.
+        #[arg(long, short)]
+        prompt: Option<String>,
+
+        /// Which repository. Defaults to the working directory's.
+        #[arg(long, value_name = "PATH")]
+        repo: Option<std::path::PathBuf>,
+
+        /// Work in the repository itself instead of an isolated worktree.
+        ///
+        /// For the case configuration cannot express: a build that needs untracked
+        /// files a fresh worktree does not have. The agent then writes to the checkout
+        /// you are using, which is why it is a flag and never a fallback.
+        #[arg(long)]
+        direct: bool,
+
+        /// Keep the worktree and branch when the turn ends. On by default.
+        #[arg(long, conflicts_with = "discard")]
+        keep: bool,
+
+        /// Remove the worktree and branch when the turn ends.
+        ///
+        /// Refused if the branch holds commits that are nowhere else.
+        #[arg(long)]
+        discard: bool,
+    },
+    /// List sessions, newest first, grouped by repository.
+    List {
+        /// Only this repository. Defaults to every one the index knows.
+        #[arg(long, value_name = "PATH")]
+        repo: Option<std::path::PathBuf>,
+
+        /// Emit one JSON object per session instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show what a session changed, as a unified diff.
+    Diff {
+        /// The session id, or a unique prefix of one.
+        id: String,
+    },
+    /// Remove a session's worktree.
+    Close {
+        /// The session id, or a unique prefix of one.
+        id: String,
+
+        /// Delete the branch too. Refused if it holds commits that are nowhere else.
+        #[arg(long)]
+        discard: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

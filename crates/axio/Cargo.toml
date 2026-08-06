@@ -11,6 +11,10 @@ keywords.workspace = true
 categories.workspace = true
 description = "A coding agent for the terminal."
 
+[lib]
+name = "axio"
+path = "src/lib.rs"
+
 [[bin]]
 name = "axio"
 path = "src/main.rs"
@@ -29,6 +33,7 @@ axio-core.workspace = true
 axio-cost.workspace = true
 axio-provider.workspace = true
 axio-quota.workspace = true
+axio-supervisor.workspace = true
 axio-tools.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }

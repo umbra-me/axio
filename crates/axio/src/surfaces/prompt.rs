@@ -39,7 +39,7 @@ fn project_instructions(cwd: &std::path::Path) -> Option<String> {
     Some(text[..end].to_owned())
 }
 
-pub(super) fn system_prompt(cwd: &std::path::Path) -> String {
+pub(crate) fn system_prompt(cwd: &std::path::Path) -> String {
     let instructions = match project_instructions(cwd) {
         Some(text) => format!(
             "\n\nThe project has left instructions for whoever works on it. They describe this \

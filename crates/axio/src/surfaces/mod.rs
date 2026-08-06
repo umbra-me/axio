@@ -7,7 +7,7 @@
 mod prompt;
 
 use super::*;
-use prompt::system_prompt;
+pub(crate) use prompt::system_prompt;
 
 /// Everything a surface needs, built once so the two of them cannot drift.
 ///

@@ -133,6 +133,7 @@ dependencies = [
  "axio-cost",
  "axio-provider",
  "axio-quota",
+ "axio-supervisor",
  "axio-tools",
  "clap",
  "crossterm",

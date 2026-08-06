@@ -71,6 +71,59 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 /// Start recording a new session, unless asked not to.
+/// A recorder for a session nobody passed flags for.
+///
+/// The same decision as [`new_recorder`] without a `Cli` in the signature,
+/// because a supervised session is started by a surface that has none — and a
+/// second copy of the header construction is how two surfaces end up writing
+/// session files that differ in a field nobody compares.
+pub(crate) fn recorder_for(
+    store: &SessionStore,
+    session: &Session,
+    prompt: &str,
+    resumed: bool,
+    notices: &mut Vec<Notice>,
+) -> Recorder {
+    let path = store.path_for(session.id());
+    if resumed {
+        // Append to the file that already exists. Creating would fail on
+        // `create_new`, and a resumed session that silently started recording
+        // somewhere else would split one transcript across two files.
+        return match SessionFile::reopen(path) {
+            Ok(file) => Recorder::File(file),
+            Err(e) => {
+                notices.push(Notice::warn(format!(
+                    "not appending to this session's file ({e}); nothing further is recorded"
+                )));
+                Recorder::Ephemeral
+            }
+        };
+    }
+    match SessionFile::create(path, &header_for(session, prompt)) {
+        Ok(file) => Recorder::File(file),
+        Err(e) => {
+            notices.push(Notice::warn(format!(
+                "not recording this session ({e}); it will not be resumable"
+            )));
+            Recorder::Ephemeral
+        }
+    }
+}
+
+/// The creation metadata, in one place so every surface writes the same header.
+fn header_for(session: &Session, prompt: &str) -> Header {
+    Header {
+        version: SESSION_FORMAT_VERSION,
+        protocol: axio_core::PROTOCOL_VERSION,
+        id: session.id(),
+        cwd: session.cwd().clone(),
+        model: session.model().to_owned(),
+        started: iso_now(),
+        label: Some(label_from(prompt)),
+        axio: env!("CARGO_PKG_VERSION").to_owned(),
+    }
+}
+
 pub(crate) fn new_recorder(
     cli: &Cli,
     store: &SessionStore,
