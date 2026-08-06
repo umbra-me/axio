@@ -3,6 +3,43 @@
 Milestones toward v0.1. Each one is done when its acceptance criteria are
 checkable and checked, not when the code exists.
 
+## What this is
+
+**One product with several surfaces**, and it is worth saying plainly because
+the shape invites the opposite reading. There is a command line, a terminal
+interface and a window. They are not three products that share a name: they
+drive the same supervisor through the same factory, so none of them holds a
+capability another lacks, and that is enforced by construction rather than by
+review — an agent is assembled in exactly one place.
+
+The one deliberate asymmetry is *windowing*. The window can host another
+agent's command-line tool in a pseudo-terminal because it does not otherwise
+have a terminal; the command line already is one. Nothing about what an agent
+may **do** differs between them.
+
+What it is converging on, drawn from several tools that each do one part of it
+well — and described rather than named, because a file here may not name another
+project:
+
+- **A calm, near-black surface** where colour identifies a thing rather than
+  decorating it. Chrome belongs to the application; a session carries its
+  agent's own colour and mixes it down when it is not the one being looked at.
+- **Many agents at once, isolated from each other and from you.** A session gets
+  its own git worktree on its own branch, so several run without treading on the
+  checkout you are in. What one did is a branch you can read, land or delete.
+- **Every agent on the machine in one place**, not only this one. Other tools
+  run as themselves in terminals this process owns, with their own interfaces
+  and their own approvals; nothing here parses or wraps them.
+- **A terminal that is a first-class surface**, not a log pane — real bytes, a
+  real emulator, and output that arrives because something was written rather
+  than because a timer fired.
+- **Review as the centre of gravity.** Approvals from every session pool into
+  one queue; a rejection carries feedback that becomes what the model reads
+  next, so refusing is steering rather than a dead end.
+
+None of that is a list of products to build. It is a list of properties this one
+is measured against.
+
 ## Done
 
 ### M0 — hygiene gate
