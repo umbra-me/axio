@@ -7,7 +7,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    if let Err(e) = axio_app_lib::run(axio_app_lib::shell_state()) {
+    let (state, events) = axio_app_lib::shell_state();
+    if let Err(e) = axio_app_lib::run(state, events) {
         eprintln!("axio-app: {e}");
         std::process::exit(1);
     }

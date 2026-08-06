@@ -19,7 +19,10 @@ use crate::state::AppState;
 /// The supervisor is built by the caller, so this crate resolves no
 /// configuration and reads no credential — the same seam `axio-supervisor`
 /// keeps for agents, one level up.
-pub fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    state: AppState,
+    events: Option<crate::SessionEvents>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
@@ -53,6 +56,22 @@ pub fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .build(tauri::generate_context!())?;
+
+    // Relay the supervisor's own event stream to the window.
+    //
+    // It was being dropped, and the window polled for state it was already
+    // being handed. The relay sends the session id and nothing else: what
+    // changed still comes back through `snapshot`, so a listener that missed
+    // one is late rather than wrong — the same discipline the terminal path
+    // follows, for the same reason.
+    if let Some(mut events) = events {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = events.recv().await {
+                let _ = handle.emit("axio://session-activity", event.event.session.to_string());
+            }
+        });
+    }
 
     app.run(|handle, event| {
         if let RunEvent::ExitRequested { api, .. } = &event

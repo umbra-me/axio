@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api, accentFor, type ApprovalView, type HostedView, type SessionView, type Snapshot } from "./bridge";
 import { HostedTerminal } from "./Terminal";
 
@@ -9,7 +10,11 @@ import { HostedTerminal } from "./Terminal";
 // sessions owns the record of them, so there is never a moment where the
 // interface believes something the supervisor does not.
 
-const POLL_MS = 1200;
+// A fallback, not the mechanism. The supervisor emits an event whenever any
+// session does anything and the window refreshes on that; this only covers what
+// no event describes — a worktree changed from outside, a session started by
+// the command line while the window was already open.
+const FALLBACK_MS = 5000;
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -41,8 +46,12 @@ export default function App() {
     // Polled, deliberately, until Rust pushes. A cursor-and-push model is the
     // right end state; a poll that is honest about being a poll beats a push
     // that silently drops what happened while nothing was listening.
-    const timer = window.setInterval(() => void refresh(), POLL_MS);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => void refresh(), FALLBACK_MS);
+    const unlisten = listen("axio://session-activity", () => void refresh());
+    return () => {
+      window.clearInterval(timer);
+      void unlisten.then((off) => off());
+    };
   }, [refresh]);
 
   useEffect(() => {

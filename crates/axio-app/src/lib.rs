@@ -54,8 +54,15 @@ pub use shell::run;
 /// The factory is `axio`'s own. Building one here would be the second copy of
 /// `prepare` this whole architecture exists to avoid — and the copy would be
 /// the one that quietly stopped applying a permission rule.
+/// The event stream a supervisor produces, for a surface to relay.
+///
+/// Named rather than dropped, which it was: the supervisor already emits every
+/// session event, and the window was polling for state it was being handed.
 #[cfg(feature = "app")]
-pub fn shell_state() -> AppState {
+pub type SessionEvents = tokio::sync::mpsc::UnboundedReceiver<axio_supervisor::SupervisedEvent>;
+
+#[cfg(feature = "app")]
+pub fn shell_state() -> (AppState, Option<SessionEvents>) {
     use axio_supervisor::{Supervisor, SupervisorConfig};
 
     let resolved = axio::resolve_for_surface();
@@ -69,7 +76,7 @@ pub fn shell_state() -> AppState {
         },
         factory,
     ) {
-        Ok((supervisor, _events)) => AppState::new(std::sync::Arc::new(supervisor)),
-        Err(e) => AppState::unavailable(e.to_string()),
+        Ok((supervisor, events)) => (AppState::new(std::sync::Arc::new(supervisor)), Some(events)),
+        Err(e) => (AppState::unavailable(e.to_string()), None),
     }
 }
