@@ -158,6 +158,24 @@ It is not yet wired into the binary. There are no `axio session` subcommands,
 and `cargo tree -p axio` names no supervisor, so a default `cargo install axio`
 is unchanged by any of it.
 
+### M12 — the supervisor reaches the surfaces
+
+`axio session start`, `list`, `diff` and `close`, and `/new` and `/sessions` in
+the interactive surface. The point of doing the command line first is that a
+surface which can do something the CLI cannot has stopped being a view of the
+same product; both drive `axio-supervisor` through the same `LocalFactory`, so
+neither can hold a capability the other lacks.
+
+The `axio` crate gained a library target to make that true. It was binary-only,
+so `prepare` — configuration, provider, tools, policy, protected directories —
+was unreachable, and a desktop surface would have had to write a second copy.
+
+Two bugs came out of running it rather than testing it. The supervisor's root
+had been under `state_dir`, which is `temp/axio-<pid>`: every `start` cut its
+worktree somewhere the next `list` could not find. And `Disposition::Keep` was
+removing the worktree it documented itself as keeping, so the CLI's own
+"`session diff <id>` to read it" pointed at a directory it had just deleted.
+
 ## Next
 
 ### v0.1 — the release itself

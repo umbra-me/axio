@@ -20,6 +20,18 @@ pub(super) enum Mode {
 }
 
 pub struct Tui {
+    /// Sessions running beside this one, each in its own worktree.
+    ///
+    /// `None` when nothing could open the index — a surface that cannot
+    /// supervise still has to work, so `/new` reports why rather than the whole
+    /// interface refusing to start over a directory it could not read.
+    pub(super) supervisor: Option<std::sync::Arc<axio_supervisor::Supervisor>>,
+    /// How a background session reports back. Cloned into every spawned turn.
+    pub(super) notes: tokio::sync::mpsc::UnboundedSender<super::background::Note>,
+    /// The repository `/new` starts sessions in. Resolved once at startup,
+    /// because the working directory is where the surface was launched and
+    /// nothing later moves it.
+    pub(super) repo: std::path::PathBuf,
     /// Call ids whose terminal status has been printed, so a status reached
     /// through both `ItemUpdated` and `ItemCompleted` prints one line.
     pub(super) reported: std::collections::HashSet<String>,

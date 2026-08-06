@@ -12,6 +12,7 @@
 //! contract.
 
 mod approver;
+mod background;
 mod commands;
 mod composer;
 mod events;
@@ -111,6 +112,12 @@ pub struct Setup {
     pub factory: crate::provider::Factory,
     /// Every provider and whether it has a credential.
     pub offers: Vec<Offer>,
+    /// Sessions running beside this one. `None` when the index could not be
+    /// opened: `/new` then explains itself rather than the surface refusing to
+    /// start over a directory it could not read.
+    pub supervisor: Option<std::sync::Arc<axio_supervisor::Supervisor>>,
+    /// The repository `/new` starts sessions in.
+    pub repo: std::path::PathBuf,
 }
 
 /// Run the interactive surface until the user leaves.
@@ -130,6 +137,8 @@ pub async fn run(
         facts,
         factory,
         offers,
+        supervisor,
+        repo,
     } = setup;
     crossterm::terminal::enable_raw_mode()?;
     install_panic_hook();
@@ -153,8 +162,16 @@ pub async fn run(
     // A sign-in reports twice: once with the URL, so it is on screen whether
     // or not a browser opened, and once with the outcome.
     let (signin_tx, mut signin_rx) = mpsc::unbounded_channel::<SignIn>();
+    // Background sessions report through notes rather than their raw event
+    // stream: the viewport belongs to the session being typed into, and a
+    // parallel turn streaming tokens into it would make the foreground
+    // unreadable exactly when there is most to read.
+    let (notes_tx, mut notes_rx) = mpsc::unbounded_channel::<background::Note>();
 
     let mut app = Tui {
+        supervisor,
+        notes: notes_tx,
+        repo,
         facts,
         factory,
         offers,
@@ -244,6 +261,12 @@ pub async fn run(
                 if leaving {
                     break;
                 }
+            }
+
+            Some(note) = notes_rx.recv() => {
+                clock.mark();
+                let lines = note.lines();
+                app.push_command_output(&mut terminal, &lines)?;
             }
 
             step = signin_rx.recv() => {
@@ -403,6 +426,11 @@ mod tests {
         )
         .expect("a terminal");
         let app = Tui {
+            // No supervisor in a test: the surface has to work without one, and
+            // every assertion here is about painting rather than about sessions.
+            supervisor: None,
+            notes: mpsc::unbounded_channel().0,
+            repo: std::path::PathBuf::from("."),
             facts: Vec::new(),
             factory: std::sync::Arc::new(|_| Err("no provider in a test".to_owned())),
             offers: Vec::new(),

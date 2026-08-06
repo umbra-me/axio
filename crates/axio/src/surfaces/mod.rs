@@ -166,7 +166,7 @@ pub(crate) async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
         Arc::new(tui_approver)
     };
 
-    let (provider, unavailable) = crate::provider::build_for_tui(resolved);
+    let (provider, unavailable) = crate::provider::build_or_explain(resolved);
     let mut prepared = match prepare_with_provider(cli, resolved, None, approver, provider) {
         Ok(prepared) => prepared,
         Err(message) => {
@@ -194,6 +194,8 @@ pub(crate) async fn interactive(cli: &Cli, resolved: &Resolved) -> u8 {
             facts: prepared.facts,
             factory: crate::provider::factory(resolved),
             offers: offers(),
+            supervisor: crate::session_cmd::supervisor_for(resolved, cli.yes),
+            repo: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         },
     )
     .await

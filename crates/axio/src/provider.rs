@@ -24,8 +24,7 @@ pub(crate) fn build_provider(
 /// stored: refusing to open it makes `/login` unreachable on a fresh install.
 /// Keep an agent present with a provider that explains what is missing, then
 /// let `/model` replace it after login through the ordinary factory seam.
-#[cfg(feature = "tui")]
-pub(crate) fn build_for_tui(
+pub(crate) fn build_or_explain(
     resolved: &Resolved,
 ) -> (Arc<dyn axio_core::provider::Provider>, Option<String>) {
     match build_provider(resolved) {
@@ -52,14 +51,12 @@ pub(crate) fn build_for_tui(
     }
 }
 
-#[cfg(feature = "tui")]
 struct UnavailableProvider {
     id: String,
     info: axio_core::provider::ModelInfo,
     why: String,
 }
 
-#[cfg(feature = "tui")]
 #[async_trait::async_trait]
 impl axio_core::provider::Provider for UnavailableProvider {
     fn id(&self) -> &str {
@@ -199,7 +196,7 @@ mod tests {
             build_provider(&resolved).is_err(),
             "one-shot still fails closed"
         );
-        let (provider, why) = build_for_tui(&resolved);
+        let (provider, why) = build_or_explain(&resolved);
         assert_eq!(provider.id(), "not-a-provider");
         assert!(why.is_some(), "the surface needs a startup notice");
 

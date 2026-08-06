@@ -14,6 +14,8 @@ pub enum Command {
     Status,
     Model,
     Login,
+    New,
+    Sessions,
     Clear,
     Quit,
 }
@@ -50,6 +52,16 @@ pub const COMMANDS: &[Spec] = &[
         name: "/login",
         blurb: "store a credential, or sign in with a browser",
         command: Command::Login,
+    },
+    Spec {
+        name: "/new",
+        blurb: "run a prompt in its own worktree, alongside this session",
+        command: Command::New,
+    },
+    Spec {
+        name: "/sessions",
+        blurb: "what is running, and what has run",
+        command: Command::Sessions,
     },
     Spec {
         name: "/clear",
@@ -203,6 +215,47 @@ impl super::Tui {
                 self.push_command_output(terminal, &said)?;
             }
             Command::Model => return self.change_model(terminal, argument, agent),
+            Command::New => {
+                let Some(supervisor) = self.supervisor.clone() else {
+                    self.push_command_output(
+                        terminal,
+                        &[
+                            "sessions are unavailable here (the index could not be opened)"
+                                .to_owned(),
+                        ],
+                    )?;
+                    return Ok(After::Stay);
+                };
+                let prompt = argument.trim();
+                if prompt.is_empty() {
+                    // A worktree cut for no prompt is litter someone has to find
+                    // and remove later, so this asks rather than guessing.
+                    self.push_command_output(
+                        terminal,
+                        &["/new needs a prompt — `/new fix the failing test`".to_owned()],
+                    )?;
+                    return Ok(After::Stay);
+                }
+                super::background::spawn(
+                    supervisor,
+                    prompt.to_owned(),
+                    self.notes.clone(),
+                    self.repo.clone(),
+                );
+                self.push_command_output(
+                    terminal,
+                    &[format!("queued in its own worktree: {prompt}")],
+                )?;
+            }
+            Command::Sessions => {
+                let said = match self.supervisor.as_deref() {
+                    Some(supervisor) => super::background::summary(supervisor),
+                    None => vec![
+                        "sessions are unavailable here (the index could not be opened)".to_owned(),
+                    ],
+                };
+                self.push_command_output(terminal, &said)?;
+            }
             Command::Clear => {
                 self.composer.clear();
                 self.status = "composer cleared".into();

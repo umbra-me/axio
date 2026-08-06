@@ -9,16 +9,31 @@ use super::*;
 impl Tui {
     pub(super) fn draw<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
         terminal.draw(|frame| {
+            // An overlay is a list, and a list that shows part of itself is the
+            // one failure a menu cannot survive. While one is open the composer
+            // holds a short command and its border is pure decoration, so the
+            // border goes and the two rows become list.
+            //
             // The frame costs two rows and four columns. In a terminal too
             // short to spare them it is the frame that goes, not the line being
-            // typed: decoration losing to content is the whole ordering.
-            let framed = frame.area().height >= FRAMED_ROWS;
+            // typed: decoration losing to content is the whole ordering, and
+            // this is the same ordering applied to a second kind of pressure.
+            let overlaying = matches!(self.mode, Mode::LoggingIn(..) | Mode::PickingModel(..))
+                || commands::choosing(self.composer.text());
+            let framed = frame.area().height >= FRAMED_ROWS && !overlaying;
             let chrome = if framed { 6 } else { 2 };
             let width = frame.area().width.saturating_sub(chrome) as usize;
             let (rows_of_text, cursor) = self.composer.rows(width.max(1));
             // The composer takes the rows it needs and no more; what it leaves
             // goes to the answer, which is the thing being read.
-            let prompt_height = rows_of_text.len().clamp(1, COMPOSER_ROWS) as u16;
+            // One row while an overlay is open: what is being typed there is a
+            // command name, and giving the list every row it can have is worth
+            // more than room for a paragraph nobody is writing.
+            let prompt_height = if overlaying {
+                1
+            } else {
+                rows_of_text.len().clamp(1, COMPOSER_ROWS) as u16
+            };
 
             let rows = Layout::vertical([
                 Constraint::Min(0),

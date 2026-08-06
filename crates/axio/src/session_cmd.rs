@@ -34,8 +34,26 @@ fn supervisor_root() -> PathBuf {
     axio_home().join("supervisor")
 }
 
+/// A supervisor for a surface that can live without one.
+///
+/// The interactive surface must open whether or not the index is readable —
+/// refusing to start a terminal because a directory could not be listed trades
+/// a whole feature for one that was already broken. `/new` reports the absence
+/// when someone reaches for it.
+pub(crate) fn supervisor_for(resolved: &Resolved, yes: bool) -> Option<Arc<Supervisor>> {
+    match build(resolved, yes) {
+        Ok(supervisor) => Some(Arc::new(supervisor)),
+        Err(_) => None,
+    }
+}
+
 fn build(resolved: &Resolved, yes: bool) -> Result<Supervisor, String> {
-    let provider = crate::provider::build_provider(resolved)?;
+    // Not `build_provider`, which fails closed on a missing credential. Cutting
+    // a worktree is a filesystem question and asking it should not require a
+    // key, so an unusable provider becomes one that explains itself when a turn
+    // actually needs it — exactly what the interactive surface does. The failure
+    // still happens, at the point where it is about the model.
+    let (provider, _why) = crate::provider::build_or_explain(resolved);
     let factory = Arc::new(LocalFactory::new(resolved.clone(), provider).unattended(yes));
     let (supervisor, _events) = Supervisor::new(
         SupervisorConfig {

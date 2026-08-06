@@ -39,6 +39,23 @@ a minor bump may break things.
   it is not wired into the binary: there are no `axio session` subcommands, and
   `cargo tree -p axio` names no supervisor, so `cargo install axio` is unchanged.
 
+- **`axio session`, and `/new` and `/sessions` in the interactive surface.**
+  A session works in a git worktree on its own branch, so several run at once
+  without treading on each other or on the checkout you are in. `start`, `list`,
+  `diff` and `close` from the command line; `/new <prompt>` fires one off from
+  the interface and `/sessions` says what exists.
+
+  Background sessions report through notes rather than their raw event stream.
+  The viewport belongs to the session being typed into, and a parallel turn
+  streaming its tokens into it would make the foreground unreadable exactly when
+  there is most to read — so what lands in scrollback is what a person needs in
+  order to decide something: it started, it finished, this much changed, here is
+  how to look at it.
+
+  The enabling change is that the `axio` crate now has a library target. It was
+  binary-only, so everything `prepare` resolves could not be reached by anything
+  else and a desktop surface would have had to write a second copy of it.
+
 - **`[worktree]` configuration**, with `enabled` defaulting to **on** and
   `branch_prefix` to `axio/`.
 
