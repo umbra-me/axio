@@ -72,8 +72,12 @@ a minor bump may break things.
   cursor rather than pushed, so a webview reload asks for everything after the
   position it held and gets exactly the gap. Killing takes the whole tree.
 
-  The spawn path is **unverified**: its tests hang on Windows at spawn and are
-  marked ignored rather than deleted or quietly passed.
+  Verified against a real pseudo-terminal: spawn, output reaching the ring, the
+  exit being noticed, kill, and resize. Getting there found a bug worth the
+  trip — closing a ConPTY waits for its output pipe to drain, the reader thread
+  is blocked on that pipe, and the child exiting does not break the cycle
+  because the terminal outlives its process. Dropping a session would have hung
+  the application on the click that closed a terminal.
 
 - **`axio-app`: a desktop surface over the same supervisor.** A window showing
   what is running across every repository — the rail, the session list, the

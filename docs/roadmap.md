@@ -223,9 +223,13 @@ starting again - and bytes, not text, because a read lands wherever the kernel
 decided and a character split across that boundary cannot be recovered once
 decoded. Killing takes the tree, without unsafe.
 
-**The spawn path is unverified.** Its tests hang on Windows at spawn rather than
-at an assertion, and are marked ignored. The ring, the allowlist and the
-argument splitting are covered; running a real harness is not.
+Verified against a real pseudo-terminal rather than only compiled: spawn, output
+reaching the ring, the exit being noticed, kill and resize. That took finding a
+deadlock the tests were pointing straight at — a ConPTY close waits for its
+output pipe to drain, the reader is blocked on that pipe, and the child exiting
+does not break the cycle because the terminal outlives its process. The master
+is released on a detached thread now; without it, closing a terminal in the
+application would hang the window on the click.
 
 ## Next
 

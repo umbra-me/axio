@@ -43,7 +43,11 @@ pub struct HarnessSession {
     /// desktop surface shares its state across command threads — without this
     /// the whole application state stops being shareable for the sake of one
     /// resize call.
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    ///
+    /// `Option` so the destructor can take it out and drop it elsewhere. See
+    /// the `Drop` impl: closing it can block forever, and it must not do that
+    /// on whatever thread happened to release the session.
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     output: Arc<Mutex<Ring>>,
     status: Arc<Mutex<HarnessStatus>>,
     /// The direct child. On Windows this is `cmd.exe`, which is why killing it
@@ -113,7 +117,7 @@ impl HarnessSession {
             harness,
             cwd: cwd.to_path_buf(),
             writer: Arc::new(Mutex::new(writer)),
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             output,
             status,
             pid,
@@ -153,9 +157,13 @@ impl HarnessSession {
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<(), PtyError> {
-        self.master
+        let guard = self
+            .master
             .lock()
-            .map_err(|_| PtyError::Io("the terminal is unavailable".to_owned()))?
+            .map_err(|_| PtyError::Io("the terminal is unavailable".to_owned()))?;
+        guard
+            .as_ref()
+            .ok_or(PtyError::Gone)?
             .resize(PtySize {
                 rows: rows.clamp(8, 200),
                 cols: cols.clamp(20, 400),
@@ -176,23 +184,10 @@ impl HarnessSession {
         let Some(pid) = self.pid else {
             return Ok(());
         };
-        #[cfg(windows)]
-        {
-            let _ = tokio::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .await;
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = tokio::process::Command::new("kill")
-                .args(["-TERM", &format!("-{pid}")])
-                .status()
-                .await;
-        }
+        // Off the async worker: it shells out and waits, which is exactly what
+        // `spawn_blocking` exists for, and it shares one implementation with
+        // the destructor so the two cannot drift.
+        let _ = tokio::task::spawn_blocking(move || kill_tree_blocking(pid)).await;
         *self
             .status
             .lock()
@@ -252,11 +247,66 @@ impl HarnessSession {
             harness: Harness::Axio,
             cwd: std::env::temp_dir(),
             writer: Arc::new(Mutex::new(writer)),
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             output,
             status,
             pid,
         })
+    }
+}
+
+/// Kill the tree, blocking, without a runtime.
+///
+/// Used by both [`HarnessSession::kill`] and `Drop`. The second is why it is
+/// synchronous: a destructor cannot await, and it is the destructor that has to
+/// win a race against a deadlock.
+fn kill_tree_blocking(pid: u32) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &format!("-{pid}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+/// Close the terminal somewhere nothing is waiting.
+///
+/// Closing a ConPTY blocks until its output pipe drains. The pump thread is
+/// blocked in `read()` on that pipe, and that `read()` does not return until
+/// the terminal closes. Each waits for the other and the thread stops — and
+/// **the child exiting does not break it**, because the pty stays open after
+/// its process is gone. A probe pinned this precisely: every step up to the
+/// drop completed, and the drop never returned.
+///
+/// So two things happen here. The tree is killed, which is right regardless.
+/// And the master is moved onto a detached thread to be dropped there, so if
+/// the close does block it blocks something nobody is waiting on rather than
+/// whatever thread happened to release the session — a webview command, or the
+/// window's own teardown.
+///
+/// This is not only about tests. Dropping a session is what the application
+/// does when somebody closes a terminal, and doing it inline would hang the
+/// window on the click.
+impl Drop for HarnessSession {
+    fn drop(&mut self) {
+        if let Some(pid) = self.pid {
+            kill_tree_blocking(pid);
+        }
+        let master = self.master.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(master) = master {
+            std::thread::spawn(move || drop(master));
+        }
     }
 }
 
@@ -326,30 +376,48 @@ mod tests {
         }
     }
 
-    async fn settle(session: &HarnessSession) {
-        for _ in 0..100 {
-            if session.status() != HarnessStatus::Running && !session.read_from(0).0.is_empty() {
+    /// Wait for a spawned harness to actually produce something, standing in
+    /// for the one thing a terminal emulator does that this test otherwise
+    /// would not.
+    ///
+    /// ConPTY opens by asking where the cursor is — `ESC [ 6 n` — and does not
+    /// let the child's output through until something answers. A real terminal
+    /// answers; xterm.js in the application answers; a test reading bytes into
+    /// a buffer does not, and the whole stream stalls behind the question. So
+    /// this replies `ESC [ 1 ; 1 R` once, which is exactly what a terminal at
+    /// the origin would say.
+    async fn settle(session: &HarnessSession, needle: &str) {
+        let mut answered = false;
+        for _ in 0..200 {
+            let (seen, _) = session.read_from(0);
+            if !answered && seen.windows(4).any(|w| w == b"[6n") {
+                let _ = session.write(b"[1;1R");
+                answered = true;
+            }
+            // Wait for the thing actually being looked for, not for "some
+            // bytes". ConPTY's own opening handshake is about forty of them, so
+            // a length threshold is satisfied before the child has written
+            // anything and the test then asserts against a buffer holding only
+            // terminal setup.
+            if String::from_utf8_lossy(&seen).contains(needle) {
                 return;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
     }
 
     /// The whole machine, against a real pseudo-terminal: spawn, pump into the
     /// ring, notice the exit.
     ///
-    /// **Ignored, and honestly so.** Every test in this module hangs on Windows
-    /// at spawn — not at an assertion, so the pseudo-terminal itself is where it
-    /// stops rather than anything below. The ring, the allowlist and the
-    /// argument splitting are covered by the tests that do run; the spawn path
-    /// is therefore **unverified**, and calling it verified would be the one
-    /// thing worse than leaving it ignored. Run with `--ignored` on a machine
-    /// where it works, or debug the ConPTY interaction, before trusting it.
-    #[ignore = "hangs at spawn on Windows; the ConPTY interaction is unresolved"]
+    /// These four hung for a while, and what they were catching was real: a
+    /// ConPTY close waits for its output pipe to drain, the pump thread is
+    /// blocked reading that pipe, and the child exiting does not break the
+    /// cycle because the terminal outlives its process. Dropping a session
+    /// would have hung the application on the click that closed a terminal.
     #[tokio::test]
     async fn output_reaches_the_ring_and_the_exit_is_noticed() {
         let session = echo("axio-pty-lives").expect("a terminal");
-        settle(&session).await;
+        settle(&session, "axio-pty-lives").await;
 
         let (bytes, cursor) = session.read_from(0);
         let text = String::from_utf8_lossy(&bytes);
@@ -366,27 +434,24 @@ mod tests {
 
     /// The reload case. A reader that already saw everything is told nothing
     /// new, rather than handed the stream a second time.
-    #[ignore = "hangs at spawn on Windows; see the note above"]
     #[tokio::test]
     async fn a_cursor_is_not_a_replay() {
         let session = echo("once").expect("a terminal");
-        settle(&session).await;
+        settle(&session, "once").await;
         let (_, cursor) = session.read_from(0);
         assert!(session.read_from(cursor).0.is_empty());
     }
 
     /// Killing something already gone is the normal end of a session, not an
     /// error somebody has to handle.
-    #[ignore = "hangs at spawn on Windows; see the note above"]
     #[tokio::test]
     async fn killing_a_finished_session_is_not_an_error() {
         let session = echo("bye").expect("a terminal");
-        settle(&session).await;
+        settle(&session, "bye").await;
         session.kill().await.expect("kill is idempotent");
         assert_eq!(session.status(), HarnessStatus::Ended);
     }
 
-    #[ignore = "hangs at spawn on Windows; see the note above"]
     #[tokio::test]
     async fn a_terminal_can_be_resized_after_it_starts() {
         let session = echo("size").expect("a terminal");

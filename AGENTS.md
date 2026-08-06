@@ -187,9 +187,18 @@ Three invariants everything else follows from:
   process-group signal `axio-tools` already uses - no Job Object, so no unsafe.
 - **`MasterPty` is `Send` but not `Sync`.** It sits behind a mutex, or the whole
   application state stops being shareable for the sake of one resize call.
-- **The spawn tests are `#[ignore]`d and the spawn path is unverified.** They
-  hang on Windows at spawn rather than at an assertion. The ring, the allowlist
-  and the argument splitting are covered; that path is not.
+- **Closing a ConPTY blocks until its output pipe drains, and the child exiting
+  does not break that.** The pump thread is blocked reading that pipe and the
+  terminal outlives its process, so each waits for the other. The master is
+  therefore taken out in `Drop` and released on a detached thread — otherwise
+  closing a terminal hangs whatever thread the click arrived on.
+- **ConPTY asks where the cursor is before letting the child's output through.**
+  It writes `ESC [ 6 n` and stalls until something answers. A real terminal and
+  xterm.js both answer; a test reading bytes into a buffer does not, and the
+  whole stream sits behind the question. The tests reply `ESC [ 1 ; 1 R`.
+- **ConPTY's opening handshake is about forty bytes.** A test that waits for
+  "some output" is satisfied by terminal setup before the child has written
+  anything. Wait for the text actually expected.
 
 ### axio-app
 
