@@ -449,3 +449,57 @@ button.act:focus-visible {
 .new-session input:disabled {
   color: var(--muted);
 }
+
+/* --- hosted agents ------------------------------------------------------ */
+
+.hosted {
+  display: grid;
+  padding: var(--s-3) 6px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.hosted-head {
+  display: grid;
+  gap: 5px;
+  padding: 0 7px var(--s-2);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.hosted-launch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.hosted-launch button {
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent)) 28%, transparent);
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 9%, transparent);
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 70%, var(--text));
+  font: inherit;
+  font-size: 10px;
+  cursor: default;
+}
+
+.hosted-launch button:hover {
+  border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 60%, transparent);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+}
+
+/* xterm measures the element it was opened on, so padding goes on `.xterm`
+   itself. On the host, the fit addon overstates the row count and clips a
+   provider's interface at the bottom. */
+.terminal-host {
+  position: relative;
+  height: 100%;
+  background: var(--content-deep);
+}
+
+.terminal-host .xterm {
+  height: 100%;
+  padding: 14px 12px 10px;
+}

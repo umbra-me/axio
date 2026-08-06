@@ -33,6 +33,13 @@ pub fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
             commands::session_diff,
             commands::resolve_approval,
             commands::window_control,
+            commands::hosted_available,
+            commands::hosted_list,
+            commands::hosted_start,
+            commands::hosted_read,
+            commands::hosted_write,
+            commands::hosted_resize,
+            commands::hosted_kill,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event

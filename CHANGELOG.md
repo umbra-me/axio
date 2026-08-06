@@ -56,6 +56,25 @@ a minor bump may break things.
   binary-only, so everything `prepare` resolves could not be reached by anything
   else and a desktop surface would have had to write a second copy of it.
 
+- **`axio-pty`: other agents' tools, in terminals axio owns.** Claude Code,
+  Codex and Pi run as themselves - their own interface, their own approvals,
+  their own idea of a session - in a pseudo-terminal this process holds, beside
+  axio's own supervised sessions. The desktop surface lists them, colours each
+  by its harness, and gives one a real terminal pane.
+
+  Nothing parses them. A hosted agent's output is bytes on their way to a
+  terminal emulator, and interpreting them to guess what it is doing would be a
+  second, worse implementation of what already works on screen.
+
+  The executable is allowlisted and only arguments are configurable, because
+  "run whatever this string says" in a desktop application is remote code
+  execution wearing the word *preference*. Output is a bounded byte ring read by
+  cursor rather than pushed, so a webview reload asks for everything after the
+  position it held and gets exactly the gap. Killing takes the whole tree.
+
+  The spawn path is **unverified**: its tests hang on Windows at spawn and are
+  marked ignored rather than deleted or quietly passed.
+
 - **`axio-app`: a desktop surface over the same supervisor.** A window showing
   what is running across every repository — the rail, the session list, the
   pooled approval queue with its previews, a diff view, and a custom frame.

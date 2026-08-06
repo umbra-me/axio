@@ -36,7 +36,7 @@ git config core.hooksPath .githooks                 # one-time, per clone
 
 ## Architecture
 
-Eight crates and three binaries. The dependency graph is a tree rooted at
+Nine crates and three binaries. The dependency graph is a tree rooted at
 `axio-core`, so there are no cycles and no cycle-breaker crates.
 
 | Crate | Owns |
@@ -46,11 +46,24 @@ Eight crates and three binaries. The dependency graph is a tree rooted at
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
 | `axio-cost` | What the coding agents on this machine have spent, read from the session transcripts they already write. Token normalization, deduplication, a bundled price table, and one parser per agent — three hand-written, the rest table-driven. Behind the `sqlite` feature it also reads the agents whose store is a database. Depends on nothing else in the workspace |
 | `axio-quota` | Provider quota probes — the credential files `codex` and `claude` wrote, and the usage endpoints behind them — plus local history, and behind the `app` feature the Tauri desktop surface: tray icon, HTML flyout, window. Depends on nothing else in the workspace |
+| `axio-pty` | Running another agent's command-line tool - Claude Code, Codex, Pi - in a pseudo-terminal axio owns. An executable allowlist, a bounded byte ring read by cursor, and tree-killing. Depends on nothing else in the workspace |
 | `axio-app` | The desktop surface. Rust owns all state and TypeScript owns pixels; every command is `async` so none of them runs on the thread that paints. Behind an `app` feature, so a default build links no webview |
 | `axio-supervisor` | Many sessions at once, across many repositories: one task per session, a git worktree and branch each, one pooled approval queue, and a sidecar index of what exists. Builds no agents — they arrive through `AgentFactory` — so it links no transport and no tools |
 | `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations, `axio quota`, `axio cost` |
 
 ### Workspace member justification
+
+`axio-pty` is the ninth member, and it is a leaf: it depends on no other crate
+here and only `axio-app` depends on it. Isolation is the reason, as it was for
+the fifth and sixth. It links `portable-pty`, which a one-shot CLI run has no
+use for, and it is the one crate whose security property is a *list* - the
+executable allowlist - which is much easier to audit when it is the only thing
+in the crate.
+
+It is also a different problem from `axio-tools` despite both spawning
+processes. Tools run a command on the model's behalf, capture its output and
+feed it back; this hands a program a real terminal and a person, and never reads
+what it says.
 
 `axio-app` is the eighth member, and the reason is the same dependency argument
 the fifth and sixth made: Tauri carries a webview runtime and a build script,
@@ -146,6 +159,37 @@ Three invariants everything else follows from:
    one, so `--json`, and later a second process, are additive.
 
 ## Gotchas
+
+### axio-pty
+
+- **A hosted agent must not inherit `CLAUDE_CODE_*` or `CLAUDE_PID`.** A tool
+  that finds them concludes it was started by a copy of itself and behaves as a
+  child session. axio may itself have been launched by one, so they are stripped.
+- **`NO_COLOR` is stripped and `TERM`/`COLORTERM` are set.** axio strips colour
+  from the tools *it* runs because a model reads them; a hosted agent is read by
+  a person through a real terminal, and `TERM=dumb` makes its interface unusable.
+- **On Windows the launch goes through `cmd.exe /d /s /c`.** Agent CLIs installed
+  by npm are `.cmd` shims and `CreateProcess` will not execute one. `/d` skips
+  AutoRun so a registry key set years ago does not run first.
+- **Drop the slave end of the pair immediately after spawning.** While it is open
+  the reader never sees EOF, so an agent that exits leaves a thread waiting on a
+  terminal nobody is attached to.
+- **Output is bytes, and decoding happens where the whole stream is.** A `read`
+  lands wherever the kernel decided; decoding each chunk turns any multi-byte
+  character straddling that boundary into a replacement character, permanently.
+- **Reads are pulled by cursor, not pushed.** Something is always not listening -
+  every webview reload - and a push-only stream loses whatever arrived then.
+- **A submitted line is two writes: the text, then the carriage return.** A
+  provider that treats one combined chunk as a paste leaves the text on its
+  prompt unsent, which reads as the agent ignoring you.
+- **Killing the direct child is not enough.** It is `cmd.exe` on Windows and may
+  have started a build on unix. The tree goes, via the same `taskkill /T` and
+  process-group signal `axio-tools` already uses - no Job Object, so no unsafe.
+- **`MasterPty` is `Send` but not `Sync`.** It sits behind a mutex, or the whole
+  application state stops being shareable for the sake of one resize call.
+- **The spawn tests are `#[ignore]`d and the spawn path is unverified.** They
+  hang on Windows at spawn rather than at an assertion. The ring, the allowlist
+  and the argument splitting are covered; that path is not.
 
 ### axio-app
 

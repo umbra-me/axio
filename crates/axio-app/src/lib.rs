@@ -25,6 +25,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod hosted;
 pub mod model;
 pub mod state;
 
@@ -34,6 +35,7 @@ pub mod commands;
 #[cfg(feature = "app")]
 mod shell;
 
+pub use hosted::{Hosted, HostedOutput, HostedView, StartHostedInput};
 pub use model::{
     AppError, ApprovalView, DecisionInput, Isolation, PreviewView, ProjectView, SessionStatus,
     SessionView, Snapshot, StartSessionInput,

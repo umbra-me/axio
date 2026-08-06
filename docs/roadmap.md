@@ -205,6 +205,28 @@ state quietly migrating into the frontend.
 The boundary is still hand-mirrored, and that is the next change to it rather
 than a later one. Generating it is what the typed-IPC tripwire was waiting for.
 
+### M14 - other agents, in terminals axio owns
+
+`axio-pty`, the ninth crate, and the hosted half of the desktop surface. Claude
+Code, Codex and Pi run as themselves rather than through an API - their own
+interface, their own approval prompts, their own session - in a pseudo-terminal
+this process holds, listed beside axio's own supervised sessions and coloured by
+harness. The window is for every agent working on your code, not only ours.
+
+Nothing parses them, deliberately. Their output is bytes on their way to a
+terminal emulator, and reading it to guess what the agent is doing would be a
+second and worse implementation of what already works on screen.
+
+The executable is an allowlist and only arguments are configurable. Output is a
+bounded byte ring read by cursor, so a reload asks for the gap rather than
+starting again - and bytes, not text, because a read lands wherever the kernel
+decided and a character split across that boundary cannot be recovered once
+decoded. Killing takes the tree, without unsafe.
+
+**The spawn path is unverified.** Its tests hang on Windows at spawn rather than
+at an assertion, and are marked ignored. The ring, the allowlist and the
+argument splitting are covered; running a real harness is not.
+
 ## Next
 
 ### v0.1 — the release itself

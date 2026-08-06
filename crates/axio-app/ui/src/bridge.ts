@@ -68,7 +68,32 @@ export interface StartSessionInput {
   isolation: Isolation | null;
 }
 
+export interface HostedView {
+  id: string;
+  harness: string;
+  label: string;
+  accentVar: string;
+  cwd: string;
+  status: string;
+  exitCode: number | null;
+}
+
+export interface HostedOutput {
+  text: string;
+  cursor: number;
+}
+
 export const api = {
+  hostedAvailable: () => invoke<HostedView[]>("hosted_available"),
+  hostedList: () => invoke<HostedView[]>("hosted_list"),
+  hostedStart: (harness: string, cwd: string, args = "") =>
+    invoke<HostedView>("hosted_start", { input: { harness, cwd, args } }),
+  hostedRead: (id: string, from: number) => invoke<HostedOutput>("hosted_read", { id, from }),
+  hostedWrite: (id: string, data: string, submit: boolean) =>
+    invoke<void>("hosted_write", { id, data, submit }),
+  hostedResize: (id: string, rows: number, cols: number) =>
+    invoke<void>("hosted_resize", { id, rows, cols }),
+  hostedKill: (id: string) => invoke<void>("hosted_kill", { id }),
   snapshot: () => invoke<Snapshot>("snapshot"),
   startSession: (input: StartSessionInput) => invoke<SessionView>("start_session", { input }),
   sendPrompt: (sessionId: string, prompt: string) =>

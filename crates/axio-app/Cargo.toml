@@ -36,6 +36,7 @@ app = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:axio"]
 [dependencies]
 axio-core.workspace = true
 axio-supervisor.workspace = true
+axio-pty.workspace = true
 # The wiring, not a second copy of it. `default-features = false` drops the
 # terminal interface — the app needs `LocalFactory`, which is how a session gets
 # a provider, the tools, the policy and the protected directories, and it must

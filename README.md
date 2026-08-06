@@ -422,7 +422,7 @@ different questions, which genuinely diverge when a CLI is pointed at a proxy.
 
 ## Shape
 
-Eight crates and three binaries:
+Nine crates and three binaries:
 
 | Crate           | Contains                                                        |
 | --------------- | --------------------------------------------------------------- |
@@ -432,6 +432,7 @@ Eight crates and three binaries:
 | `axio-quota`    | Provider limit probes, local history, and the desktop app behind `app` |
 | `axio-cost`     | What the agents on this machine have spent, read from their own transcripts |
 | `axio-supervisor` | Many sessions at once, across many repositories — a worktree and branch each, one queue of approvals |
+| `axio-pty`      | Claude Code, Codex or Pi in a pseudo-terminal axio owns - an allowlist, a byte ring, and tree-killing |
 | `axio-app`      | The desktop surface, behind an `app` feature. Rust owns the state; the webview is shown it |
 | `axio`          | The binary — one-shot CLI when piped or given `-p`, interactive on a TTY |
 

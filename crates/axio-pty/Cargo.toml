@@ -1,0 +1,28 @@
+[package]
+name = "axio-pty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Running another agent's command-line tool in a pseudo-terminal axio owns."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+# The pseudo-terminal itself. Pure Rust on every platform we ship — it binds
+# ConPTY through `windows-sys` rather than compiling anything, so it does not
+# break the promise that a clean install needs no C toolchain. It is still kept
+# out of the default `axio` build by a feature, because a one-shot CLI run has
+# no reason to link a terminal.
+portable-pty = "0.9.0"
+# Splitting a command line the way a shell would, without running a shell.
+shlex.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "process", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

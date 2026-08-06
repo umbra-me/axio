@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, accentFor, type ApprovalView, type SessionView, type Snapshot } from "./bridge";
+import { api, accentFor, type ApprovalView, type HostedView, type SessionView, type Snapshot } from "./bridge";
+import { HostedTerminal } from "./Terminal";
 
 // The whole surface is a function of one snapshot from Rust.
 //
@@ -15,10 +16,18 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hosted, setHosted] = useState<HostedView[]>([]);
+  const [available, setAvailable] = useState<HostedView[]>([]);
+  // A hosted terminal, when one is open, owns the pane. It is somebody's live
+  // interface; showing a diff over the top of it would be taking the screen
+  // away mid-keystroke.
+  const [terminal, setTerminal] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setSnapshot(await api.snapshot());
+      const [snap, live] = await Promise.all([api.snapshot(), api.hostedList()]);
+      setSnapshot(snap);
+      setHosted(live);
       setError(null);
     } catch (e) {
       // A failed read is not a reason to blank the interface — the last good
@@ -35,6 +44,10 @@ export default function App() {
     const timer = window.setInterval(() => void refresh(), POLL_MS);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    void api.hostedAvailable().then(setAvailable).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!selected) {
@@ -72,6 +85,10 @@ export default function App() {
             void refresh();
           }}
           onError={setError}
+          hosted={hosted}
+          available={available}
+          terminal={terminal}
+          onOpenTerminal={setTerminal}
         />
 
         <main className="main">
@@ -106,7 +123,9 @@ export default function App() {
               onResolved={() => void refresh()}
             />
 
-            {session ? (
+            {terminal ? (
+              <HostedTerminal key={terminal} session={hosted.find((h) => h.id === terminal)!} />
+            ) : session ? (
               <Diff text={diff} />
             ) : (
               <div className="empty">
@@ -169,12 +188,20 @@ function Rail({
   onSelect,
   onStarted,
   onError,
+  hosted,
+  available,
+  terminal,
+  onOpenTerminal,
 }: {
   snapshot: Snapshot | null;
   selected: string | null;
   onSelect: (id: string) => void;
   onStarted: (id: string) => void;
   onError: (message: string) => void;
+  hosted: HostedView[];
+  available: HostedView[];
+  terminal: string | null;
+  onOpenTerminal: (id: string | null) => void;
 }) {
   return (
     <nav className="rail">
@@ -225,6 +252,15 @@ function Rail({
           </p>
         )}
       </div>
+
+      <HostedRail
+        hosted={hosted}
+        available={available}
+        terminal={terminal}
+        projects={snapshot?.projects ?? []}
+        onOpenTerminal={onOpenTerminal}
+        onError={onError}
+      />
 
       <div className="rail-foot">isolated worktrees · one branch each</div>
     </nav>
@@ -290,6 +326,75 @@ function NewSession({
           if (e.key === "Enter") void start();
         }}
       />
+    </div>
+  );
+}
+
+// Other agents' own tools, each in a terminal axio owns.
+//
+// Listed apart from supervised sessions on purpose. A hosted Claude Code is not
+// an axio session with a different colour - it has its own approvals, its own
+// history and its own idea of what a session is - and putting the two in one
+// list would imply axio can do things to it that it cannot.
+function HostedRail({
+  hosted,
+  available,
+  terminal,
+  projects,
+  onOpenTerminal,
+  onError,
+}: {
+  hosted: HostedView[];
+  available: HostedView[];
+  terminal: string | null;
+  projects: Snapshot["projects"];
+  onOpenTerminal: (id: string | null) => void;
+  onError: (message: string) => void;
+}) {
+  const start = async (harness: string) => {
+    const cwd = projects[0]?.root;
+    if (!cwd) {
+      onError("open a project first - a terminal needs somewhere to run");
+      return;
+    }
+    try {
+      const session = await api.hostedStart(harness, cwd);
+      onOpenTerminal(session.id);
+    } catch (e) {
+      onError(String(e));
+    }
+  };
+
+  return (
+    <div className="hosted">
+      <div className="hosted-head">
+        <span>Agents</span>
+        <div className="hosted-launch">
+          {available.map((a) => (
+            <button
+              key={a.harness}
+              style={{ ["--agent-accent" as string]: `var(${a.accentVar})` }}
+              onClick={() => void start(a.harness)}
+              title={`Run ${a.label} in a terminal`}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {hosted.map((h) => (
+        <button
+          key={h.id}
+          className={`session${h.id === terminal ? " active" : ""}`}
+          style={{ ["--agent-accent" as string]: `var(${h.accentVar})` }}
+          onClick={() => onOpenTerminal(h.id)}
+          title={h.cwd}
+        >
+          <span className={`dot ${h.status === "running" ? "running" : "closed"}`} />
+          <span className="label">{h.label}</span>
+          <small>{h.status === "running" ? "live" : h.status}</small>
+        </button>
+      ))}
     </div>
   );
 }

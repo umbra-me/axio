@@ -34,6 +34,12 @@ use crate::model::{
 /// the interface can ask is answered from the same place the CLI answers it
 /// from. When settings arrive they arrive here, not in a TypeScript module.
 pub struct AppState {
+    /// Other agents' CLIs, in terminals this process owns. Beside the
+    /// supervisor rather than inside it: `axio-supervisor` runs axio's own
+    /// loop, and a hosted Claude Code is not that — it has its own approvals,
+    /// its own session and its own interface, and pretending otherwise would
+    /// mean modelling it as something it is not.
+    pub hosted: crate::hosted::Hosted,
     supervisor: Option<Arc<Supervisor>>,
     /// Why there is no supervisor, when there is none. Kept so the interface
     /// can say what is wrong instead of showing an empty list — "no work" and
@@ -44,6 +50,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(supervisor: Arc<Supervisor>) -> Self {
         Self {
+            hosted: crate::hosted::Hosted::default(),
             supervisor: Some(supervisor),
             unavailable: None,
         }
@@ -52,6 +59,7 @@ impl AppState {
     /// A state that can still paint, for when the index could not be opened.
     pub fn unavailable(why: impl Into<String>) -> Self {
         Self {
+            hosted: crate::hosted::Hosted::default(),
             supervisor: None,
             unavailable: Some(why.into()),
         }

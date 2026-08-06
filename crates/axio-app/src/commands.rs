@@ -19,6 +19,7 @@
 
 use tauri::{Manager, State};
 
+use crate::hosted::{HostedOutput, HostedView, StartHostedInput};
 use crate::model::{
     AppError, ApprovalView, DecisionInput, SessionView, Snapshot, StartSessionInput,
 };
@@ -83,6 +84,64 @@ pub async fn resolve_approval(
     state.resolve_approval(&approval_id, decision)
 }
 
+// --- hosted agents -------------------------------------------------------
+//
+// Claude Code, Codex and Pi, each in a terminal this process owns. Reads are
+// pulled by cursor rather than pushed, so a webview that reloaded asks for
+// everything after the position it had and gets exactly the gap.
+
+#[tauri::command]
+pub async fn hosted_available() -> Result<Vec<HostedView>, AppError> {
+    Ok(crate::hosted::available())
+}
+
+#[tauri::command]
+pub async fn hosted_list(state: Shared<'_>) -> Result<Vec<HostedView>, AppError> {
+    Ok(state.hosted.list())
+}
+
+#[tauri::command]
+pub async fn hosted_start(
+    state: Shared<'_>,
+    input: StartHostedInput,
+) -> Result<HostedView, AppError> {
+    state.hosted.start(input)
+}
+
+#[tauri::command]
+pub async fn hosted_read(
+    state: Shared<'_>,
+    id: String,
+    from: u64,
+) -> Result<HostedOutput, AppError> {
+    state.hosted.read(&id, from)
+}
+
+#[tauri::command]
+pub async fn hosted_write(
+    state: Shared<'_>,
+    id: String,
+    data: String,
+    submit: bool,
+) -> Result<(), AppError> {
+    state.hosted.write(&id, &data, submit)
+}
+
+#[tauri::command]
+pub async fn hosted_resize(
+    state: Shared<'_>,
+    id: String,
+    rows: u16,
+    cols: u16,
+) -> Result<(), AppError> {
+    state.hosted.resize(&id, rows, cols)
+}
+
+#[tauri::command]
+pub async fn hosted_kill(state: Shared<'_>, id: String) -> Result<(), AppError> {
+    state.hosted.kill(&id).await
+}
+
 /// Minimise, maximise and close, through one door.
 ///
 /// `destroy` is deliberately separate from `close`: closing runs whatever guard
@@ -115,10 +174,14 @@ pub async fn window_control(window: tauri::WebviewWindow, action: String) -> Res
 /// two ways somebody actually closes a window they have stopped looking at.
 pub(crate) fn has_running_work(app: &tauri::AppHandle) -> bool {
     app.try_state::<AppState>().is_some_and(|state| {
-        state
-            .snapshot()
-            .sessions
-            .iter()
-            .any(|s| s.status == crate::model::SessionStatus::Running)
+        // A hosted terminal counts. Closing over a live Claude Code loses
+        // whatever it was in the middle of just as surely as closing over one
+        // of ours does, and it is the one the window cannot restart for you.
+        state.hosted.running() > 0
+            || state
+                .snapshot()
+                .sessions
+                .iter()
+                .any(|s| s.status == crate::model::SessionStatus::Running)
     })
 }
