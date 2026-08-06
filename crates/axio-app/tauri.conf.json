@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "axio",
+  "version": "0.1.0",
+  "identifier": "sh.axio.app",
+  "build": {
+    "frontendDist": "ui/dist",
+    "devUrl": "http://127.0.0.1:5273",
+    "beforeDevCommand": "npm --prefix ui run dev",
+    "beforeBuildCommand": "npm --prefix ui run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "axio",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 860,
+        "minHeight": 540,
+        "decorations": false,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/icon.ico"]
+  }
+}

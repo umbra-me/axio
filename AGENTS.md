@@ -32,7 +32,7 @@ git config core.hooksPath .githooks                 # one-time, per clone
 
 ## Architecture
 
-Seven crates and two binaries. The dependency graph is a tree rooted at
+Eight crates and three binaries. The dependency graph is a tree rooted at
 `axio-core`, so there are no cycles and no cycle-breaker crates.
 
 | Crate | Owns |
@@ -42,10 +42,22 @@ Seven crates and two binaries. The dependency graph is a tree rooted at
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
 | `axio-cost` | What the coding agents on this machine have spent, read from the session transcripts they already write. Token normalization, deduplication, a bundled price table, and one parser per agent — three hand-written, the rest table-driven. Behind the `sqlite` feature it also reads the agents whose store is a database. Depends on nothing else in the workspace |
 | `axio-quota` | Provider quota probes — the credential files `codex` and `claude` wrote, and the usage endpoints behind them — plus local history, and behind the `app` feature the Tauri desktop surface: tray icon, HTML flyout, window. Depends on nothing else in the workspace |
+| `axio-app` | The desktop surface. Rust owns all state and TypeScript owns pixels; every command is `async` so none of them runs on the thread that paints. Behind an `app` feature, so a default build links no webview |
 | `axio-supervisor` | Many sessions at once, across many repositories: one task per session, a git worktree and branch each, one pooled approval queue, and a sidecar index of what exists. Builds no agents — they arrive through `AgentFactory` — so it links no transport and no tools |
 | `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations, `axio quota`, `axio cost` |
 
 ### Workspace member justification
+
+`axio-app` is the eighth member, and the reason is the same dependency argument
+the fifth and sixth made: Tauri carries a webview runtime and a build script,
+and none of it may reach `cargo install axio`. It is off by default and
+verified absent — `cargo tree -p axio` names neither `axio-app` nor `tauri`.
+
+Its state and boundary types are *outside* the feature, deliberately. That is
+what lets the whole surface behind the glass be exercised by ordinary unit
+tests with no webview, and it is the enforcement mechanism for "Rust owns all
+state": logic that has to compile without Tauri cannot quietly become a
+TypeScript store.
 
 `axio-supervisor` is the seventh member, and the reason is the dependency it
 *refuses* rather than the ones it takes. Running many sessions at once means
@@ -130,6 +142,29 @@ Three invariants everything else follows from:
    one, so `--json`, and later a second process, are additive.
 
 ## Gotchas
+
+### axio-app
+
+- **A Tauri command without `async` runs on the thread that paints.** Not a
+  performance note — a synchronous command doing a process probe, a teardown
+  spin or a per-keystroke write freezes the window for its duration, and nothing
+  in the code says so. Every command here is `async`; `State<'_, T>` works fine
+  in one as long as `T: Send + Sync + 'static`.
+- **Window controls are a command, not a capability.** Granting
+  `core:window:allow-close` lets any script in the webview close the window.
+  Routing it through `window_control` keeps a place that can refuse, which is
+  what the close guard needs in order to exist.
+- **`close` and `destroy` are different on purpose.** Closing runs the guard;
+  destroying skips it. Only something that has already dealt with the running
+  work may reach for the second.
+- **A `beforeunload` listener does not fire for a taskbar close or Alt+F4.**
+  Both guards are native: `WindowEvent::CloseRequested` for the title bar and
+  `RunEvent::ExitRequested` for the rest. The second needs `Builder::build` then
+  `app.run(closure)`; `.run(context)` cannot intercept it.
+- **The lib target is named apart from the binary.** Both otherwise emit
+  `axio_app.pdb` and cargo warns about the collision on every Windows build.
+- **Nothing in `state` or `model` may link Tauri.** That is the rule that keeps
+  the state layer testable and stops it drifting into the webview.
 
 ### axio-supervisor
 

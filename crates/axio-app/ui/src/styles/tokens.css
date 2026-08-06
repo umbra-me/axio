@@ -1,0 +1,92 @@
+/*
+ * The whole visual system, as variables.
+ *
+ * Near-black glass: translucent graphite chrome, subtle blur, low-contrast
+ * dividers, and colour used only where it identifies something. The terminal
+ * and content surfaces are kept *darker and more opaque* than the chrome around
+ * them — that inversion is what makes the chrome read as glass without a single
+ * gradient or glow.
+ *
+ * Radii, spacing and shadow are tokens here rather than literals at call sites,
+ * which is the one thing the design this is drawn from does not do. Values that
+ * appear thirty times and are only ever written by hand are values that drift.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* --- surfaces, darkest to lightest ------------------------------------ */
+  --stage: #020305;
+  --content: rgba(4, 5, 7, 0.96);
+  --content-deep: #050609;
+  --rail: rgba(10, 11, 14, 0.9);
+  --rail-deep: #08090c;
+  --tabs: rgba(11, 12, 15, 0.88);
+  --frame: rgba(15, 16, 19, 0.9);
+  --panel: rgba(7, 8, 10, 0.97);
+  --raised: #1a1c22;
+  --raised-hover: #23262e;
+  --field: #111216;
+
+  /* --- lines ------------------------------------------------------------ */
+  --line: rgba(255, 255, 255, 0.065);
+  --line-soft: rgba(255, 255, 255, 0.035);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --edge: rgba(255, 255, 255, 0.095);
+
+  /* --- text ------------------------------------------------------------- */
+  --text: #eeeeef;
+  --text-2: #a9abb2;
+  --muted: #70727a;
+  --faint: #555861;
+
+  /* --- accents ---------------------------------------------------------- */
+  /* `--accent` is axio's own: focus rings, primary actions, anything that
+     belongs to the application rather than to an agent. Agent-owned surfaces
+     read `--agent-accent` instead and mix it down for inactive states, so a
+     session never borrows the chrome's colour or vice versa. */
+  --accent: #7c9dff;
+  --agent-axio: #7c9dff;
+  --agent-claude: #a98bfa;
+  --agent-codex: #62d9b3;
+  --agent-pi: #69c7d5;
+  --ok: #62d9b3;
+  --warn: #d7bd76;
+  --danger: #ef7178;
+
+  /* --- radii ------------------------------------------------------------ */
+  --r-xs: 3px;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 7px;
+  --r-xl: 11px;
+
+  /* --- spacing ---------------------------------------------------------- */
+  --s-1: 4px;
+  --s-2: 7px;
+  --s-3: 9px;
+  --s-4: 12px;
+  --s-5: 16px;
+  --s-6: 22px;
+
+  /* --- elevation -------------------------------------------------------- */
+  --shadow-window: 0 28px 100px rgba(0, 0, 0, 0.64), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-menu: 0 18px 48px rgba(0, 0, 0, 0.58);
+  --shadow-panel: -28px 0 70px rgba(0, 0, 0, 0.32);
+  --blur-window: blur(30px) saturate(108%);
+  --blur-chrome: blur(22px) saturate(112%);
+
+  /* --- structure -------------------------------------------------------- */
+  --titlebar: 36px;
+  --statusbar: 24px;
+  --rail-width: 272px;
+  --tabbar: 60px;
+
+  /* --- type ------------------------------------------------------------- */
+  --ui-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono-font: "JetBrainsMono NFM", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  font-family: var(--ui-font);
+  background: var(--stage);
+  color: var(--text);
+}

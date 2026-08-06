@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"What the axio window's webview may do. Deliberately almost nothing: every capability here is one a script running in the webview also gets, so anything that can be a typed command is one.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","dialog:allow-open"]}}

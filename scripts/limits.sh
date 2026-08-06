@@ -42,6 +42,7 @@ MAX_FILE_LOC=300
 # so a rename cannot drop one out of the report unnoticed.
 crate_budget() {
   case "$1" in
+    axio-app) echo 4000 ;;      # state, the boundary types, and the Tauri command layer
     axio-core) echo 6000 ;;      # the loop, protocol, session, config, policy
     axio-cost) echo 6000 ;;      # one parser per agent, and there are dozens of agents
     axio-provider) echo 5000 ;;  # one block per transport

@@ -40,6 +40,9 @@ fn supervisor_root() -> PathBuf {
 /// refusing to start a terminal because a directory could not be listed trades
 /// a whole feature for one that was already broken. `/new` reports the absence
 /// when someone reaches for it.
+/// Only the interactive surface asks for this — a headless build has no `/new`
+/// to reach it from, and an ungated `pub(crate)` is dead code there.
+#[cfg(feature = "tui")]
 pub(crate) fn supervisor_for(resolved: &Resolved, yes: bool) -> Option<Arc<Supervisor>> {
     match build(resolved, yes) {
         Ok(supervisor) => Some(Arc::new(supervisor)),

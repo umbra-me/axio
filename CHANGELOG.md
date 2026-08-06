@@ -56,6 +56,24 @@ a minor bump may break things.
   binary-only, so everything `prepare` resolves could not be reached by anything
   else and a desktop surface would have had to write a second copy of it.
 
+- **`axio-app`: a desktop surface over the same supervisor.** A window showing
+  what is running across every repository — the rail, the session list, the
+  pooled approval queue with its previews, a diff view, and a custom frame.
+
+  Rust owns all of the state. The webview is sent projections and given no way
+  to hold any: no session store in TypeScript, no settings schema there, and no
+  reconciliation between what the interface believes and what is actually
+  running. Every command is `async`, because a Tauri command declared without it
+  runs on the thread that paints — and the shapes that cross the boundary live
+  in one module outside the `app` feature, so the entire surface behind the
+  glass is exercised by ordinary unit tests with no webview.
+
+  Window controls are a typed command rather than a granted capability, which
+  keeps a place that can refuse; both close guards are native, because a
+  `beforeunload` listener does not fire for Alt+F4 or a taskbar close; and a
+  real CSP is set. Tauri is behind the `app` feature and verified absent from
+  the default tree, so `cargo install axio` is unchanged.
+
 - **`[worktree]` configuration**, with `enabled` defaulting to **on** and
   `branch_prefix` to `axio/`.
 

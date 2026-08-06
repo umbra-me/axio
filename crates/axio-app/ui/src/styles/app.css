@@ -1,0 +1,410 @@
+@import "./tokens.css";
+
+/* The shell: a title bar, a body, a status bar, and nothing else fixed. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  display: grid;
+  height: 100vh;
+  place-items: center;
+  background: var(--stage);
+}
+
+.window {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  grid-template-rows: var(--titlebar) minmax(0, 1fr) var(--statusbar);
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-md);
+  background: var(--content);
+  box-shadow: var(--shadow-window);
+  backdrop-filter: var(--blur-window);
+}
+
+/* --- title bar ---------------------------------------------------------- */
+
+.titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--frame);
+  color: var(--text-2);
+  user-select: none;
+}
+
+.wordmark {
+  padding-left: var(--s-6);
+  font-family: var(--mono-font);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--text);
+}
+
+.title {
+  font-family: var(--mono-font);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.title span {
+  padding-inline: 5px;
+  color: var(--faint);
+}
+
+.window-actions {
+  display: flex;
+  justify-self: end;
+  height: 100%;
+}
+
+.window-actions button {
+  display: grid;
+  width: 46px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  place-items: center;
+  font: inherit;
+  font-size: 13px;
+  cursor: default;
+}
+
+.window-actions button:hover {
+  background: rgba(255, 255, 255, 0.065);
+  color: var(--text);
+}
+
+.window-actions button.close:hover {
+  background: #b83e45;
+  color: #fff;
+}
+
+/* --- body --------------------------------------------------------------- */
+
+.body {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+}
+
+.rail {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: 60px minmax(0, 1fr) auto;
+  border-right: 1px solid var(--line);
+  background: var(--rail);
+  backdrop-filter: var(--blur-chrome);
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 20px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rail-list {
+  overflow-y: auto;
+  padding: var(--s-3) 6px;
+  scrollbar-color: #34363d transparent;
+  scrollbar-width: thin;
+}
+
+.project {
+  margin-bottom: 5px;
+}
+
+.project > h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  margin: 0;
+  padding: 0 13px;
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.project > h2 small {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.sessions {
+  display: grid;
+  padding: 0 0 5px 20px;
+}
+
+/* A session row carries its agent's colour, mixed down when it is not the one
+   being looked at. Chrome never borrows it — that is what keeps "this belongs
+   to an agent" and "this belongs to axio" visually different questions. */
+.session {
+  display: grid;
+  min-height: 40px;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 42%, #d4dae2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: default;
+}
+
+.session:hover {
+  background: var(--line-soft);
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, var(--text));
+}
+
+.session.active {
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 11%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--agent-accent, var(--accent)) 90%, transparent);
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, var(--text));
+}
+
+.session:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.session .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session small {
+  font-family: var(--mono-font);
+  font-size: 10px;
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 42%, var(--muted));
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--agent-accent, var(--accent));
+}
+
+.dot.idle { opacity: 0.4; }
+.dot.running { opacity: 0.95; }
+.dot.closed { filter: grayscale(1); opacity: 0.35; }
+
+.rail-foot {
+  padding: var(--s-3) 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* --- main --------------------------------------------------------------- */
+
+.main {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--content);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--tabbar);
+  padding: 0 var(--s-6);
+  border-bottom: 1px solid var(--line);
+  background: var(--tabs);
+  font-family: var(--mono-font);
+  font-size: 13px;
+  backdrop-filter: var(--blur-chrome);
+}
+
+.crumbs .sep { color: var(--faint); }
+.crumbs .branch { color: var(--accent); }
+
+.pane {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-6);
+  scrollbar-color: #30323a transparent;
+  scrollbar-width: thin;
+}
+
+.empty {
+  display: grid;
+  height: 100%;
+  gap: var(--s-3);
+  place-content: center;
+  justify-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.empty code {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-2);
+  font-family: var(--mono-font);
+  font-size: 11px;
+}
+
+.diff {
+  margin: 0;
+  overflow-x: auto;
+  font-family: var(--mono-font);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre;
+}
+
+.diff .add { color: var(--ok); }
+.diff .del { color: var(--danger); }
+.diff .hunk { color: var(--accent); }
+
+/* --- approvals ---------------------------------------------------------- */
+
+.approvals {
+  display: grid;
+  gap: var(--s-3);
+  margin-bottom: var(--s-6);
+}
+
+.approval {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid rgba(215, 189, 118, 0.34);
+  border-radius: var(--r-lg);
+  background: rgba(12, 13, 16, 0.94);
+}
+
+.approval header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-family: var(--mono-font);
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.approval p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.approval pre {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--s-2);
+  border-radius: var(--r-sm);
+  background: var(--content-deep);
+  font-family: var(--mono-font);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.approval .actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+button.act {
+  min-height: 27px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+}
+
+button.act:hover {
+  background: var(--raised-hover);
+  color: var(--text);
+}
+
+button.act.primary {
+  border-color: rgba(124, 157, 255, 0.34);
+  background: rgba(124, 157, 255, 0.12);
+  color: #dfe6ff;
+}
+
+button.act.primary:hover {
+  border-color: rgba(124, 157, 255, 0.65);
+  background: rgba(124, 157, 255, 0.18);
+}
+
+button.act.danger {
+  border-color: rgba(239, 113, 120, 0.5);
+  background: rgba(239, 113, 120, 0.14);
+  color: #ffdadd;
+}
+
+button.act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(124, 157, 255, 0.35);
+}
+
+/* --- status bar --------------------------------------------------------- */
+
+.statusbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  background: var(--frame);
+  color: var(--text-2);
+  font-size: 10px;
+}
+
+.statusbar > div {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-inline: 18px;
+}
+
+.statusbar > div:last-child { justify-self: end; }
+.statusbar .ok { color: var(--ok); }
+.statusbar .warn { color: var(--warn); }
+
+.notice {
+  padding: var(--s-4);
+  border: 1px solid rgba(239, 113, 120, 0.4);
+  border-radius: var(--r-md);
+  background: rgba(12, 13, 16, 0.92);
+  color: #edb9bc;
+  font-size: 11px;
+}

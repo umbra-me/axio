@@ -176,6 +176,35 @@ worktree somewhere the next `list` could not find. And `Disposition::Keep` was
 removing the worktree it documented itself as keeping, so the CLI's own
 "`session diff <id>` to read it" pointed at a directory it had just deleted.
 
+### M13 — the desktop shell
+
+`axio-app`, the eighth crate: a window over the same supervisor the CLI drives.
+Rust owns every piece of state and the webview is sent projections of it — no
+session store in TypeScript, no settings schema there, no reconciliation between
+what the interface believes and what is running. The process that owns the
+sessions owns the record of them, so a restart is an internal invariant rather
+than a diff between two stores that can disagree.
+
+Structure and a first surface, not a finished product: the rail, the session
+list, the approval queue, a diff view, the custom frame and the status bar.
+Starting turns still belongs to the CLI — the shell reviews.
+
+Four rules it is built on, three of them corrections to what the prior art does.
+Every command is `async`, because one declared without it runs on the thread
+that paints. Window controls are a typed command rather than a granted
+capability, so there is a place that can refuse. Both close guards are native,
+because a `beforeunload` listener does not fire for Alt+F4 or a taskbar close.
+And a real CSP is set rather than disabled.
+
+Tauri stays behind an `app` feature and is verified absent: `cargo tree -p axio`
+names neither `axio-app` nor `tauri`, so `cargo install axio` is untouched. The
+state and boundary types sit *outside* that feature, which is what lets the
+whole surface behind the glass be unit-tested with no webview — and what stops
+state quietly migrating into the frontend.
+
+The boundary is still hand-mirrored, and that is the next change to it rather
+than a later one. Generating it is what the typed-IPC tripwire was waiting for.
+
 ## Next
 
 ### v0.1 — the release itself

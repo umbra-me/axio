@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/axio-app",
     "crates/axio-core",
     "crates/axio-cost",
     "crates/axio-provider",
@@ -25,6 +26,7 @@ categories = ["command-line-utilities", "development-tools"]
 # Versioned, not bare paths. A path dependency with no version cannot be
 # published, and cargo-deny reads it as a wildcard — which is the same hazard
 # it is for a registry dependency, just harder to see.
+axio-app = { path = "crates/axio-app", version = "0.1.0" }
 axio-core = { path = "crates/axio-core", version = "0.1.0" }
 axio-cost = { path = "crates/axio-cost", version = "0.1.0" }
 axio-provider = { path = "crates/axio-provider", version = "0.1.0" }
