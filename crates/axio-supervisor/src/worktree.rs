@@ -184,7 +184,15 @@ impl Checkout {
         Ok(count.parse().unwrap_or(0))
     }
 
-    /// Remove the worktree, and on [`Disposition::Discard`] the branch too.
+    /// On [`Disposition::Discard`], remove the worktree and its branch. On
+    /// [`Disposition::Keep`], do nothing at all.
+    ///
+    /// Keeping used to remove the worktree and spare only the branch, which
+    /// contradicted its own documentation and was caught by the first real run:
+    /// the CLI printed "kept — `axio session diff <id>` to read it" and the diff
+    /// then failed, because the directory it named had just been deleted.
+    /// Reviewing a session's work means opening the checkout it worked in, so
+    /// keeping has to keep it.
     ///
     /// Discarding refuses while the branch holds commits the repository does
     /// not: closing a window is not consent to delete work, and the message
@@ -193,18 +201,19 @@ impl Checkout {
         let Some(branch) = &self.branch else {
             return Ok(());
         };
+        if disposition == Disposition::Keep {
+            return Ok(());
+        }
 
-        if disposition == Disposition::Discard {
-            let commits = self.unmerged_commits().await.unwrap_or(0);
-            if commits > 0 {
-                return Err(SupervisorError::Git {
-                    args: format!("branch -D {branch}"),
-                    message: format!(
-                        "`{branch}` has {commits} commit(s) that are nowhere else; \
-                         keep it, or delete the branch yourself once you have looked"
-                    ),
-                });
-            }
+        let commits = self.unmerged_commits().await.unwrap_or(0);
+        if commits > 0 {
+            return Err(SupervisorError::Git {
+                args: format!("branch -D {branch}"),
+                message: format!(
+                    "`{branch}` has {commits} commit(s) that are nowhere else; \
+                     keep it, or delete the branch yourself once you have looked"
+                ),
+            });
         }
 
         // `--force` covers a dirty tree, which is the normal state of a session

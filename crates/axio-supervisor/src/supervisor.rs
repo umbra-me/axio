@@ -494,9 +494,17 @@ mod tests {
             .await
             .unwrap();
         let branch = handle.checkout.branch.clone().unwrap();
+        let path = handle.checkout.path.clone();
         sup.close(handle.session, Disposition::Keep).await.unwrap();
 
         assert!(repo.has_branch(&branch).await, "the work must survive");
+        // Regression: keeping used to delete the worktree and spare only the
+        // branch, so the CLI's "run `session diff`" pointed at a directory it
+        // had just removed. Reviewing means opening the checkout.
+        assert!(
+            path.exists(),
+            "the worktree someone will review must survive"
+        );
         assert!(sup.sessions().is_empty());
         // The index still knows it existed, and that it is closed.
         let entry = sup
