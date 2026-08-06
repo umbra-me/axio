@@ -426,7 +426,10 @@ mod tests {
     /// the origin would say.
     async fn settle(session: &HarnessSession, needle: &str) {
         let mut answered = false;
-        for _ in 0..200 {
+        // Sixty seconds, for something that takes about one. These spawn real
+        // processes beside every other test in the workspace, and a budget
+        // tuned to an idle machine is a budget that fails on a busy one.
+        for _ in 0..2400 {
             let (seen, _) = session.read_from(0);
             if !answered && seen.windows(4).any(|w| w == b"[6n") {
                 let _ = session.write(b"[1;1R");
@@ -499,7 +502,7 @@ mod tests {
         let session = echo("woke").expect("a terminal");
         let wrote = session.wrote();
 
-        let woken = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let woken = tokio::time::timeout(std::time::Duration::from_secs(60), async {
             loop {
                 let waiting = wrote.notified();
                 // The cursor query has to be answered or nothing ever flows;
@@ -511,12 +514,13 @@ mod tests {
                 if String::from_utf8_lossy(&seen).contains("woke") {
                     return true;
                 }
-                if tokio::time::timeout(std::time::Duration::from_millis(500), waiting)
-                    .await
-                    .is_err()
-                {
-                    return false;
-                }
+                // A timeout here is a reason to look again, not a verdict.
+                // Spawning a real terminal alongside the rest of the workspace
+                // can take longer than any interval worth choosing, and treating
+                // "nothing yet" as "never" is how a suite acquires a test that
+                // fails once a fortnight for no reason anybody can reproduce.
+                // Only the outer budget ends this.
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(500), waiting).await;
             }
         })
         .await

@@ -215,6 +215,16 @@ Three invariants everything else follows from:
 
 ### axio-app
 
+- **Tauri picks dev-versus-production from a *feature*, never from the cargo
+  profile.** Without `tauri/custom-protocol` in the `app` feature, `tauri-build`
+  emits `cfg(dev)` even under `--release`, the webview loads `devUrl`, and the
+  window shows ERR_CONNECTION_REFUSED against 127.0.0.1 with nothing else wrong
+  — it compiles, links, launches and is simply blank. The Tauri CLI adds the
+  feature during `tauri build`; we build with plain cargo, so it must be named.
+  `axio-quota` documented this first and this crate shipped without it anyway;
+  the tell is `cargo:rustc-cfg=dev` in the build output.
+- **`ui/dist` must exist before the Rust build.** `frontendDist` points at it and
+  a stale or missing one is embedded silently.
 - **The TypeScript boundary is generated, and `cargo test -p axio-app` is what
   generates it.** ts-rs writes `ui/src/generated/` during the test run, so a
   Rust change with no regeneration shows up as a dirty tree — `git diff

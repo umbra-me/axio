@@ -92,6 +92,14 @@ a minor bump may break things.
   `number` came out as `bigint`, which is neither what the field means nor what
   JSON IPC delivers. Those fields now say so explicitly.
 
+- **A release build of the window loaded a dev server that was not running.**
+  Tauri decides dev-versus-production from a feature rather than from the cargo
+  profile, so without `tauri/custom-protocol` a `--release` build still pointed
+  its webview at `devUrl` — compiling, linking, launching, and showing
+  ERR_CONNECTION_REFUSED against 127.0.0.1 with nothing else wrong. The sibling
+  crate had documented this exact trap; this one shipped without it anyway, and
+  running the binary is what found it.
+
 - **`axio-app`: a desktop surface over the same supervisor.** A window showing
   what is running across every repository — the rail, the session list, the
   pooled approval queue with its previews, a diff view, and a custom frame.

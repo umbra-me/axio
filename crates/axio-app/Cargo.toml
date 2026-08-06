@@ -31,7 +31,19 @@ default = []
 # Tauri carries a webview runtime and a build script, and `cargo test
 # --workspace` should not compile either to run a unit test. Everything that
 # holds state is outside this feature and testable without it.
-app = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:axio"]
+app = [
+    "dep:tauri",
+    "dep:tauri-build",
+    "dep:tauri-plugin-dialog",
+    "dep:axio",
+    # Not optional, and not obvious. Tauri decides dev-versus-production from a
+    # *feature*, never from the cargo profile: without this `tauri-build` emits
+    # `cfg(dev)` even under `--release`, the webview loads `devUrl`, and the
+    # window shows ERR_CONNECTION_REFUSED against 127.0.0.1 with nothing else
+    # wrong. The Tauri CLI adds it during `tauri build`; we build with plain
+    # cargo, so it has to be named here. `axio-quota` learned this first.
+    "tauri/custom-protocol",
+]
 
 [dependencies]
 axio-core.workspace = true
