@@ -45,43 +45,27 @@ pub use shell::run;
 
 /// The state the shipped binary runs on.
 ///
-/// Kept here rather than in the binary so the wiring is one line there and
-/// testable here. The supervisor's root is under `axio_home` and not the state
-/// directory, for the reason the CLI records: the state directory is per
-/// process, and a worktree cut into one is a branch the next run cannot find.
+/// The supervisor's root is under `axio_home` and not the state directory, for
+/// the reason the CLI records: the state directory is per process, and a
+/// worktree cut into one is a branch the next run cannot find.
+///
+/// The factory is `axio`'s own. Building one here would be the second copy of
+/// `prepare` this whole architecture exists to avoid — and the copy would be
+/// the one that quietly stopped applying a permission rule.
 #[cfg(feature = "app")]
 pub fn shell_state() -> AppState {
     use axio_supervisor::{Supervisor, SupervisorConfig};
 
-    let root = match std::env::var_os("AXIO_HOME") {
-        Some(home) => std::path::PathBuf::from(home),
-        None => match std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-            Some(home) => std::path::PathBuf::from(home).join(".axio"),
-            None => std::path::PathBuf::from(".axio"),
-        },
-    }
-    .join("supervisor");
-
-    // A factory that starts nothing. The shell reads and reviews; running a
-    // turn needs the wiring `axio` owns, and reaching for it from here would be
-    // the second copy of `prepare` this whole architecture exists to avoid.
-    struct ReadOnly;
-    #[async_trait::async_trait]
-    impl axio_supervisor::AgentFactory for ReadOnly {
-        async fn build(
-            &self,
-            _request: axio_supervisor::AgentRequest,
-        ) -> Result<axio_core::Agent, String> {
-            Err("this build of the shell reviews sessions but does not start them".to_owned())
-        }
-    }
+    let resolved = axio::resolve_for_surface();
+    let (provider, _why) = axio::provider_or_explain(&resolved);
+    let factory = std::sync::Arc::new(axio::factory::LocalFactory::new(resolved.clone(), provider));
 
     match Supervisor::new(
         SupervisorConfig {
-            state_root: root,
-            worktree: axio_core::config::WorktreeSection::default(),
+            state_root: axio::supervisor_root(),
+            worktree: resolved.config().worktree.clone(),
         },
-        std::sync::Arc::new(ReadOnly),
+        factory,
     ) {
         Ok((supervisor, _events)) => AppState::new(std::sync::Arc::new(supervisor)),
         Err(e) => AppState::unavailable(e.to_string()),

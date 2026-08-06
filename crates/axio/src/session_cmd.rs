@@ -30,7 +30,7 @@ use crate::paths::axio_home;
 /// Outside every repository either way: a worktree inside the repo would appear
 /// in its own `git status`, and one session could reach another's through a path
 /// its `Workspace` never had to leave.
-fn supervisor_root() -> PathBuf {
+pub(crate) fn supervisor_root() -> PathBuf {
     axio_home().join("supervisor")
 }
 

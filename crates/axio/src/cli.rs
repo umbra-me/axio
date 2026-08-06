@@ -113,11 +113,10 @@ pub(crate) enum SessionAction {
         #[arg(long)]
         direct: bool,
 
-        /// Keep the worktree and branch when the turn ends. On by default.
-        #[arg(long, conflicts_with = "discard")]
-        keep: bool,
-
         /// Remove the worktree and branch when the turn ends.
+        ///
+        /// Without this the worktree is kept, which is the point of it: the
+        /// branch is the work.
         ///
         /// Refused if the branch holds commits that are nowhere else.
         #[arg(long)]

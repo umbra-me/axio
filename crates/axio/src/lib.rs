@@ -4,6 +4,28 @@
 //! not by a flag the caller has to remember.
 
 pub mod factory;
+
+/// Resolve configuration the way a surface with no flags would.
+///
+/// Exposed so a second surface reads the same layers in the same order — a
+/// desktop application that resolved its own would be one `AXIO_*` variable
+/// away from disagreeing with the terminal about which model is in use.
+pub fn resolve_for_surface() -> Resolved {
+    resolve_config(&Cli::parse_from(["axio"]))
+}
+
+/// A provider, or one that explains what is missing when a turn needs it.
+pub fn provider_or_explain(
+    resolved: &Resolved,
+) -> (Arc<dyn axio_core::provider::Provider>, Option<String>) {
+    provider::build_or_explain(resolved)
+}
+
+/// Where supervised worktrees and the session index live.
+pub fn supervisor_root() -> PathBuf {
+    session_cmd::supervisor_root()
+}
+
 mod input;
 mod surfaces;
 

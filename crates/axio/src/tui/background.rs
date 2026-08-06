@@ -103,7 +103,7 @@ pub fn spawn(
         });
 
         let outcome = match handle.turn(prompt).await {
-            Ok(outcome) => format!("{outcome:?}"),
+            Ok(outcome) => outcome.summary(),
             Err(e) => {
                 let _ = notes.send(Note::Failed {
                     message: e.to_string(),

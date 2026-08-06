@@ -286,6 +286,32 @@ pub enum TurnOutcome {
 }
 
 impl TurnOutcome {
+    /// How a turn ended, in a sentence.
+    ///
+    /// Here rather than in a surface for the reason every other piece of
+    /// user-facing wording is: two surfaces describing the same outcome
+    /// differently is a bug nobody files. It also replaces the `{:?}` that had
+    /// started appearing in output people actually read — `StepLimit { steps:
+    /// 50 }` is a struct literal, not an explanation.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Completed => "completed".to_owned(),
+            Self::Refused { category, .. } => match category {
+                Some(category) => format!("refused ({category})"),
+                None => "refused".to_owned(),
+            },
+            Self::Interrupted => "interrupted".to_owned(),
+            Self::StepLimit { steps } => {
+                format!("stopped at the step limit ({steps} steps)")
+            }
+            Self::BudgetExceeded {
+                spent_usd,
+                limit_usd,
+            } => format!("stopped at the spend cap (${spent_usd:.2} of ${limit_usd:.2})"),
+            Self::Failed { message } => format!("failed: {message}"),
+        }
+    }
+
     pub fn exit_code(&self) -> u8 {
         match self {
             Self::Completed => 0,
@@ -401,6 +427,43 @@ impl Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every arm has to say something, and none of it may be a struct literal.
+    #[test]
+    fn every_outcome_summarises_itself_in_prose() {
+        let outcomes = [
+            TurnOutcome::Completed,
+            TurnOutcome::Refused {
+                category: Some("cyber".into()),
+                text: String::new(),
+            },
+            TurnOutcome::Refused {
+                category: None,
+                text: String::new(),
+            },
+            TurnOutcome::Interrupted,
+            TurnOutcome::StepLimit { steps: 50 },
+            TurnOutcome::BudgetExceeded {
+                spent_usd: 2.5,
+                limit_usd: 2.0,
+            },
+            TurnOutcome::Failed {
+                message: "no credential".into(),
+            },
+        ];
+        for outcome in outcomes {
+            let said = outcome.summary();
+            assert!(!said.is_empty(), "{outcome:?} says nothing");
+            assert!(
+                !said.contains('{') && !said.contains("::"),
+                "{said} is a debug rendering, not a sentence"
+            );
+        }
+        assert_eq!(
+            TurnOutcome::StepLimit { steps: 50 }.summary(),
+            "stopped at the step limit (50 steps)"
+        );
+    }
 
     #[test]
     fn interrupted_turn_exits_130() {
