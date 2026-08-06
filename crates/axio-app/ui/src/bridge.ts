@@ -62,8 +62,17 @@ export type Decision =
   | { decision: "allowSession" }
   | { decision: "deny"; feedback: string | null };
 
+export interface StartSessionInput {
+  path: string;
+  prompt: string | null;
+  isolation: Isolation | null;
+}
+
 export const api = {
   snapshot: () => invoke<Snapshot>("snapshot"),
+  startSession: (input: StartSessionInput) => invoke<SessionView>("start_session", { input }),
+  sendPrompt: (sessionId: string, prompt: string) =>
+    invoke<void>("send_prompt", { sessionId, prompt }),
   approvals: () => invoke<ApprovalView[]>("approvals"),
   sessionDiff: (sessionId: string) => invoke<string>("session_diff", { sessionId }),
   cancelSession: (sessionId: string) => invoke<void>("cancel_session", { sessionId }),

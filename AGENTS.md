@@ -18,6 +18,10 @@ axio quota                                          # provider limits; --json, -
 axio cost --by model|client|day|workspace|session|week|month|hour
 axio cost --calendar | --wide | --cached            # shape; derived columns; skip the rescan
 curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.json
+cargo build --release -p axio-app --features app                # the desktop surface
+npm --prefix crates/axio-app/ui run build                       # frontend, before that
+npm --prefix crates/axio-app/ui run typecheck                   # the only step that checks TS types
+axio session start|list|diff|close                              # supervised worktree sessions
 cargo build --release -p axio-quota --features app              # tray + flyout + window
 npm --prefix crates/axio-quota/ui run build                     # frontend, before that
 node crates/axio-quota/icons/make-icon.mjs                      # regenerate icon.ico

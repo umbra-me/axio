@@ -408,3 +408,44 @@ button.act:focus-visible {
   color: #edb9bc;
   font-size: 11px;
 }
+
+/* --- new session -------------------------------------------------------- */
+
+.new-session {
+  display: grid;
+  gap: 5px;
+  padding: var(--s-3) 13px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.new-session select,
+.new-session input {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  border: 1px solid #30333b;
+  border-radius: var(--r-sm);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.new-session input {
+  font-family: var(--mono-font);
+}
+
+.new-session input::placeholder {
+  color: #90939d;
+}
+
+.new-session select:focus,
+.new-session input:focus {
+  outline: none;
+  border-color: rgba(124, 157, 255, 0.7);
+  box-shadow: 0 0 0 2px rgba(124, 157, 255, 0.1);
+}
+
+.new-session input:disabled {
+  color: var(--muted);
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, accentFor, type ApprovalView, type SessionView, type Snapshot } from "./bridge";
 
 // The whole surface is a function of one snapshot from Rust.
@@ -63,7 +63,16 @@ export default function App() {
       <TitleBar session={session} />
 
       <div className="body">
-        <Rail snapshot={snapshot} selected={selected} onSelect={setSelected} />
+        <Rail
+          snapshot={snapshot}
+          selected={selected}
+          onSelect={setSelected}
+          onStarted={(id) => {
+            setSelected(id);
+            void refresh();
+          }}
+          onError={setError}
+        />
 
         <main className="main">
           <div className="crumbs">
@@ -158,10 +167,14 @@ function Rail({
   snapshot,
   selected,
   onSelect,
+  onStarted,
+  onError,
 }: {
   snapshot: Snapshot | null;
   selected: string | null;
   onSelect: (id: string) => void;
+  onStarted: (id: string) => void;
+  onError: (message: string) => void;
 }) {
   return (
     <nav className="rail">
@@ -171,6 +184,12 @@ function Rail({
           {snapshot?.projects.length ?? 0}
         </small>
       </div>
+
+      <NewSession
+        projects={snapshot?.projects ?? []}
+        onStarted={onStarted}
+        onError={onError}
+      />
 
       <div className="rail-list">
         {(snapshot?.projects ?? []).map((project) => (
@@ -209,6 +228,69 @@ function Rail({
 
       <div className="rail-foot">isolated worktrees · one branch each</div>
     </nav>
+  );
+}
+
+// Start a session in its own worktree.
+//
+// The repository is chosen from the ones already known rather than typed,
+// because a path typed into a text field is a path nobody validated — and the
+// first thing that would happen to a wrong one is a worktree cut somewhere
+// surprising. A picker for a new repository is native and comes with the file
+// dialog, which is the one plugin this app grants itself.
+function NewSession({
+  projects,
+  onStarted,
+  onError,
+}: {
+  projects: Snapshot["projects"];
+  onStarted: (id: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const repo = useRef<HTMLSelectElement>(null);
+
+  if (projects.length === 0) return null;
+
+  const start = async () => {
+    const path = repo.current?.value;
+    if (!path || prompt.trim() === "") return;
+    setBusy(true);
+    try {
+      const session = await api.startSession({
+        path,
+        prompt: prompt.trim(),
+        isolation: null,
+      });
+      setPrompt("");
+      onStarted(session.id);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="new-session">
+      <select ref={repo} defaultValue={projects[0]?.root}>
+        {projects.map((p) => (
+          <option key={p.id} value={p.root}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <input
+        value={prompt}
+        placeholder="Start a session…"
+        disabled={busy}
+        onChange={(e) => setPrompt(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void start();
+        }}
+      />
+    </div>
   );
 }
 
