@@ -46,6 +46,11 @@ axio = { path = "../axio", version = "0.1.0", default-features = false, optional
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Generates the TypeScript for every shape that crosses into the webview.
+# Hand-mirroring that boundary is how the two sides drift, and the prior art
+# this design is drawn from warns about exactly that in four separate documents
+# and then drifted anyway. A derive and a test beat a warning.
+ts-rs = "12.0.1"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tauri = { workspace = true, optional = true }

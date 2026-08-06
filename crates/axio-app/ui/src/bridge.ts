@@ -1,89 +1,58 @@
 // The typed edge of the Rust boundary.
 //
-// Hand-written for now, and that is a known debt rather than a design: the
-// shapes here mirror `crates/axio-app/src/model.rs`, and mirroring is how the
-// two drift. The prior art this is drawn from warns about exactly that in four
-// separate documents and has drifted anyway - one field is a union on this side
-// and an unvalidated string on the other. The fix is generation
-// (`tauri-specta`), and it is the next change to this file, not a later one.
+// Every shape here is *generated* from `crates/axio-app/src/model.rs` and
+// `hosted.rs` by ts-rs, emitted into `generated/` when the crate's tests run.
+// It used to be hand-mirrored, which is how two sides of a boundary drift: the
+// prior art this design is drawn from warns about exactly that in four separate
+// documents and drifted anyway. Generation caught one here on its first run —
+// a `u64` this file declared as `number` and the derive read as `bigint`, which
+// is neither what the field means nor what JSON IPC delivers.
+//
+// What is still written by hand is this file's *invoke wrappers*. Their names
+// and argument shapes are checked by Tauri at runtime rather than at compile
+// time, so a rename shows up as a failed command rather than a build error.
+// Generating those too is what `tauri-specta` would add.
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type Isolation = "worktree" | "direct";
-export type SessionStatus = "idle" | "running" | "closed";
+export type { AppError } from "./generated/AppError";
+export type { ApprovalView } from "./generated/ApprovalView";
+export type { DecisionInput as Decision } from "./generated/DecisionInput";
+export type { HostedOutput } from "./generated/HostedOutput";
+export type { HostedView } from "./generated/HostedView";
+export type { Isolation } from "./generated/Isolation";
+export type { PreviewView } from "./generated/PreviewView";
+export type { ProjectView } from "./generated/ProjectView";
+export type { SessionStatus } from "./generated/SessionStatus";
+export type { SessionView } from "./generated/SessionView";
+export type { Snapshot } from "./generated/Snapshot";
+export type { StartHostedInput } from "./generated/StartHostedInput";
+export type { StartSessionInput } from "./generated/StartSessionInput";
 
-export interface ProjectView {
-  id: string;
-  name: string;
-  root: string;
-  openSessions: number;
-  totalSessions: number;
-}
-
-export interface SessionView {
-  id: string;
-  shortId: string;
-  projectId: string;
-  projectName: string;
-  label: string | null;
-  branch: string | null;
-  workspace: string;
-  isolation: Isolation;
-  status: SessionStatus;
-  startedMs: number;
-}
-
-export type PreviewView =
-  | { kind: "diff"; path: string; unified: string; added: number; removed: number }
-  | { kind: "command"; program: string; raw: string; cwd: string }
-  | { kind: "text"; text: string };
-
-export interface ApprovalView {
-  id: string;
-  sessionId: string;
-  shortSessionId: string;
-  projectId: string;
-  subject: string;
-  tool: string;
-  reason: string;
-  preview: PreviewView | null;
-  atMs: number;
-}
-
-export interface Snapshot {
-  projects: ProjectView[];
-  sessions: SessionView[];
-  approvals: ApprovalView[];
-  unavailable: string | null;
-}
-
-export type Decision =
-  | { decision: "allow" }
-  | { decision: "allowSession" }
-  | { decision: "deny"; feedback: string | null };
-
-export interface StartSessionInput {
-  path: string;
-  prompt: string | null;
-  isolation: Isolation | null;
-}
-
-export interface HostedView {
-  id: string;
-  harness: string;
-  label: string;
-  accentVar: string;
-  cwd: string;
-  status: string;
-  exitCode: number | null;
-}
-
-export interface HostedOutput {
-  text: string;
-  cursor: number;
-}
+import type { ApprovalView } from "./generated/ApprovalView";
+import type { DecisionInput } from "./generated/DecisionInput";
+import type { HostedOutput } from "./generated/HostedOutput";
+import type { HostedView } from "./generated/HostedView";
+import type { SessionView } from "./generated/SessionView";
+import type { Snapshot } from "./generated/Snapshot";
+import type { StartSessionInput } from "./generated/StartSessionInput";
 
 export const api = {
+  snapshot: () => invoke<Snapshot>("snapshot"),
+  approvals: () => invoke<ApprovalView[]>("approvals"),
+  startSession: (input: StartSessionInput) => invoke<SessionView>("start_session", { input }),
+  sendPrompt: (sessionId: string, prompt: string) =>
+    invoke<void>("send_prompt", { sessionId, prompt }),
+  sessionDiff: (sessionId: string) => invoke<string>("session_diff", { sessionId }),
+  cancelSession: (sessionId: string) => invoke<void>("cancel_session", { sessionId }),
+  closeSession: (sessionId: string, discard: boolean) =>
+    invoke<void>("close_session", { sessionId, discard }),
+  resolveApproval: (approvalId: string, decision: DecisionInput) =>
+    invoke<boolean>("resolve_approval", { approvalId, decision }),
+  windowControl: (action: "minimize" | "toggle-maximize" | "close" | "destroy") =>
+    invoke<void>("window_control", { action }),
+
+  // Hosted agents: Claude Code, Codex or Pi in a terminal axio owns.
   hostedAvailable: () => invoke<HostedView[]>("hosted_available"),
   hostedList: () => invoke<HostedView[]>("hosted_list"),
   hostedStart: (harness: string, cwd: string, args = "") =>
@@ -94,27 +63,13 @@ export const api = {
   hostedResize: (id: string, rows: number, cols: number) =>
     invoke<void>("hosted_resize", { id, rows, cols }),
   hostedKill: (id: string) => invoke<void>("hosted_kill", { id }),
-  snapshot: () => invoke<Snapshot>("snapshot"),
-  startSession: (input: StartSessionInput) => invoke<SessionView>("start_session", { input }),
-  sendPrompt: (sessionId: string, prompt: string) =>
-    invoke<void>("send_prompt", { sessionId, prompt }),
-  approvals: () => invoke<ApprovalView[]>("approvals"),
-  sessionDiff: (sessionId: string) => invoke<string>("session_diff", { sessionId }),
-  cancelSession: (sessionId: string) => invoke<void>("cancel_session", { sessionId }),
-  closeSession: (sessionId: string, discard: boolean) =>
-    invoke<void>("close_session", { sessionId, discard }),
-  resolveApproval: (approvalId: string, decision: Decision) =>
-    invoke<boolean>("resolve_approval", { approvalId, decision }),
-  windowControl: (action: "minimize" | "toggle-maximize" | "close" | "destroy") =>
-    invoke<void>("window_control", { action }),
 };
 
-// Which colour identifies a session's agent.
+// Which colour identifies a supervised session.
 //
-// Keyed off isolation for now because every session this shell can see is one
-// axio started. When foreign harnesses arrive - Claude Code, Codex, Pi, each in
-// its own PTY - this becomes a lookup on the harness id, and the CSS already
-// reads whatever it is told through `--agent-accent`.
+// Hosted sessions carry their harness's own variable, chosen in Rust beside the
+// harness list. This one is for axio's own sessions, where isolation is the
+// only thing that distinguishes them.
 export function accentFor(session: SessionView): string {
   return session.isolation === "direct" ? "var(--agent-pi)" : "var(--agent-axio)";
 }

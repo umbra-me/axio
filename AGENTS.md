@@ -21,6 +21,7 @@ curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.
 cargo build --release -p axio-app --features app                # the desktop surface
 npm --prefix crates/axio-app/ui run build                       # frontend, before that
 npm --prefix crates/axio-app/ui run typecheck                   # the only step that checks TS types
+cargo test -p axio-app && git diff --exit-code crates/axio-app/ui/src/generated  # boundary drift
 axio session start|list|diff|close                              # supervised worktree sessions
 cargo build --release -p axio-quota --features app              # tray + flyout + window
 npm --prefix crates/axio-quota/ui run build                     # frontend, before that
@@ -202,6 +203,15 @@ Three invariants everything else follows from:
 
 ### axio-app
 
+- **The TypeScript boundary is generated, and `cargo test -p axio-app` is what
+  generates it.** ts-rs writes `ui/src/generated/` during the test run, so a
+  Rust change with no regeneration shows up as a dirty tree — `git diff
+  --exit-code` on that directory is the drift check. Never hand-edit those files.
+- **`u64` becomes `bigint` unless told otherwise, and that would be wrong here.**
+  Tauri's IPC is JSON, so what actually arrives is a JS number; `#[ts(type =
+  "number")]` on those fields makes the declared type the one that shows up.
+  Generation caught this on its first run, on a field the hand-written mirror
+  had as `number` and the derive read as `bigint`.
 - **A Tauri command without `async` runs on the thread that paints.** Not a
   performance note — a synchronous command doing a process probe, a teardown
   spin or a per-keystroke write freezes the window for its duration, and nothing

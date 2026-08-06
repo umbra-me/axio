@@ -21,8 +21,9 @@
 use serde::{Deserialize, Serialize};
 
 /// A repository under supervision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct ProjectView {
     pub id: String,
     pub name: String,
@@ -33,8 +34,9 @@ pub struct ProjectView {
 }
 
 /// What a session looks like in a list.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct SessionView {
     pub id: String,
     /// Eight characters. Long enough to be unambiguous in practice, short
@@ -48,6 +50,14 @@ pub struct SessionView {
     pub workspace: String,
     pub isolation: Isolation,
     pub status: SessionStatus,
+    /// `number`, not `bigint`. ts-rs maps `u64` to `bigint` by default, which
+    /// would be right for a boundary that preserved 64-bit integers — and this
+    /// one does not: Tauri's IPC is JSON, so what actually arrives is a JS
+    /// number. Declaring `bigint` would be a type that never matches the value.
+    /// Both quantities here are safe below 2^53: a millisecond timestamp until
+    /// the year 287396, and a byte cursor until nine petabytes through one
+    /// terminal.
+    #[ts(type = "number")]
     pub started_ms: u64,
 }
 
@@ -55,8 +65,9 @@ pub struct SessionView {
 ///
 /// An enum rather than a bool because a third answer is plausible — a container,
 /// a remote host — and a bool would have to be replaced rather than extended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub enum Isolation {
     /// Its own git worktree on its own branch. The default.
     Worktree,
@@ -70,8 +81,9 @@ pub enum Isolation {
 /// TypeScript side and as `String` in Rust, so the two vocabularies drifted:
 /// one end knows about states the other never produces, and the value that
 /// reaches the interface can violate the type the interface declares for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub enum SessionStatus {
     /// Live and between turns.
     Idle,
@@ -82,8 +94,9 @@ pub enum SessionStatus {
 }
 
 /// A question a session is waiting on.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct ApprovalView {
     pub id: String,
     pub session_id: String,
@@ -97,12 +110,21 @@ pub struct ApprovalView {
     /// surfaces cannot describe the same refusal differently.
     pub reason: String,
     pub preview: Option<PreviewView>,
+    /// `number`, not `bigint`. ts-rs maps `u64` to `bigint` by default, which
+    /// would be right for a boundary that preserved 64-bit integers — and this
+    /// one does not: Tauri's IPC is JSON, so what actually arrives is a JS
+    /// number. Declaring `bigint` would be a type that never matches the value.
+    /// Both quantities here are safe below 2^53: a millisecond timestamp until
+    /// the year 287396, and a byte cursor until nine petabytes through one
+    /// terminal.
+    #[ts(type = "number")]
     pub at_ms: u64,
 }
 
 /// What an approval is about, in the shape a reviewer needs to see it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub enum PreviewView {
     Diff {
         path: String,
@@ -125,8 +147,9 @@ pub enum PreviewView {
 }
 
 /// How the interface answers a question.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(tag = "decision", rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub enum DecisionInput {
     Allow,
     /// Remembered against the subject for the rest of this session, in memory
@@ -140,8 +163,9 @@ pub enum DecisionInput {
 }
 
 /// What `start_session` is given.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct StartSessionInput {
     /// Any path inside the repository. The repository root is resolved by git
     /// rather than by walking for a `.git`, because a worktree's `.git` is a
@@ -157,8 +181,9 @@ pub struct StartSessionInput {
 ///
 /// One call rather than four, so a first paint cannot show a project list from
 /// one moment beside a session list from another.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct Snapshot {
     pub projects: Vec<ProjectView>,
     pub sessions: Vec<SessionView>,
@@ -173,8 +198,9 @@ pub struct Snapshot {
 /// A `Result<T, String>` forces the interface to match on prose to decide
 /// whether something is retryable — which is how a wording change becomes a
 /// behaviour change.
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error, ts_rs::TS)]
 #[serde(tag = "kind", content = "message", rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub enum AppError {
     #[error("{0}")]
     NoRepository(String),

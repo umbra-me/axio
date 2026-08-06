@@ -33,11 +33,9 @@ a minor bump may break things.
   write access to the files someone is using at the moment isolation was most
   clearly wanted. `Isolation::Direct` exists and is chosen.
 
-  Two things it deliberately does not do. Landing work — merge, pull request,
-  cherry-pick — is a workflow, and picking one would be wrong for the other two,
-  so the branch name, `status()` and `diff()` are what a caller gets instead. And
-  it is not wired into the binary: there are no `axio session` subcommands, and
-  `cargo tree -p axio` names no supervisor, so `cargo install axio` is unchanged.
+  One thing it deliberately does not do: landing work. Merge, pull request and
+  cherry-pick are workflows, and picking one would be wrong for the other two,
+  so the branch name, `status()` and `diff()` are what a caller gets instead.
 
 - **`axio session`, and `/new` and `/sessions` in the interactive surface.**
   A session works in a git worktree on its own branch, so several run at once
@@ -78,6 +76,15 @@ a minor bump may break things.
   is blocked on that pipe, and the child exiting does not break the cycle
   because the terminal outlives its process. Dropping a session would have hung
   the application on the click that closed a terminal.
+
+- **The TypeScript boundary is generated rather than mirrored.** Every shape
+  that crosses into the webview is derived from the Rust with ts-rs and written
+  into `ui/src/generated/` when the crate's tests run, so a Rust change with no
+  regeneration leaves a dirty tree rather than a silent mismatch.
+
+  It earned itself on the first run: a `u64` the hand-written mirror declared as
+  `number` came out as `bigint`, which is neither what the field means nor what
+  JSON IPC delivers. Those fields now say so explicitly.
 
 - **`axio-app`: a desktop surface over the same supervisor.** A window showing
   what is running across every repository — the rail, the session list, the

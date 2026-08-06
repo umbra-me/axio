@@ -20,8 +20,9 @@ use serde::{Deserialize, Serialize};
 use crate::model::AppError;
 
 /// A hosted agent, as a list row sees it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct HostedView {
     pub id: String,
     pub harness: String,
@@ -37,8 +38,9 @@ pub struct HostedView {
 }
 
 /// What starting one takes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct StartHostedInput {
     /// One of the allowlisted names. Never a command line.
     pub harness: String,
@@ -50,14 +52,23 @@ pub struct StartHostedInput {
 }
 
 /// Everything a read returns: the bytes, and where to ask from next.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
 pub struct HostedOutput {
     /// Decoded here rather than in the webview, because this side holds the
     /// whole stream and can decode across the chunk boundaries a `read` lands
     /// on. Lossy only at the very end, where a trailing partial character is
     /// genuinely incomplete rather than merely split.
     pub text: String,
+    /// `number`, not `bigint`. ts-rs maps `u64` to `bigint` by default, which
+    /// would be right for a boundary that preserved 64-bit integers — and this
+    /// one does not: Tauri's IPC is JSON, so what actually arrives is a JS
+    /// number. Declaring `bigint` would be a type that never matches the value.
+    /// Both quantities here are safe below 2^53: a millisecond timestamp until
+    /// the year 287396, and a byte cursor until nine petabytes through one
+    /// terminal.
+    #[ts(type = "number")]
     pub cursor: u64,
 }
 
