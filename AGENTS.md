@@ -163,6 +163,12 @@ Three invariants everything else follows from:
 
 ### axio-pty
 
+- **Hosting is a *windowing* capability, not an agent capability, and that is
+  why the CLI does not have it.** The invariant everywhere else is that no
+  surface holds something the command line lacks — but the command line is
+  already inside a terminal, so "run Claude Code in a pty" there is just running
+  Claude Code. The application provides a terminal because it does not have one.
+  Nothing about what an *agent* may do differs between the two.
 - **A hosted agent must not inherit `CLAUDE_CODE_*` or `CLAUDE_PID`.** A tool
   that finds them concludes it was started by a copy of itself and behaves as a
   child session. axio may itself have been launched by one, so they are stripped.
