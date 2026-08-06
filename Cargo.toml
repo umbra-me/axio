@@ -5,6 +5,7 @@ members = [
     "crates/axio-cost",
     "crates/axio-provider",
     "crates/axio-quota",
+    "crates/axio-supervisor",
     "crates/axio-tools",
     "crates/axio",
 ]
@@ -28,6 +29,7 @@ axio-core = { path = "crates/axio-core", version = "0.1.0" }
 axio-cost = { path = "crates/axio-cost", version = "0.1.0" }
 axio-provider = { path = "crates/axio-provider", version = "0.1.0" }
 axio-quota = { path = "crates/axio-quota", version = "0.1.0" }
+axio-supervisor = { path = "crates/axio-supervisor", version = "0.1.0" }
 axio-tools = { path = "crates/axio-tools", version = "0.1.0" }
 
 anyhow = "1.0.104"

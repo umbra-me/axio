@@ -1,6 +1,6 @@
 # Architecture
 
-Six crates and two binaries, in a tree rooted at a dependency-free core.
+Seven crates and two binaries, in a tree rooted at a dependency-free core.
 
 ```
                     ┌──────────────────── axio (bin) ─────────────────────┐
@@ -62,9 +62,46 @@ API what is left, and fails with an HTTP status; cost reads transcripts other
 programs wrote and adds them up, and fails with a line it cannot understand. One
 crate each keeps both budgets in `scripts/limits.sh` meaningful.
 
-**A long file is still not evidence for a seventh crate.** A file past 300 lines
+**A long file is still not evidence for an eighth crate.** A file past 300 lines
 becomes child modules — never another crate. Crates are how the dependency graph
 is kept honest, and a module that has grown says nothing about dependencies.
+
+## Many sessions at once
+
+`axio-supervisor` runs a lot of conversations rather than one: each on its own
+task, each in its own git worktree and branch, all reporting into one event
+stream and one pooled queue of approvals. It exists because `Agent::run_turn`
+takes `&mut self` — the right shape for one conversation and the wrong one for
+five, since a shared agent behind a lock would serialise every session behind
+whichever is currently talking to a model.
+
+It is the only crate besides `axio` that is not a leaf, and it is defined as
+much by the dependency it refuses as by the ones it takes. Running many sessions
+means building many agents, and building one means choosing a provider,
+registering tools and resolving a policy — so the obvious shape would depend on
+`axio-provider` and `axio-tools`, which is most of the workspace. Instead agents
+arrive through an injected `AgentFactory`. It therefore links neither, its tests
+run against `ScriptedProvider` in milliseconds, and — the part that matters for
+the product rather than the build — the CLI and the desktop app drive the same
+supervisor with their own wiring, so **neither can hold a capability the other
+lacks**.
+
+Nothing in it is reachable from a tool. Worktrees, branches, the session index
+and the approval queue are host state, which is what keeps `ToolCx` closed at
+five fields and every tool working identically in a one-shot run. It spawns
+`git`, which is not a hole in "`axio-tools` is the only crate that spawns a
+process": that rule is about processes run *on the model's behalf*. libgit2 is
+deliberately not linked, because it compiles C and `cargo install axio` is
+promised not to need a C toolchain.
+
+Isolation is the default and never a fallback. If a worktree cannot be cut,
+starting fails — falling back to the live checkout would hand an agent write
+access to the files someone is using, silently, at the moment isolation was most
+clearly wanted. `Isolation::Direct` exists and is chosen.
+
+Landing work is deliberately absent. Merging, pull requests and cherry-picking
+are workflows, and picking one would be wrong for the other two; the branch
+name, `status()` and `diff()` are what a caller needs to land it its own way.
 
 ## The three invariants
 

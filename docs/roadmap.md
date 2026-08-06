@@ -127,6 +127,37 @@ window share it and neither pays half a minute to rediscover what has not
 changed. `--calendar` and the app's Stats tab draw the year as a shape rather
 than a number.
 
+### M11 — many sessions at once
+
+`axio-supervisor` and the seventh crate: a session per task, each in its own git
+worktree and branch, one pooled queue of approvals across all of them, and a
+sidecar index so "what is running on this repository" is answerable without
+opening every session file. Isolation is the default, and a worktree that cannot
+be cut is an error rather than a quiet fall back to the checkout in use — that
+being the one failure nobody notices until two agents have overwritten each
+other.
+
+This is where three of the tripwires below fired at once, which is what that
+table is for. A desktop application is now in the horizon; several surfaces mean
+a second process genuinely exists; and a non-Rust consumer is coming, which is
+what typed IPC was waiting for. None of those is built yet. The supervisor is
+the library all of them will drive, and agents reach it through an injected
+`AgentFactory` — so the CLI and any later surface hold the same capabilities by
+construction rather than by intention.
+
+Two things are deliberately absent. **Landing work** — merge, pull request,
+cherry-pick — is a workflow, and a supervisor that picked one would be wrong for
+the other two; the branch name, the status and the diff are what a caller needs
+to land it its own way. And **the inbound half of the protocol**: `protocol.rs`
+still describes only what a surface *sees*, while submitting a prompt,
+cancelling, resolving an approval and changing model are a Rust API rather than
+a serde vocabulary. That is ordering, not design — the tag comes first, and the
+API is shaped so the wire form maps onto it one to one.
+
+It is not yet wired into the binary. There are no `axio session` subcommands,
+and `cargo tree -p axio` names no supervisor, so a default `cargo install axio`
+is unchanged by any of it.
+
 ## Next
 
 ### v0.1 — the release itself

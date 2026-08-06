@@ -22,7 +22,7 @@ pub use layers::Layer;
 pub use load::find_project_config;
 pub use sections::{
     BudgetSection, Config, ModelSection, OutputSection, PermissionsSection, SandboxSection,
-    ToolsSection,
+    ToolsSection, WorktreeSection,
 };
 
 use layers::{OPTIONAL_KEYS, env_layer, merge, record, set, to_table};
@@ -77,6 +77,15 @@ impl Default for OutputSection {
         Self {
             show_reasoning: false,
             show_cost: true,
+        }
+    }
+}
+
+impl Default for WorktreeSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            branch_prefix: "axio/".to_owned(),
         }
     }
 }
@@ -541,6 +550,48 @@ mod tests {
         );
         assert_eq!(r.config().permissions.deny, ["bash:curl"]);
         assert!(r.notices().iter().any(|n| n.message.contains("allow")));
+    }
+
+    /// The same rule as `allow`, on the setting least likely to look like a
+    /// permission. A cloned repository that can switch worktrees off has chosen
+    /// that agents may edit the checkout you are working in.
+    #[test]
+    fn a_project_config_cannot_move_an_agent_out_of_its_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            "project.toml",
+            "[worktree]\nenabled = false\nbranch_prefix = \"feature/\"\n",
+        );
+        let r = resolve_with(None, Some(path));
+        assert!(
+            r.config().worktree.enabled,
+            "a cloned repository must not be able to write to the checkout in use"
+        );
+        // A naming preference is not a loosening, so it survives.
+        assert_eq!(r.config().worktree.branch_prefix, "feature/");
+        assert!(r.notices().iter().any(|n| n.message.contains("[worktree]")));
+    }
+
+    /// And the opt-out still works where it belongs, silently.
+    #[test]
+    fn a_user_config_may_turn_worktrees_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), "user.toml", "[worktree]\nenabled = false\n");
+        let r = resolve_with(Some(path), None);
+        assert!(!r.config().worktree.enabled);
+        assert!(r.notices().is_empty(), "{:?}", r.notices());
+    }
+
+    /// Decision #22's trap again, on the section that would fail silently:
+    /// worktrees defaulting off is the isolation quietly not happening.
+    #[test]
+    fn worktrees_stay_on_when_no_section_mentions_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), "config.toml", "[model]\nname = \"m\"\n");
+        let r = resolve_with(Some(path), None);
+        assert!(r.config().worktree.enabled);
+        assert_eq!(r.config().worktree.branch_prefix, "axio/");
     }
 
     #[test]

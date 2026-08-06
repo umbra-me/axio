@@ -32,7 +32,7 @@ git config core.hooksPath .githooks                 # one-time, per clone
 
 ## Architecture
 
-Six crates and two binaries. The dependency graph is a tree rooted at
+Seven crates and two binaries. The dependency graph is a tree rooted at
 `axio-core`, so there are no cycles and no cycle-breaker crates.
 
 | Crate | Owns |
@@ -42,9 +42,28 @@ Six crates and two binaries. The dependency graph is a tree rooted at
 | `axio-tools` | The six tools, subprocess helpers, diff previews, byte-stable schemas. The only crate that walks a filesystem or spawns a process |
 | `axio-cost` | What the coding agents on this machine have spent, read from the session transcripts they already write. Token normalization, deduplication, a bundled price table, and one parser per agent — three hand-written, the rest table-driven. Behind the `sqlite` feature it also reads the agents whose store is a database. Depends on nothing else in the workspace |
 | `axio-quota` | Provider quota probes — the credential files `codex` and `claude` wrote, and the usage endpoints behind them — plus local history, and behind the `app` feature the Tauri desktop surface: tray icon, HTML flyout, window. Depends on nothing else in the workspace |
+| `axio-supervisor` | Many sessions at once, across many repositories: one task per session, a git worktree and branch each, one pooled approval queue, and a sidecar index of what exists. Builds no agents — they arrive through `AgentFactory` — so it links no transport and no tools |
 | `axio` | clap, surface selection, renderers, the inline TUI and its slash commands, the optional Landlock sandbox, `Approver` implementations, `axio quota`, `axio cost` |
 
 ### Workspace member justification
+
+`axio-supervisor` is the seventh member, and the reason is the dependency it
+*refuses* rather than the ones it takes. Running many sessions at once means
+building many agents, and building one means choosing a provider, registering
+tools and resolving a policy — so the obvious shape would have it depend on
+`axio-provider` and `axio-tools`, which is most of the workspace. Instead
+agents arrive through an injected `AgentFactory`, so it links neither, and its
+tests run against `ScriptedProvider` in milliseconds like `axio-core`'s.
+
+The same seam is what keeps the CLI and the desktop app one product: both drive
+this crate with their own wiring, so neither can hold a capability the other
+lacks. It is also the only crate besides `axio` that is not a leaf — the graph
+is still a tree rooted at `axio-core`, just wider at the top.
+
+It spawns `git`, which is not a hole in "`axio-tools` is the only crate that
+spawns a process": that rule is about processes run **on the model's behalf**,
+and nothing here is reachable from a tool. libgit2 is deliberately not used —
+it compiles C, and `cargo install axio` is promised not to need a C toolchain.
 
 `axio-cost` is the sixth member, and like the fifth the reason is isolation
 rather than size. It is one parser per agent over a shared normalization layer,
@@ -111,6 +130,38 @@ Three invariants everything else follows from:
    one, so `--json`, and later a second process, are additive.
 
 ## Gotchas
+
+### axio-supervisor
+
+- **A ULID orders by time only across milliseconds.** Its first ten characters
+  are the timestamp and the rest is random, so two sessions started in the same
+  millisecond sort arbitrarily — which a queue of agents does routinely. The
+  session index therefore keeps **file order**, not id order, and a worktree
+  branch is named with the *whole* ULID rather than a readable prefix.
+- **A worktree path is recorded exactly as git was given it, never
+  canonicalised.** git registers a worktree under the string it was handed, and
+  on Windows `canonicalize` returns the `\\?\` extended-length form — a
+  different string, so `worktree remove` fails to match its own registration and
+  every closed session leaks a directory. `Workspace` canonicalises for
+  confinement on its own, so nothing downstream needs it.
+- **The approval queue cannot be dropped to shut it down.** Every session's
+  approver holds an `Arc` to it, so it outlives the supervisor by construction,
+  and session tasks are detached. `ApprovalQueue::shutdown` exists because
+  without it a turn that asks a question after the last surface closed waits
+  forever for an answer nobody can give.
+- **Cancellation does not travel the session's command channel.** The task is
+  inside `run_turn` and would not read the message until the turn it is meant to
+  interrupt had already finished. It goes through the token the handle holds.
+- **Isolation failing is an error, never a downgrade.** Falling back to the live
+  checkout would hand an agent write access to the files you are using, silently,
+  at the moment isolation was most clearly wanted. `Isolation::Direct` is chosen.
+- **`[worktree] enabled = false` is refused from a project config**, like
+  `[permissions] allow`. It does not look like a permission, which is exactly
+  why it is worth stating: a repository that could set it would be deciding that
+  a clone of it may edit your working tree.
+- Landing work — merge, pull request, cherry-pick — is deliberately **not** here.
+  It is a workflow, and picking one would be wrong for the other two. The branch
+  name, `status()` and `diff()` are what a caller needs to land it its own way.
 
 ### axio-quota
 

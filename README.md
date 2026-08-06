@@ -141,10 +141,20 @@ deny = ["bash:curl"]
 enabled = true
 read = ["/home/me/.pyenv"]
 write = ["/home/me/.cache/go-build"]
+
+[worktree]         # supervised sessions; on by default
+enabled = false    # user config only — see below
+branch_prefix = "axio/"
 ```
 
 A project's own `.axio/config.toml` may only add restrictions, never remove
-them. Sections axio does not use are ignored — it will not complain about, or
+them. That covers `[permissions] allow`, and it covers `[worktree] enabled =
+false` — which does not look like a permission, and is the point. Supervised
+sessions each get their own git worktree and branch, so an agent edits an
+isolated checkout rather than the one you are using; a repository that could
+switch that off would be deciding, for anyone who cloned it, that its agents
+may write to your working tree. Turning it off is yours to do, in your own
+config or for one session at a time. Sections axio does not use are ignored — it will not complain about, or
 touch, a file that belongs to something else.
 
 If the workspace root has an `AGENTS.md` — or a `CLAUDE.md`, when there is no
@@ -412,7 +422,7 @@ different questions, which genuinely diverge when a CLI is pointed at a proxy.
 
 ## Shape
 
-Six crates and two binaries:
+Seven crates and two binaries:
 
 | Crate           | Contains                                                        |
 | --------------- | --------------------------------------------------------------- |
@@ -421,6 +431,7 @@ Six crates and two binaries:
 | `axio-tools`    | `read`, `write`, `edit`, `bash`, `glob`, `grep`                  |
 | `axio-quota`    | Provider limit probes, local history, and the desktop app behind `app` |
 | `axio-cost`     | What the agents on this machine have spent, read from their own transcripts |
+| `axio-supervisor` | Many sessions at once, across many repositories — a worktree and branch each, one queue of approvals |
 | `axio`          | The binary — one-shot CLI when piped or given `-p`, interactive on a TTY |
 
 `axio-quota` and `axio-cost` are leaves: they depend on no other crate here, and

@@ -46,6 +46,7 @@ crate_budget() {
     axio-cost) echo 6000 ;;      # one parser per agent, and there are dozens of agents
     axio-provider) echo 5000 ;;  # one block per transport
     axio-quota) echo 3000 ;;     # probes, plus the Windows tray surface
+    axio-supervisor) echo 3000 ;; # session lifecycle, worktrees, the approval queue, the index
     axio-tools) echo 4000 ;;     # one module per tool
     axio) echo 10000 ;;          # every surface
     *) echo '' ;;

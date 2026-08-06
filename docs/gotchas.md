@@ -745,3 +745,45 @@ asking a question the throttle would otherwise decline to answer silently.
 got into a stylesheet through an editing pipeline that wrote a separator
 character as a real byte rather than as source text, and the only symptom was
 git refusing to diff the file. No other tracked source file has any.
+
+## Supervised sessions
+
+**A ULID orders by time only across milliseconds.** Its first ten characters are
+the timestamp and the rest is random, so two ids minted in the same millisecond
+sort arbitrarily — and a queue of agents starts sessions in the same millisecond
+as a matter of course. The session index therefore holds file order rather than
+id order, and a worktree's branch carries the whole ULID rather than a readable
+prefix. Sorting a list of sessions by id looks correct in every test with a sleep
+in it and is wrong in the case the feature exists for.
+
+**Record a worktree's path exactly as git was given it.** git registers a
+worktree under the string it was handed, and on Windows `canonicalize` returns
+the `\?\` extended-length form — a different string, so `worktree remove` fails
+to match its own registration and every closed session leaks a directory.
+`Workspace` canonicalises for confinement on its own, so nothing downstream needs
+the real path.
+
+**An approval queue cannot be shut down by dropping it.** Every session's
+approver holds an `Arc` to it, so it outlives the supervisor by construction, and
+session tasks are detached so they keep running. Without an explicit shutdown
+that answers, a turn asking for approval after the last surface closed waits
+forever for a decision nobody can give. Dropping the sender would work by
+accident; saying it deliberately is what lets the model get the right feedback.
+
+**Cancellation must not travel the same channel as the work.** A session task
+sits inside `run_turn` for the whole turn and would not read a cancel message
+until the turn it was meant to interrupt had already finished. It goes through a
+token the handle holds, which is the only thing that reaches a turn in flight.
+
+**Isolation must fail loudly, never quietly downgrade.** Falling back to the live
+checkout when a worktree cannot be cut hands an agent write access to the files
+someone is using — silently, at the moment isolation was most clearly wanted.
+Running without a worktree is a choice someone makes, not a consequence of an
+error they never saw.
+
+**Not every loosening looks like a permission.** A project config may not set
+`worktree.enabled = false` for the same reason it may not set `permissions.allow`:
+it moves an agent out of an isolated checkout and into the working tree of anyone
+who cloned the repository. The test for a project-settable key is not "is this a
+permission" but "could a repository I cloned use this to increase what an agent
+can touch".

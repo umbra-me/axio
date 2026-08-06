@@ -4,7 +4,7 @@
 //! survives. A configuration that is wholly valid is never backed up.
 
 use super::sections::{
-    BudgetSection, ModelSection, OutputSection, PermissionsSection, ToolsSection,
+    BudgetSection, ModelSection, OutputSection, PermissionsSection, ToolsSection, WorktreeSection,
 };
 use super::*;
 
@@ -110,6 +110,27 @@ pub(super) fn load_file(path: &Path, project: bool) -> (Option<toml::Table>, Vec
                 ),
             });
         }
+        // The same rule, one step less obvious. `worktree.enabled = false` is
+        // not a permission, so it reads like an ordinary preference — but it
+        // moves the agent out of an isolated checkout and into the one you are
+        // working in. A repository that could set it would be choosing, on your
+        // behalf, that a clone of it may edit your files directly. Only turning
+        // it *off* is refused: a project asking for the default is not a
+        // loosening, and `branch_prefix` is a naming preference either way.
+        if let Some(toml::Value::Table(worktree)) = kept.get_mut("worktree")
+            && worktree.get("enabled").and_then(toml::Value::as_bool) == Some(false)
+        {
+            worktree.remove("enabled");
+            notices.push(Notice {
+                level: NoticeLevel::Warn,
+                message: format!(
+                    "ignoring [worktree] enabled = false in {}: a project config may only \
+                     add restrictions, and running outside a worktree lets an agent write \
+                     to the checkout you are using",
+                    path.display()
+                ),
+            });
+        }
     }
 
     if lost {
@@ -130,7 +151,7 @@ pub(super) fn load_file(path: &Path, project: bool) -> (Option<toml::Table>, Vec
 pub(super) fn is_known_section(name: &str) -> bool {
     matches!(
         name,
-        "model" | "budget" | "tools" | "permissions" | "output" | "sandbox"
+        "model" | "budget" | "tools" | "permissions" | "output" | "sandbox" | "worktree"
     )
 }
 
@@ -144,6 +165,7 @@ pub(super) fn section_is_valid(name: &str, value: &toml::Value) -> bool {
         "permissions" => v.try_into::<PermissionsSection>().is_ok(),
         "output" => v.try_into::<OutputSection>().is_ok(),
         "sandbox" => v.try_into::<SandboxSection>().is_ok(),
+        "worktree" => v.try_into::<WorktreeSection>().is_ok(),
         _ => false,
     }
 }

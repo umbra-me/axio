@@ -9,6 +9,45 @@ a minor bump may break things.
 
 ### Added
 
+- **`axio-supervisor`: many sessions at once, across many repositories.** A
+  session per task, each isolated in its own git worktree on its own branch, all
+  reporting into one event stream and one pooled queue of approvals, with a
+  sidecar index so "what is running on this repository" is answerable without
+  opening every session file.
+
+  Agents arrive through an injected `AgentFactory` rather than being built here.
+  That keeps the crate free of every transport and every tool — its own tests run
+  against a scripted provider in milliseconds — and, more to the point, it is
+  what lets the CLI and any later surface drive the same supervisor with their
+  own wiring. Neither can hold a capability the other lacks, by construction.
+
+  Nothing in it is reachable from a tool. Worktrees, branches, the index and the
+  queue are host state, so `ToolCx` stays closed at five fields and every tool
+  goes on working identically in a one-shot run. `git` is shelled out to rather
+  than linked, because libgit2 compiles C and a default install is promised not
+  to need a C toolchain; the credential is stripped from its environment, since
+  hooks are code the repository author wrote.
+
+  Isolation is the default and never a fallback: a worktree that cannot be cut
+  is an error, because falling back to the live checkout would hand an agent
+  write access to the files someone is using at the moment isolation was most
+  clearly wanted. `Isolation::Direct` exists and is chosen.
+
+  Two things it deliberately does not do. Landing work — merge, pull request,
+  cherry-pick — is a workflow, and picking one would be wrong for the other two,
+  so the branch name, `status()` and `diff()` are what a caller gets instead. And
+  it is not wired into the binary: there are no `axio session` subcommands, and
+  `cargo tree -p axio` names no supervisor, so `cargo install axio` is unchanged.
+
+- **`[worktree]` configuration**, with `enabled` defaulting to **on** and
+  `branch_prefix` to `axio/`.
+
+  `enabled = false` is refused from a project config, like `[permissions] allow`.
+  It does not look like a permission, which is exactly why it is worth stating:
+  turning it off moves an agent out of an isolated checkout and into the one you
+  are working in, so a repository that could set it would be deciding, for
+  everyone who cloned it, that its agents may write to your working tree.
+
 - **`axio cost`, and the `axio-cost` crate behind it.** What the coding agents on
   this machine have spent, read from the session transcripts they already write.
   No network, no credentials. Group with `--by model|client|session|day|workspace`,

@@ -16,6 +16,7 @@ pub struct Config {
     pub permissions: PermissionsSection,
     pub output: OutputSection,
     pub sandbox: SandboxSection,
+    pub worktree: WorktreeSection,
 }
 
 impl Config {
@@ -52,6 +53,30 @@ pub struct SandboxSection {
     pub read: Vec<String>,
     /// Extra paths a command may write.
     pub write: Vec<String>,
+}
+
+/// Where a supervised session does its work.
+///
+/// On by default, and the default is the whole point: several sessions editing
+/// one checkout at once is not concurrency, it is a merge conflict nobody
+/// asked for. Each session gets its own git worktree and its own branch, so
+/// what an agent did is a diff you can read before it touches anything you
+/// were using.
+///
+/// Turning it **off** is a real loosening — the agent then writes into the
+/// checkout you are working in — which is why a project config may not do it.
+/// See the project half of `load_file`.
+///
+/// Hand-written `Default`, like [`OutputSection`], because `enabled` defaults
+/// to `true` and `#[serde(default = "…")]` never fires for an absent table.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorktreeSection {
+    pub enabled: bool,
+    /// What each session's branch is named under. A trailing separator is not
+    /// assumed — the prefix is used verbatim, so `axio/` and `axio-` both work
+    /// and neither is guessed at.
+    pub branch_prefix: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
