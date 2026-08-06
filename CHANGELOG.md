@@ -70,6 +70,12 @@ a minor bump may break things.
   cursor rather than pushed, so a webview reload asks for everything after the
   position it held and gets exactly the gap. Killing takes the whole tree.
 
+  Terminal output reaches the window because Rust said something happened, not
+  because a timer fired — sixteen IPC round trips a second per open terminal was
+  the cost of the alternative. The signal carries no bytes: those still come
+  back through a cursor, so a listener that missed one is late rather than out
+  of sync, and a slow fallback timer covers the case.
+
   Verified against a real pseudo-terminal: spawn, output reaching the ring, the
   exit being noticed, kill, and resize. Getting there found a bug worth the
   trip — closing a ConPTY waits for its output pipe to drain, the reader thread

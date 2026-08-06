@@ -184,8 +184,14 @@ Three invariants everything else follows from:
 - **Output is bytes, and decoding happens where the whole stream is.** A `read`
   lands wherever the kernel decided; decoding each chunk turns any multi-byte
   character straddling that boundary into a replacement character, permanently.
-- **Reads are pulled by cursor, not pushed.** Something is always not listening -
-  every webview reload - and a push-only stream loses whatever arrived then.
+- **Reads are pulled by cursor; only the *signal* is pushed.** Something is
+  always not listening — every webview reload — and a push-only stream loses
+  whatever arrived then. `HarnessSession::wrote()` says something happened and
+  carries no bytes, so a listener that missed a signal is late rather than out
+  of sync. A surface keeps a slow fallback timer for exactly that case.
+- **`Notify::notify_waiters` wakes only whoever is already waiting.** The future
+  has to be created *before* the read it guards, or output landing in the gap
+  wakes nobody. The cursor is what makes that survivable rather than fatal.
 - **A submitted line is two writes: the text, then the carriage return.** A
   provider that treats one combined chunk as a paste leaves the text on its
   prompt unsent, which reads as the agent ignoring you.

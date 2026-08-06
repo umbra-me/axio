@@ -49,6 +49,13 @@ pub struct HarnessSession {
     /// on whatever thread happened to release the session.
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     output: Arc<Mutex<Ring>>,
+    /// Signalled whenever the ring advances.
+    ///
+    /// A notification, never the bytes. A reader still asks by cursor, which is
+    /// what keeps a reload correct — the signal only removes the need to ask on
+    /// a timer. Pushing the bytes themselves would mean anything not listening
+    /// at that instant lost them, which is the failure the cursor exists for.
+    wrote: Arc<tokio::sync::Notify>,
     status: Arc<Mutex<HarnessStatus>>,
     /// The direct child. On Windows this is `cmd.exe`, which is why killing it
     /// is not the same as killing what it started — see [`HarnessSession::kill`].
@@ -110,8 +117,9 @@ impl HarnessSession {
 
         let output = Arc::new(Mutex::new(Ring::new()));
         let status = Arc::new(Mutex::new(HarnessStatus::Running));
-        pump(reader, Arc::clone(&output));
-        watch(child, Arc::clone(&status));
+        let wrote = Arc::new(tokio::sync::Notify::new());
+        pump(reader, Arc::clone(&output), Arc::clone(&wrote));
+        watch(child, Arc::clone(&status), Arc::clone(&wrote));
 
         Ok(Self {
             harness,
@@ -119,9 +127,21 @@ impl HarnessSession {
             writer: Arc::new(Mutex::new(writer)),
             master: Mutex::new(Some(pair.master)),
             output,
+            wrote,
             status,
             pid,
         })
+    }
+
+    /// Resolves the next time this terminal writes anything, or ends.
+    ///
+    /// For a surface that would otherwise ask on a timer. `notify_waiters` only
+    /// wakes whoever is already waiting, so a caller must hold this future
+    /// across its read rather than creating one afterwards — otherwise output
+    /// that lands in the gap wakes nobody. The cursor makes that survivable
+    /// rather than fatal, which is exactly why the signal carries no bytes.
+    pub fn wrote(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.wrote)
     }
 
     /// Everything written after `from`, and the cursor to ask with next time.
@@ -241,14 +261,16 @@ impl HarnessSession {
             .map_err(|e| PtyError::Io(e.to_string()))?;
         let output = Arc::new(Mutex::new(Ring::new()));
         let status = Arc::new(Mutex::new(HarnessStatus::Running));
-        pump(reader, Arc::clone(&output));
-        watch(child, Arc::clone(&status));
+        let wrote = Arc::new(tokio::sync::Notify::new());
+        pump(reader, Arc::clone(&output), Arc::clone(&wrote));
+        watch(child, Arc::clone(&status), Arc::clone(&wrote));
         Ok(Self {
             harness: Harness::Axio,
             cwd: std::env::temp_dir(),
             writer: Arc::new(Mutex::new(writer)),
             master: Mutex::new(Some(pair.master)),
             output,
+            wrote,
             status,
             pid,
         })
@@ -328,17 +350,26 @@ fn command_for(harness: Harness) -> CommandBuilder {
 ///
 /// A thread rather than a task: `Read` on a pty master blocks, and blocking a
 /// tokio worker starves everything sharing it.
-fn pump(mut reader: Box<dyn Read + Send>, output: Arc<Mutex<Ring>>) {
+fn pump(
+    mut reader: Box<dyn Read + Send>,
+    output: Arc<Mutex<Ring>>,
+    wrote: Arc<tokio::sync::Notify>,
+) {
     std::thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let Ok(mut ring) = output.lock() else { break };
-                    // Bytes, not text. Decoding here would corrupt any character
-                    // unlucky enough to straddle this boundary.
-                    ring.push(&buffer[..n]);
+                    {
+                        let Ok(mut ring) = output.lock() else { break };
+                        // Bytes, not text. Decoding here would corrupt any
+                        // character unlucky enough to straddle this boundary.
+                        ring.push(&buffer[..n]);
+                    }
+                    // After the lock is released: a waiter woken while this
+                    // thread still held it would block on its own read.
+                    wrote.notify_waiters();
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
@@ -347,7 +378,11 @@ fn pump(mut reader: Box<dyn Read + Send>, output: Arc<Mutex<Ring>>) {
     });
 }
 
-fn watch(mut child: Box<dyn portable_pty::Child + Send + Sync>, status: Arc<Mutex<HarnessStatus>>) {
+fn watch(
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    status: Arc<Mutex<HarnessStatus>>,
+    wrote: Arc<tokio::sync::Notify>,
+) {
     std::thread::spawn(move || {
         let ended = match child.wait() {
             Ok(exit) => HarnessStatus::Exited(exit.exit_code() as i32),
@@ -361,6 +396,9 @@ fn watch(mut child: Box<dyn portable_pty::Child + Send + Sync>, status: Arc<Mute
                 *slot = ended;
             }
         }
+        // An exit is news too. Without this a surface waiting on output sits
+        // there after the process is gone, showing it as running.
+        wrote.notify_waiters();
     });
 }
 
@@ -450,6 +488,44 @@ mod tests {
         settle(&session, "bye").await;
         session.kill().await.expect("kill is idempotent");
         assert_eq!(session.status(), HarnessStatus::Ended);
+    }
+
+    /// The signal a surface waits on instead of asking on a timer.
+    ///
+    /// Registered before the read, which is the discipline `Notify` demands:
+    /// created afterwards, output landing in the gap would wake nobody.
+    #[tokio::test]
+    async fn a_write_wakes_whoever_is_waiting() {
+        let session = echo("woke").expect("a terminal");
+        let wrote = session.wrote();
+
+        let woken = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let waiting = wrote.notified();
+                // The cursor query has to be answered or nothing ever flows;
+                // this stands in for the terminal that would answer it.
+                let (seen, _) = session.read_from(0);
+                if seen.windows(4).any(|w| w == b"[6n") {
+                    let _ = session.write(b"[1;1R");
+                }
+                if String::from_utf8_lossy(&seen).contains("woke") {
+                    return true;
+                }
+                if tokio::time::timeout(std::time::Duration::from_millis(500), waiting)
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+        })
+        .await
+        .expect("the signal must arrive rather than hang");
+
+        assert!(
+            woken,
+            "a write has to wake a waiter, or a surface polls forever"
+        );
     }
 
     #[tokio::test]

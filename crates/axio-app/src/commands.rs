@@ -17,7 +17,7 @@
 //! window; routing it through here keeps a place that can refuse — which
 //! matters as soon as a session is running work somebody would lose.
 
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use crate::hosted::{HostedOutput, HostedView, StartHostedInput};
 use crate::model::{
@@ -100,12 +100,20 @@ pub async fn hosted_list(state: Shared<'_>) -> Result<Vec<HostedView>, AppError>
     Ok(state.hosted.list())
 }
 
+/// Start a hosted agent, and tell the window when it writes.
+///
+/// The event carries the session id only. Bytes still come back through
+/// `hosted_read` and a cursor, so a listener that missed a signal is late
+/// rather than out of sync — which is what makes a webview reload survivable.
 #[tauri::command]
 pub async fn hosted_start(
+    app: tauri::AppHandle,
     state: Shared<'_>,
     input: StartHostedInput,
 ) -> Result<HostedView, AppError> {
-    state.hosted.start(input)
+    state.hosted.start_with_signal(input, move |id| {
+        let _ = app.emit("axio://hosted-activity", id);
+    })
 }
 
 #[tauri::command]

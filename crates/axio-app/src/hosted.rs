@@ -90,6 +90,35 @@ impl Hosted {
         format!("h{next}")
     }
 
+    /// Start one, and relay its "something happened" signal to `on_activity`.
+    ///
+    /// The callback is given the session id and nothing else, deliberately.
+    /// What it is for is telling a surface to *ask*, not telling it what
+    /// changed — the bytes still come back through a cursor, so a listener that
+    /// missed a signal is late rather than wrong.
+    pub fn start_with_signal(
+        &self,
+        input: StartHostedInput,
+        on_activity: impl Fn(String) + Send + 'static,
+    ) -> Result<HostedView, AppError> {
+        let view = self.start(input)?;
+        let id = view.id.clone();
+        if let Ok(session) = self.get(&id) {
+            let wrote = session.wrote();
+            tokio::spawn(async move {
+                loop {
+                    // Registered before the wait, which is the whole discipline
+                    // of `Notify`: created afterwards, output landing in the gap
+                    // would wake nobody.
+                    let waiting = wrote.notified();
+                    waiting.await;
+                    on_activity(id.clone());
+                }
+            });
+        }
+        Ok(view)
+    }
+
     pub fn start(&self, input: StartHostedInput) -> Result<HostedView, AppError> {
         let harness = Harness::parse(&input.harness).ok_or_else(|| {
             AppError::NoRepository(format!("`{}` is not an agent axio can host", input.harness))

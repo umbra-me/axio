@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { listen } from "@tauri-apps/api/event";
 import { api, type HostedView } from "./bridge";
 
 // A hosted agent's own interface, unmodified.
@@ -15,7 +16,12 @@ import { api, type HostedView } from "./bridge";
 // but not the terminal - Rust owns that - so remounting asks for everything
 // after the position it holds and gets exactly the gap.
 
-const POLL_MS = 60;
+// A fallback, not the mechanism. Rust signals when the ring advances, so this
+// only covers a signal that was missed - which is possible by construction,
+// because `notify_waiters` wakes whoever is already waiting and a listener
+// registering a moment late hears nothing. The cursor makes that survivable:
+// missing a signal means arriving late, never losing output.
+const FALLBACK_MS = 1000;
 
 export function HostedTerminal({ session }: { session: HostedView }) {
   const host = useRef<HTMLDivElement>(null);
@@ -79,7 +85,13 @@ export function HostedTerminal({ session }: { session: HostedView }) {
       }
     };
     void pull();
-    const timer = window.setInterval(() => void pull(), POLL_MS);
+    const timer = window.setInterval(() => void pull(), FALLBACK_MS);
+    // The real path: read because something was written, not because a timer
+    // fired. Sixteen IPC round trips a second per open terminal was the cost of
+    // the alternative.
+    const unlisten = listen<string>("axio://hosted-activity", (event) => {
+      if (event.payload === session.id) void pull();
+    });
 
     const resize = () => {
       fit.fit();
@@ -92,6 +104,7 @@ export function HostedTerminal({ session }: { session: HostedView }) {
     return () => {
       stopped = true;
       window.clearInterval(timer);
+      void unlisten.then((off) => off());
       observer.disconnect();
       typed.dispose();
       term.dispose();
