@@ -137,12 +137,28 @@ impl Tui {
 
         match login.stage() {
             LoginStage::Provider => {
-                lines.push(Line::styled("  credential for which provider?", dim));
                 let chosen = login.provider_index();
-                // The list is three long and the area is about three rows, so
-                // it is shown whole rather than windowed; if a fourth provider
-                // ever exists this needs the menu's treatment.
-                for (i, provider) in axio_core::auth::PROVIDERS.iter().enumerate() {
+                let providers = axio_core::auth::PROVIDERS;
+
+                // Windowed around the selection, like the menu. It used to draw
+                // the whole list on the assumption that three providers fit in
+                // about three rows, and left a note saying a fourth would need
+                // this. A fourth arrived. The tail below drains from the *front*
+                // when it overflows, so the effect was the question and the
+                // first providers scrolling silently off the top — the
+                // highlight could be on a row that was no longer drawn.
+                //
+                // The question earns a row only when the list does not need it.
+                let header = rows > providers.len();
+                if header {
+                    lines.push(Line::styled("  credential for which provider?", dim));
+                }
+                let room = rows.saturating_sub(usize::from(header)).max(1);
+                let first = chosen
+                    .saturating_sub(room.saturating_sub(1))
+                    .min(providers.len().saturating_sub(room));
+
+                for (i, provider) in providers.iter().enumerate().skip(first).take(room) {
                     let here = i == chosen;
                     lines.push(Line::from(vec![
                         Span::styled(

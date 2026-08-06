@@ -360,6 +360,24 @@ still readable when it arrives. Like everything else that touches raw mode it is
 unreachable from the suite — a test that installs a hook installs it for every
 test after.
 
+**The viewport's height is the menu's height, and it cannot change.** An inline
+viewport is sized when the terminal is created and ratatui offers no setter;
+`Terminal::resize` recomputes the origin from the height already stored. So
+`VIEWPORT_ROWS` minus the composer's frame and the status bar is exactly what
+every overlay gets, and a list longer than that silently shows part of itself.
+It was seven, chosen when the slash menu had three commands and the only
+provider list was three long; both outgrew it, and the symptom was a menu that
+displayed half of itself. Anything that adds a command or a provider is changing
+the size of a fixed area — the tests iterate the real lists so it fails there
+rather than on screen.
+
+**A list that overflows must window around the selection, never trim from one
+end.** The credential form drew every provider and then dropped the excess from
+the front, so the question and the first entries scrolled off the top and the
+highlight could sit on a row that was no longer drawn. Trimming the *tail* is
+right for a streaming answer, where the newest line is the one to keep, and
+wrong for a list, where the selected row is.
+
 ## The sandbox
 
 **A hand-written list of credential variables protects the provider its author

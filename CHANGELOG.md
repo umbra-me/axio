@@ -350,6 +350,29 @@ a minor bump may break things.
 
 ### Fixed
 
+- **The slash menu and the provider lists show every entry.** Opening `/` drew
+  three of six commands, and the `/login` provider list could not show its last
+  provider — with nothing on screen saying the rest were there.
+
+  The live area is an inline viewport whose height is fixed when it is created;
+  ratatui offers no way to change it after, and `Terminal::resize` recomputes the
+  origin from the height already stored. Seven rows, minus the composer's frame
+  and the status bar, left the overlays exactly three. Seven was chosen when the
+  menu had three commands and the only provider list was three long, and both
+  outgrew it — `openai-codex` arriving as the fourth provider is what pushed the
+  list past the edge. It is now ten, so the overlays get six, and the streaming
+  tail gets six rather than three as well.
+
+  The credential form had a second bug behind the first: it drew the whole
+  provider list and then trimmed the overflow **from the front**, so the question
+  and the first providers scrolled silently off the top and the highlight could
+  land on a row that was no longer drawn. It now windows around the selection
+  like the menu does, and the question yields its row when the list needs it. The
+  code had predicted this on itself — "if a fourth provider ever exists this
+  needs the menu's treatment" — and nothing enforced the note, so the tests added
+  with the fix iterate the real command and provider lists rather than asserting
+  a count.
+
 - **The app no longer freezes on the first Cost or Stats view**, and the cause
   was one keyword: a Tauri command declared `fn` rather than `async fn` runs on
   the main thread, which is also the thread that paints and handles input. The

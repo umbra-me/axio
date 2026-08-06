@@ -60,15 +60,25 @@ pub use state::Tui;
 use terminal::{install_panic_hook, restore_terminal};
 
 /// Rows the live area occupies. Fixed, because an inline viewport's height is
-/// set when it is created and ratatui offers no way to change it after;
-/// anything that wants more room is printed into scrollback instead, which is
-/// where a diff belongs anyway.
+/// set when it is created and ratatui offers no way to change it after —
+/// `Terminal::resize` recomputes the origin from the height already stored, and
+/// there is no setter for it. Anything that wants more room is printed into
+/// scrollback instead, which is where a diff belongs anyway.
 ///
 /// Four of these are the composer's frame, the line inside it and the status
 /// bar under it. The rest hold the tail of the sentence being streamed — one
 /// row would show a paragraph as a single scrolling line, which is unreadable,
 /// so the tail gets what is left.
-const VIEWPORT_ROWS: u16 = 7;
+///
+/// Six, therefore, for that remainder. It was three, chosen when the slash menu
+/// had three commands and the only provider list was three long; both have
+/// since grown past it, and because the overlays borrow exactly these rows the
+/// symptom was a menu that showed half of itself and a provider list whose last
+/// entry could not be seen. Sizing to the longest list is what keeps a menu
+/// scannable, which is its whole job. A terminal too short for ten gets what it
+/// has — ratatui clamps the inline viewport to the screen — and the `framed`
+/// fallback below drops the border before it drops the line being typed.
+const VIEWPORT_ROWS: u16 = 10;
 
 /// Below this many rows the composer's frame is dropped rather than the line
 /// being typed. Three rows of frame plus a status bar in a five-row terminal
@@ -376,8 +386,14 @@ mod tests {
         let mut backend = TestBackend::new(width, height);
         // Anchored where a real one is: below whatever the shell already
         // printed, with room above it for the transcript to land in.
+        // Saturating: a terminal shorter than the viewport is a real case —
+        // ratatui clamps the inline viewport to the screen — and a test that
+        // panics on the arithmetic cannot reach the behaviour it is checking.
         backend
-            .set_cursor_position(ratatui::layout::Position::new(0, height - VIEWPORT_ROWS))
+            .set_cursor_position(ratatui::layout::Position::new(
+                0,
+                height.saturating_sub(VIEWPORT_ROWS),
+            ))
             .expect("a cursor");
         let terminal = Terminal::with_options(
             backend,
@@ -453,6 +469,67 @@ mod tests {
                 body: ItemBody::AgentMessage { text: text.into() },
             },
         })
+    }
+
+    /// The reported symptom: opening the menu showed three of six commands,
+    /// with nothing on screen saying the rest existed.
+    ///
+    /// Asserted against the command list itself rather than a number, so
+    /// adding a seventh command fails here rather than silently going back to
+    /// a menu that shows part of itself.
+    #[test]
+    fn every_slash_command_is_on_screen_when_the_menu_opens() {
+        let (mut app, mut terminal) = surface(80, 24);
+        app.composer.paste("/");
+        app.draw(&mut terminal).expect("drawn");
+
+        let visible = rows(terminal.backend().buffer()).join("\n");
+        for spec in commands::matching("/") {
+            assert!(
+                visible.contains(spec.name),
+                "`{}` is not on screen:\n{visible}",
+                spec.name
+            );
+        }
+    }
+
+    /// The other half of the same report: a provider list that did not show
+    /// every provider. `openai-codex` is the last one, so it is the one a short
+    /// window drops.
+    #[test]
+    fn every_provider_is_on_screen_when_choosing_one_to_log_in_to() {
+        let (mut app, mut terminal) = surface(80, 24);
+        app.mode = Mode::LoggingIn(Login::default());
+        app.draw(&mut terminal).expect("drawn");
+
+        let visible = rows(terminal.backend().buffer()).join("\n");
+        for provider in axio_core::auth::PROVIDERS {
+            assert!(
+                visible.contains(provider),
+                "`{provider}` is not on screen:\n{visible}"
+            );
+        }
+    }
+
+    /// And when the list genuinely cannot fit, the highlight has to stay drawn.
+    /// The old code drained from the front, so selecting the last provider in a
+    /// short terminal scrolled it off the top — the one row that had to be
+    /// visible was the one that went.
+    #[test]
+    fn the_selected_provider_stays_drawn_in_a_terminal_too_short_for_the_list() {
+        let (mut app, mut terminal) = surface(80, 8);
+        let mut login = Login::default();
+        // Onto the last provider, which is where the front-draining bug showed.
+        login.step_provider(-1);
+        let last = login.provider().to_owned();
+        app.mode = Mode::LoggingIn(login);
+        app.draw(&mut terminal).expect("drawn");
+
+        let visible = rows(terminal.backend().buffer()).join("\n");
+        assert!(
+            visible.contains(&last),
+            "the highlighted provider `{last}` was scrolled away:\n{visible}"
+        );
     }
 
     #[test]
