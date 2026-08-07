@@ -805,3 +805,135 @@ it moves an agent out of an isolated checkout and into the working tree of anyon
 who cloned the repository. The test for a project-settable key is not "is this a
 permission" but "could a repository I cloned use this to increase what an agent
 can touch".
+
+## Hosted terminals
+
+**Hosting another tool is a windowing capability, not an agent capability.** The
+rule everywhere else is that no surface holds something the command line lacks —
+and this looks like a violation until you notice the command line is already
+inside a terminal, so "run another agent in a pty" there is just running it. The
+application provides a terminal because it does not have one. Nothing about what
+an *agent* may do differs between the two, which is why this asymmetry is
+allowed to exist and no other one is.
+
+**The executable is allowlisted and only arguments are configurable.** "Run
+whatever this string says" in a desktop application is remote code execution
+wearing the word *preference*.
+
+**A hosted tool must not inherit the session markers of the tool that started
+axio.** One that finds them concludes it was launched by a copy of itself and
+behaves as a child session. axio may itself have been started by one, so they
+are stripped rather than merely not set.
+
+**`NO_COLOR` is stripped here, and set everywhere else.** axio strips colour
+from the processes *it* runs because a model reads that output; a hosted tool is
+read by a person through a real terminal, and `TERM=dumb` makes its interface
+unusable.
+
+**On Windows the launch goes through the command interpreter.** Agent CLIs
+installed by npm are `.cmd` shims and `CreateProcess` will not execute one.
+AutoRun is skipped, so a registry key set years ago does not run first.
+
+**Drop the slave end of the pair immediately after spawning.** While it is open
+the reader never sees EOF, so a tool that exits leaves a thread waiting on a
+terminal nobody is attached to.
+
+**Output is bytes, and decoding happens where the whole stream is.** A `read`
+lands wherever the kernel decided; decoding each chunk turns any multi-byte
+character straddling that boundary into a replacement character, permanently.
+
+**Reads are pulled by cursor; only the signal is pushed.** Something is always
+not listening — every webview reload — and a push-only stream loses whatever
+arrived then. The write notification carries no bytes, so a listener that missed
+one is late rather than out of sync.
+
+**`Notify::notify_waiters` wakes only whoever is already waiting.** The future
+has to be created *before* the read it guards, or output landing in the gap
+wakes nobody. The cursor is what makes that survivable rather than fatal.
+
+**A submitted line is two writes: the text, then the carriage return.** A tool
+that treats one combined chunk as a paste leaves the text sitting on its prompt
+unsent, which reads as the agent ignoring you.
+
+**Killing the direct child is not enough.** It is the command interpreter on
+Windows and may have started a build on unix. The tree goes.
+
+**Closing a ConPTY blocks until its output pipe drains, and the child exiting
+does not break that.** The pump thread is blocked reading that pipe and the
+terminal outlives its process, so each waits for the other. Four tests hung on
+this. The master is taken out in `Drop` and released on a detached thread —
+otherwise closing a terminal hangs whatever thread the click arrived on.
+
+**ConPTY asks where the cursor is before letting the child's output through.**
+It writes a cursor-position request and stalls until something answers. A real
+terminal answers and so does the emulator in the application; a test reading
+bytes into a buffer does not, and the whole stream sits behind the question.
+
+**ConPTY's opening handshake is about forty bytes.** A test that waits for "some
+output" is satisfied by terminal setup before the child has written anything,
+and then asserts against a buffer holding nothing but setup.
+
+**Output and exit are noticed by two different threads, so waiting for one says
+nothing about the other.** The pump reads the pty; a separate waiter sits in
+`child.wait()`. A child writes its last byte strictly *before* it exits, so a
+test that waits for output and then asserts on status is asserting on a race it
+merely usually wins. It won about two runs in three beside the rest of the
+workspace, which is the worst possible failure rate: often enough to look
+correct, rare enough to be dismissed as flake. Wait for the thing being
+asserted.
+
+## The application window
+
+**Tauri picks dev-versus-production from a feature, never from the cargo
+profile.** Without `tauri/custom-protocol`, `tauri-build` emits `cfg(dev)` even
+under `--release`, the webview loads `devUrl`, and the window shows a connection
+refused against localhost with nothing else wrong — it compiles, links, launches
+and is simply blank. The Tauri CLI adds the feature during its own build; we
+build with plain cargo, so it must be named. This is written down twice because
+the second crate to need it shipped without it anyway. The tell is
+`cargo:rustc-cfg=dev` in the build output.
+
+**`ui/dist` must exist before the Rust build.** `frontendDist` points at it and
+a stale or missing one is embedded silently.
+
+**The TypeScript boundary is generated, and the test run is what generates it.**
+ts-rs writes it during `cargo test`, so a Rust change with no regeneration shows
+up as a dirty tree; `git diff --exit-code` on that directory is the drift check.
+
+**`u64` becomes `bigint` unless told otherwise, and that would be wrong here.**
+Tauri's IPC is JSON, so what actually arrives is a JS number. Generation caught
+this on its first run, on a field a hand-written mirror had been declaring as
+`number` for as long as it existed.
+
+**A Tauri command without `async` runs on the thread that paints.** Not a
+performance note — a synchronous command doing a process probe, a teardown spin
+or a per-keystroke write freezes the window for its duration, and nothing in the
+code says so.
+
+**Window controls are a command, not a capability.** Granting the close
+permission lets any script in the webview close the window. Routing it through
+one command keeps a place that can refuse, which is what a close guard needs in
+order to exist. Closing runs that guard and destroying skips it, so only
+something that has already dealt with the running work may reach for the second.
+
+**A `beforeunload` listener does not fire for a taskbar close or Alt+F4.** Both
+guards are native, and the second needs `Builder::build` followed by
+`app.run(closure)`; `.run(context)` cannot intercept it.
+
+**Nothing in the state layer may link Tauri.** That is what keeps the whole
+surface behind the glass exercisable by ordinary unit tests with no webview, and
+it is the enforcement mechanism for "Rust owns all state": logic that has to
+compile without Tauri cannot quietly become a TypeScript store.
+
+**A command no caller reaches is not a capability.** Two shipped that way — one
+to start a session, one to stop a hosted terminal — and both looked complete
+from the Rust side, where the command exists, is registered, and has a passing
+test. Neither had a button. The check is which side of the boundary the *caller*
+is on.
+
+**The DOM's globals are in scope in every TypeScript file.** `close`, `name`,
+`status`, `origin`, `focus` and `length` are all `Window` members, so a local
+that fails to get declared does not error as an unknown name — it silently binds
+to the global and surfaces later as a confusing type or arity complaint. A stop
+handler named `close` reported `Expected 0 arguments, but got 1`, which is
+`window.close`'s signature talking.
