@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, accentFor, type ApprovalView, type HostedView, type SessionView, type Snapshot } from "./bridge";
 import { HostedTerminal, paneSize } from "./Terminal";
@@ -226,10 +226,11 @@ function TitleBar({ session }: { session: SessionView | null }) {
 function Opening() {
   return (
     <div className="opening">
-      <h1>Every agent working on your code, in one window.</h1>
+      <h1>No session selected</h1>
       <p>
-        Supervised sessions run in their own git worktree on their own branch, so
-        several work at once without touching the checkout you are in.
+        Sessions run in their own git worktree on their own branch, so several
+        work at once without touching the checkout you are in. Pick one from the
+        rail to see what it changed, or start another.
       </p>
       <ul>
         <li>
@@ -270,17 +271,27 @@ function Rail({
   terminal: string | null;
   onOpenTerminal: (id: string | null) => void;
 }) {
+  const projects = snapshot?.projects ?? [];
+  // Which repository new work starts in — one choice, shared by the session
+  // composer and the agent launcher, because "start this here" is the same
+  // question in both. Agents were previously hardwired to `projects[0]`, so a
+  // second repository could hold sessions but never an agent.
+  const [repo, setRepo] = useState<string>("");
+  const chosen = projects.some((p) => p.root === repo) ? repo : (projects[0]?.root ?? "");
+
   return (
     <nav className="rail">
       <NewSession
-        projects={snapshot?.projects ?? []}
+        projects={projects}
+        repo={chosen}
+        onRepoChange={setRepo}
         onStarted={onStarted}
         onError={onError}
       />
 
       <div className="rail-head">
         <span>Repositories</span>
-        <span className="count">{snapshot?.projects.length ?? 0}</span>
+        <span className="count">{projects.length}</span>
       </div>
 
       <div className="rail-list">
@@ -321,7 +332,8 @@ function Rail({
         hosted={hosted}
         available={available}
         terminal={terminal}
-        projects={snapshot?.projects ?? []}
+        cwd={chosen}
+        projects={projects}
         onOpenTerminal={onOpenTerminal}
         onError={onError}
       />
@@ -340,21 +352,24 @@ function Rail({
 // dialog, which is the one plugin this app grants itself.
 function NewSession({
   projects,
+  repo,
+  onRepoChange,
   onStarted,
   onError,
 }: {
   projects: Snapshot["projects"];
+  repo: string;
+  onRepoChange: (root: string) => void;
   onStarted: (id: string) => void;
   onError: (message: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
-  const repo = useRef<HTMLSelectElement>(null);
 
   if (projects.length === 0) return null;
 
   const start = async () => {
-    const path = repo.current?.value;
+    const path = repo;
     if (!path || prompt.trim() === "") return;
     setBusy(true);
     try {
@@ -378,7 +393,11 @@ function NewSession({
         <span>New session</span>
       </div>
       <div className="new-session">
-        <select ref={repo} defaultValue={projects[0]?.root} aria-label="Repository">
+        <select
+          value={repo}
+          onChange={(e) => onRepoChange(e.target.value)}
+          aria-label="Repository for new work"
+        >
           {projects.map((p) => (
             <option key={p.id} value={p.root}>
               {p.name}
@@ -410,6 +429,7 @@ function HostedRail({
   hosted,
   available,
   terminal,
+  cwd,
   projects,
   onOpenTerminal,
   onError,
@@ -417,14 +437,20 @@ function HostedRail({
   hosted: HostedView[];
   available: HostedView[];
   terminal: string | null;
+  cwd: string;
   projects: Snapshot["projects"];
   onOpenTerminal: (id: string | null) => void;
   onError: (message: string) => void;
 }) {
+  // Which repository a row is running in, by the path the session recorded.
+  // Any number of agents can share one, and the same agent can be running in
+  // several at once, so the name is part of the row rather than a heading.
+  const repoName = (root: string) =>
+    projects.find((p) => p.root === root)?.name ?? root.split(/[\\/]/).filter(Boolean).pop() ?? "";
+
   const start = async (harness: string) => {
-    const cwd = projects[0]?.root;
     if (!cwd) {
-      onError("open a project first - a terminal needs somewhere to run");
+      onError("open a repository first - a terminal needs somewhere to run");
       return;
     }
     try {
@@ -479,7 +505,10 @@ function HostedRail({
             title={h.cwd}
           >
             <span className={`dot ${h.status === "running" ? "running" : "closed"}`} />
-            <span className="label">{h.label}</span>
+            <span className="label">
+              {h.label}
+              <em>{repoName(h.cwd)}</em>
+            </span>
             <small>{h.status === "running" ? "live" : h.status}</small>
           </button>
           <button

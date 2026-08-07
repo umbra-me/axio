@@ -288,6 +288,15 @@ body {
   white-space: nowrap;
 }
 
+/* Which repository a hosted agent is in. Several agents can share one and one
+   agent can be in several, so it belongs on the row rather than in a heading. */
+.session .label em {
+  margin-left: var(--s-2);
+  color: var(--faint);
+  font-size: var(--t-micro);
+  font-style: normal;
+}
+
 .session small {
   font-family: var(--mono-font);
   font-size: var(--t-micro);
@@ -424,13 +433,13 @@ body {
   padding-left: var(--s-2);
 }
 
+/* An empty state, not a landing page. It says where you are and what to do
+   next at the scale a tool talks, rather than announcing the product to
+   somebody who already opened it. */
 .opening h1 {
-  /* Narrower than the prose it sits above: 30px type wants a shorter measure
-     than 15px type, and sharing one width is what orphaned the last word of the
-     first line. `balance` then distributes what remains across both. */
-  max-width: 20ch;
+  max-width: 24ch;
   margin: 0;
-  font-size: var(--t-display);
+  font-size: var(--t-lg);
   font-weight: var(--w-semi);
   letter-spacing: var(--track-display);
   line-height: var(--lh-tight);
@@ -439,9 +448,9 @@ body {
 }
 
 .opening p {
-  max-width: 54ch;
+  max-width: 56ch;
   margin: 0;
-  font-size: var(--t-mid);
+  font-size: var(--t-body);
   line-height: var(--lh);
   color: var(--text-2);
 }
