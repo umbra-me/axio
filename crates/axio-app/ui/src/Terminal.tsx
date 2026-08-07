@@ -119,15 +119,40 @@ export function HostedTerminal({ session }: { session: HostedView }) {
       void api.hostedWrite(session.id, data, false).catch(() => {});
     });
 
+    // One read at a time, and one more if anything happened while it ran.
+    //
+    // The signal fires once per 8KB read of the pty, which for a busy agent is
+    // many times a second. Answering each one with its own round trip meant
+    // that while the first was still awaiting, every later signal started
+    // another — all of them reading from the same stale cursor, so each came
+    // back with the *same* bytes, paid full JSON serialisation for them, and
+    // wrote them to the terminal again. Redundant work that grew with how busy
+    // the agent was, and duplicated output on screen.
+    //
+    // A cursor makes the coalescing free: a signal that arrives while a read is
+    // in flight is already covered by the read that follows it, so collapsing
+    // any number of them into one pending flag loses nothing.
+    let reading = false;
+    let again = false;
     const pull = async () => {
       if (stopped) return;
+      if (reading) {
+        again = true;
+        return;
+      }
+      reading = true;
       try {
-        const out = await api.hostedRead(session.id, cursor);
-        if (out.text) term.write(out.text);
-        cursor = out.cursor;
+        do {
+          again = false;
+          const out = await api.hostedRead(session.id, cursor);
+          if (out.text) term.write(out.text);
+          cursor = out.cursor;
+        } while (again && !stopped);
       } catch {
         // The session went away. Stop asking rather than logging once a frame.
         stopped = true;
+      } finally {
+        reading = false;
       }
     };
     const timer = window.setInterval(() => void pull(), FALLBACK_MS);
