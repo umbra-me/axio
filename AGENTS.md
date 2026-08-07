@@ -237,7 +237,24 @@ Three invariants everything else follows from:
   `axio-quota` documented this first and this crate shipped without it anyway;
   the tell is `cargo:rustc-cfg=dev` in the build output.
 - **`ui/dist` must exist before the Rust build.** `frontendDist` points at it and
-  a stale or missing one is embedded silently.
+  a stale or missing one is embedded silently. The binary is written at link
+  time, so a `dist` rebuilt *after* the Rust build is not in the binary — and
+  the file's timestamp says nothing about which frontend it carries.
+- **Glass needs something behind it.** A stylesheet describing translucent
+  chrome over a window that never set `transparent` blurs one flat colour
+  against another: no effect, one compositing pass per element per frame. The
+  blur belongs to `windowEffects`; `backdrop-filter` is worth keeping only where
+  an element genuinely overlaps page content. Tint the effect with
+  `windowEffects.color`, or text contrast becomes a property of the wallpaper.
+  Acrylic is documented as expensive during drag and resize; mica is cheaper.
+- **A pull-per-signal is a pull-per-8KB.** `axio-pty` signals once per
+  successful read, so answering each with its own round trip means every read
+  starting during another's flight uses the same stale cursor, returns bytes
+  already on screen, and writes them again. Coalesce; the cursor makes it free.
+- **A harness paints its opening screen at the size it is given**, and that
+  paint stays in scrollback. Measure the pane before the terminal exists, and
+  measure it after `document.fonts.ready` — the fit addon sizes a cell by
+  measuring one, and the fallback face puts every column at the wrong x.
 - **The TypeScript boundary is generated, and `cargo test -p axio-app` is what
   generates it.** ts-rs writes `ui/src/generated/` during the test run, so a
   Rust change with no regeneration shows up as a dirty tree — `git diff

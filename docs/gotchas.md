@@ -825,6 +825,40 @@ axio.** One that finds them concludes it was launched by a copy of itself and
 behaves as a child session. axio may itself have been started by one, so they
 are stripped rather than merely not set.
 
+**`CommandBuilder` inherits this process's environment, and `env()` only adds to
+it.** So filtering `std::env::vars()` on the way in removes nothing: the child
+still receives every variable this process holds, and the filtered list merely
+re-sets the survivors. Removal is `env_remove`, by name. This shipped wrong
+under a *passing* test, because the test asserted the marker was on the list
+rather than that a built command had lost it — a test that reads the constant it
+is testing cannot fail. The symptom was a hosted agent announcing that it had
+turned transcript saving off, which is exactly the behaviour the list existed to
+prevent.
+
+**Strip Windows' extended-length prefix before a path reaches a shell.**
+`canonicalize` returns `\\?\C:\…`, which is right everywhere in Rust and the one
+thing the command interpreter refuses: it says UNC paths are not supported,
+falls back to the Windows directory, and starts the agent there anyway. Every
+hosted agent ran somewhere that could not see the repository, and the terminal
+opened and the harness started exactly as though it had worked. A real
+`\\?\UNC\…` path keeps its prefix, since stripping that one changes which
+machine it names.
+
+**A harness paints its opening screen at whatever size it is given, and that
+paint is in scrollback for good.** Opening the pty at a fixed guess and
+correcting it a moment later repaints only the live area, leaving a mis-sized
+welcome above it for the rest of the session. Measure the pane before the
+terminal exists and open at that size.
+
+**A pull-per-signal is a pull-per-8KB.** The pump signals once per successful
+read, so a busy agent signals many times a second — and answering each with its
+own round trip means every read that starts while another is in flight uses the
+same stale cursor, returns bytes already on screen, pays full serialisation for
+them and writes them again. The waste grows with how chatty the agent is and
+multiplies by the number of open terminals. The cursor is what makes coalescing
+free: a signal arriving mid-read is covered by the read that follows it, so any
+number collapse into one pending flag losing nothing.
+
 **`NO_COLOR` is stripped here, and set everywhere else.** axio strips colour
 from the processes *it* runs because a model reads that output; a hosted tool is
 read by a person through a real terminal, and `TERM=dumb` makes its interface
@@ -894,7 +928,27 @@ the second crate to need it shipped without it anyway. The tell is
 `cargo:rustc-cfg=dev` in the build output.
 
 **`ui/dist` must exist before the Rust build.** `frontendDist` points at it and
-a stale or missing one is embedded silently.
+a stale or missing one is embedded silently. The binary is written at link time,
+so a `dist` rebuilt *after* the Rust build is not in the binary and the file's
+own timestamp says nothing about which frontend it carries.
+
+**Glass needs something behind it.** A stylesheet describing translucent chrome
+over a window that never set `transparent` is blurring one flat colour against
+another: no visible effect, one compositing pass per element, every frame. The
+blur belongs to the compositor — `windowEffects` — and `backdrop-filter` is
+worth keeping only where an element genuinely overlaps page content.
+
+**Acrylic samples the wallpaper, so contrast becomes a property of somebody's
+desktop picture.** Give `windowEffects.color` a dark tint and the ground has a
+guaranteed ceiling on brightness, which is what lets a text ratio be checked
+once rather than being true only on the machine it was checked on. Note also
+that the effect is documented as expensive during window drag and resize; mica
+is the cheaper material if that shows.
+
+**Let the compositor round an undecorated window.** A CSS `border-radius` on the
+root element clips the content inside a corner the window effect behind it does
+not share, so the backdrop keeps square corners while the interface has round
+ones.
 
 **The TypeScript boundary is generated, and the test run is what generates it.**
 ts-rs writes it during `cargo test`, so a Rust change with no regeneration shows
