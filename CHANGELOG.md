@@ -429,6 +429,17 @@ a minor bump may break things.
 
 ### Fixed
 
+- **A terminal can be left, and can be stopped.** Opening one in the desktop
+  surface replaced the pane that shows a session's diff, and nothing put it
+  back — so the first terminal of a window made every diff unreachable for the
+  rest of that window's life. Selecting a session now clears the terminal.
+
+  Stopping a hosted agent was a command with no caller: `hosted_kill` existed,
+  was registered, had a passing test, and no button anywhere reached it. That is
+  the second command to ship that way after `start_session`, and both looked
+  complete from the Rust side — which is where the tests are. Each hosted row
+  now carries the control that reaches it.
+
 - **The slash menu and the provider lists show every entry.** Opening `/` drew
   three of six commands, and the `/login` provider list could not show its last
   provider — with nothing on screen saying the rest were there.
