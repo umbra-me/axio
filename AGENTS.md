@@ -212,6 +212,12 @@ Three invariants everything else follows from:
 - **ConPTY's opening handshake is about forty bytes.** A test that waits for
   "some output" is satisfied by terminal setup before the child has written
   anything. Wait for the text actually expected.
+- **Output and exit are noticed by two different threads, so waiting for one
+  says nothing about the other.** The pump reads the pty; a separate waiter sits
+  in `child.wait()`. A child writes its last byte strictly *before* it exits, so
+  a test that waits for output and then asserts on `status()` is asserting on a
+  race it merely usually wins — about one run in three lost it beside the rest
+  of the workspace. Wait for the thing being asserted.
 
 ### axio-app
 

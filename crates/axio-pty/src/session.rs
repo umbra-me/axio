@@ -447,6 +447,23 @@ mod tests {
         }
     }
 
+    /// Wait for the process to be *gone*, which `settle` does not imply.
+    ///
+    /// Output and exit are noticed by two different threads — the pump reading
+    /// the pty, and the waiter in `child.wait()` — and a child writes its last
+    /// byte strictly before it exits. So a test that waits for output and then
+    /// asserts on status is asserting on a race it merely usually wins; this
+    /// one lost about one run in three on a machine busy with the rest of the
+    /// workspace. Wait for the thing being asserted.
+    async fn reaped(session: &HarnessSession) {
+        for _ in 0..2400 {
+            if session.status() != HarnessStatus::Running {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+
     /// The whole machine, against a real pseudo-terminal: spawn, pump into the
     /// ring, notice the exit.
     ///
@@ -459,6 +476,7 @@ mod tests {
     async fn output_reaches_the_ring_and_the_exit_is_noticed() {
         let session = echo("axio-pty-lives").expect("a terminal");
         settle(&session, "axio-pty-lives").await;
+        reaped(&session).await;
 
         let (bytes, cursor) = session.read_from(0);
         let text = String::from_utf8_lossy(&bytes);
