@@ -33,6 +33,43 @@ function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+/** The font the terminal renders in. One string, so a measurement cannot use a
+ *  different face from the thing being measured. */
+const TERM_FONT = '"JetBrainsMono NFM", "JetBrains Mono", "Cascadia Mono", Consolas, monospace';
+const TERM_SIZE = 13;
+const TERM_LINE_HEIGHT = 1.0;
+
+/**
+ * How big a terminal would be if it opened in `el` right now.
+ *
+ * Worth doing before the terminal exists, because a harness paints its opening
+ * screen at whatever size it is told and that paint stays in scrollback. Given
+ * a guess and corrected a moment later, the correction repaints the live area
+ * and the mis-sized opening sits above it for the rest of the session.
+ *
+ * Measured with the real face at the real size rather than assumed, and against
+ * a wide-ish glyph: a proportional fallback would make every column wrong, and
+ * this is the same measurement xterm's fit addon makes.
+ */
+export function paneSize(el: Element): { rows: number; cols: number } | null {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.font = `${TERM_SIZE}px ${TERM_FONT}`;
+  const cell = ctx.measureText("W").width;
+  if (!(cell > 0)) return null;
+
+  const box = el.getBoundingClientRect();
+  // The padding `.terminal-host .xterm` carries, which is not available to
+  // cells. Read from the stylesheet so the two cannot drift.
+  const style = getComputedStyle(el);
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  const cols = Math.max(20, Math.floor((box.width - padX) / cell));
+  const rows = Math.max(6, Math.floor((box.height - padY) / (TERM_SIZE * TERM_LINE_HEIGHT)));
+  return { rows, cols };
+}
+
 export function HostedTerminal({ session }: { session: HostedView }) {
   const host = useRef<HTMLDivElement>(null);
 
@@ -44,11 +81,11 @@ export function HostedTerminal({ session }: { session: HostedView }) {
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "bar",
-      fontFamily: '"JetBrainsMono NFM", "JetBrains Mono", "Cascadia Mono", Consolas, monospace',
-      fontSize: 13,
+      fontFamily: TERM_FONT,
+      fontSize: TERM_SIZE,
       // 1.0 on purpose: block-drawing glyphs in a Nerd Font stop being
       // contiguous at anything else, and provider TUIs are full of them.
-      lineHeight: 1.0,
+      lineHeight: TERM_LINE_HEIGHT,
       scrollback: 10000,
       theme: {
         background: token("--term-bg"),

@@ -12,4 +12,14 @@ harness: string, cwd: string,
  * Extra arguments, split the way a shell would split them without one
  * running. Empty is the normal case.
  */
-args: string, };
+args: string, 
+/**
+ * The size of the pane the terminal is about to appear in.
+ *
+ * Sent at start rather than only on the resize that follows, because a
+ * harness paints its opening screen from the size it is given and that
+ * paint lands in scrollback permanently. Started at a guess and corrected
+ * a moment later, the correction repaints the live area and leaves the
+ * mis-sized opening above it forever.
+ */
+rows: number | null, cols: number | null, };

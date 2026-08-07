@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, accentFor, type ApprovalView, type HostedView, type SessionView, type Snapshot } from "./bridge";
-import { HostedTerminal } from "./Terminal";
+import { HostedTerminal, paneSize } from "./Terminal";
 import {
   IconBranch,
   IconClose,
@@ -428,7 +428,10 @@ function HostedRail({
       return;
     }
     try {
-      const session = await api.hostedStart(harness, cwd);
+      // Measured from the pane the terminal is about to take over, so the
+      // harness paints its opening screen at the size it will actually have.
+      const pane = document.querySelector(".pane");
+      const session = await api.hostedStart(harness, cwd, "", pane ? paneSize(pane) : null);
       onOpenTerminal(session.id);
     } catch (e) {
       onError(String(e));

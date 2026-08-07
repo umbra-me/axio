@@ -49,6 +49,19 @@ pub struct StartHostedInput {
     /// running. Empty is the normal case.
     #[serde(default)]
     pub args: String,
+    /// The size of the pane the terminal is about to appear in.
+    ///
+    /// Sent at start rather than only on the resize that follows, because a
+    /// harness paints its opening screen from the size it is given and that
+    /// paint lands in scrollback permanently. Started at a guess and corrected
+    /// a moment later, the correction repaints the live area and leaves the
+    /// mis-sized opening above it forever.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub rows: Option<u16>,
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub cols: Option<u16>,
 }
 
 /// Everything a read returns: the bytes, and where to ask from next.
@@ -126,7 +139,7 @@ impl Hosted {
         let args = split_args(&input.args).map_err(AppError::Supervisor)?;
         let cwd = std::path::PathBuf::from(&input.cwd);
 
-        let session = HarnessSession::spawn(harness, &cwd, &args)
+        let session = HarnessSession::spawn(harness, &cwd, &args, input.rows, input.cols)
             .map_err(|e| AppError::Supervisor(e.to_string()))?;
         let id = self.mint();
         let view = view_of(&id, &session);
@@ -276,6 +289,8 @@ mod tests {
                 harness: "rm".into(),
                 cwd: ".".into(),
                 args: String::new(),
+                rows: None,
+                cols: None,
             })
             .expect_err("the allowlist is the security property");
         assert!(err.to_string().contains("rm"));
@@ -291,6 +306,8 @@ mod tests {
                     harness: "claude".into(),
                     cwd: ".".into(),
                     args: "--unbalanced \"quote".into(),
+                    rows: None,
+                    cols: None,
                 })
                 .is_err()
         );
