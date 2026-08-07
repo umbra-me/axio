@@ -62,6 +62,29 @@ pub struct HarnessSession {
     pid: Option<u32>,
 }
 
+/// Strip Windows' extended-length prefix before a path is handed to a shell.
+///
+/// `canonicalize` returns `\\?\C:\…`, which is the correct thing everywhere in
+/// Rust and the one thing `cmd.exe` refuses: it prints "UNC paths are not
+/// supported", falls back to `C:\Windows`, and starts the agent anyway. So the
+/// terminal opens, the harness runs, and it simply cannot see the repository —
+/// a failure that looks exactly like success until somebody reads the first two
+/// lines of scrollback.
+///
+/// Only the plain `\\?\C:\…` form is unwrapped. `\\?\UNC\server\share` really is
+/// a UNC path and stripping the prefix would change which machine it names.
+fn plain_path(path: &std::path::Path) -> std::borrow::Cow<'_, std::path::Path> {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = path.to_str().and_then(|p| p.strip_prefix(r"\\?\"))
+            && !rest.starts_with("UNC\\")
+        {
+            return std::borrow::Cow::Owned(std::path::PathBuf::from(rest));
+        }
+    }
+    std::borrow::Cow::Borrowed(path)
+}
+
 impl HarnessSession {
     /// Start a harness in `cwd`.
     ///
@@ -85,7 +108,7 @@ impl HarnessSession {
             .map_err(|e| PtyError::Open(e.to_string()))?;
 
         let mut command = command_for(harness);
-        command.cwd(cwd);
+        command.cwd(plain_path(cwd).as_ref());
         for arg in args {
             command.arg(arg);
         }
@@ -405,6 +428,30 @@ fn watch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shell gets a path it will accept, or every hosted agent silently
+    /// runs somewhere else.
+    ///
+    /// This shipped broken and looked like it worked: the terminal opened, the
+    /// harness started, and two lines of scrollback nobody reads said it had
+    /// given up on the directory and defaulted to the Windows one.
+    #[test]
+    fn an_extended_length_path_is_unwrapped_before_a_shell_sees_it() {
+        let plain = std::path::Path::new(r"C:\src\repo");
+        assert_eq!(plain_path(plain).as_ref(), plain);
+
+        #[cfg(windows)]
+        {
+            let long = std::path::Path::new(r"\\?\C:\src\repo");
+            assert_eq!(plain_path(long).as_ref(), plain);
+
+            // A real UNC path keeps its prefix. Stripping it would leave a
+            // string naming a directory on this machine rather than one on
+            // `server`, which is a worse failure than the one being fixed.
+            let unc = std::path::Path::new(r"\\?\UNC\server\share");
+            assert_eq!(plain_path(unc).as_ref(), unc);
+        }
+    }
 
     fn echo(text: &str) -> Result<HarnessSession, PtyError> {
         if cfg!(windows) {
