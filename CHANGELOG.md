@@ -7,6 +7,28 @@ a minor bump may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **The desktop surface is glass, and the glass is real.** The stylesheet had
+  described translucent chrome over a window that never set `transparent`, so
+  every blur in it was compositing one flat colour against another — no effect,
+  and a pass per element per frame. The compositor does it now, and the window
+  is genuinely translucent to the desktop behind it.
+
+  The material inverts on purpose: chrome floats, content does not. Title bar,
+  rail, toolbar and status bar sit at 0.56–0.66 alpha, while the panes you
+  actually read — a diff, a terminal — stay at 0.84 and 0.93, because code
+  judged against a moving background is code judged badly. Acrylic samples the
+  wallpaper, which would make text contrast a property of somebody's desktop
+  picture, so a dark tint is pinned underneath and every ratio holds against a
+  white background image.
+
+  Behind it, the system the tokens had promised and the call sites had been
+  ignoring: one 4px spacing rhythm rather than 4/7/9/12/16/22, six type steps
+  from 11px to 30px rather than eleven sizes inside a 5px band, dividers at an
+  alpha that can be seen, one motion curve, and icons drawn on a 16-unit grid
+  where the window controls had been font glyphs.
+
 ### Added
 
 - **`axio-supervisor`: many sessions at once, across many repositories.** A
@@ -428,6 +450,42 @@ a minor bump may break things.
   Clipboard API exists, so it is never a control that silently does nothing.
 
 ### Fixed
+
+- **Hosted agents ran where you asked, rather than in the Windows directory.**
+  `canonicalize` returns the extended-length path form, the command interpreter
+  refuses it — saying UNC paths are not supported — and then starts the agent
+  anyway, in whatever directory it fell back to. So every hosted agent was
+  running somewhere that could not see the repository, while the terminal opened
+  and the harness started exactly as though it had worked.
+
+- **A hosted agent no longer decides it is a copy of itself.** The session
+  markers were being filtered out of a list that was then handed to a command
+  builder which had already inherited the whole environment, and `env()` only
+  adds. Nothing was ever removed. The visible symptom was an agent announcing
+  that it had turned transcript saving off. The test that was supposed to catch
+  this asserted the marker was on the strip list rather than that a built
+  command had lost it, so it passed throughout.
+
+- **A terminal opens at the size it will actually have.** The pty was created at
+  a fixed 32×120 whatever the pane measured, and a harness paints its opening
+  screen from the size it is given — so the resize arriving a moment later
+  repainted the live area and left a mis-sized welcome in scrollback for the
+  rest of the session. The pane is measured before the terminal exists, and the
+  measurement waits for the real font: the fit addon sizes a cell by measuring
+  one, and measuring the fallback face puts every column of every box-drawing
+  character at the wrong x.
+
+- **A busy terminal costs one read per burst rather than one per 8KB.** The pump
+  signals on every successful read, and each signal started its own round trip
+  with no check for one already running — so every read beginning during
+  another's flight used the same stale cursor, came back with bytes already on
+  screen, paid full serialisation for them and wrote them again. The cost grew
+  with how chatty the agent was and multiplied by the number of open terminals.
+
+- **Any repository can hold any number of agents.** An agent always started in
+  the first project, so a second repository could hold sessions but never an
+  agent and nothing let you say which one. The repository choice is one
+  selection shared by the session composer and the agent launcher.
 
 - **A terminal can be left, and can be stopped.** Opening one in the desktop
   surface replaced the pane that shows a session's diff, and nothing put it
