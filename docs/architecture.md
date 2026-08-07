@@ -1,6 +1,6 @@
 # Architecture
 
-Seven crates and two binaries, in a tree rooted at a dependency-free core.
+Nine crates and three binaries, in a tree rooted at a dependency-free core.
 
 ```
                     ┌──────────────────── axio (bin) ─────────────────────┐
@@ -31,6 +31,25 @@ Seven crates and two binaries, in a tree rooted at a dependency-free core.
         │  SSE decoder         │   │  glob grep bash · subprocess  │
         └──────────────────────┘   └───────────────────────────────┘
 
+   ─── the surfaces, and the seam that keeps them one product ───
+
+        ┌──────────────────────┐   ┌───────────────────────────────┐
+        │ axio (bin)           │   │ axio-app (bin)  [app]         │
+        │  CLI · inline TUI    │   │  window · webview · terminals │
+        └──────────┬───────────┘   └───────┬───────────────┬───────┘
+                   │ its own wiring        │ its own wiring│ hosts
+                   ▼                       ▼               ▼
+        ┌──────────────────────────────────────┐  ┌────────────────────┐
+        │ axio-supervisor                      │  │ axio-pty           │
+        │  a worktree and branch per session   │  │  executable        │
+        │  one pooled approval queue           │  │    allowlist       │
+        │  sidecar index · AgentFactory seam   │  │  bounded byte ring │
+        │  builds no agents, so links neither  │  │  tree-kill         │
+        │  a transport nor a tool              │  │  parses nothing    │
+        └──────────────────────────────────────┘  └────────────────────┘
+             both surfaces drive the supervisor with their own wiring,
+             so neither can hold a capability the other lacks
+
    ─── off the tree entirely: two leaves that depend on nothing here ───
 
         ┌──────────────────────┐   ┌───────────────────────────────┐
@@ -39,7 +58,8 @@ Seven crates and two binaries, in a tree rooted at a dependency-free core.
         │  history · schedule  │   │  normalize · dedupe · price   │
         │  [app] tray+window   │   │  [sqlite] database stores     │
         └──────────────────────┘   └───────────────────────────────┘
-             axio-quota --features app is the second binary
+             axio-quota --features app and axio-app --features app
+             are the second and third binaries
 ```
 
 ## The two leaf crates
@@ -62,7 +82,7 @@ API what is left, and fails with an HTTP status; cost reads transcripts other
 programs wrote and adds them up, and fails with a line it cannot understand. One
 crate each keeps both budgets in `scripts/limits.sh` meaningful.
 
-**A long file is still not evidence for an eighth crate.** A file past 300 lines
+**A long file is still not evidence for a tenth crate.** A file past 300 lines
 becomes child modules — never another crate. Crates are how the dependency graph
 is kept honest, and a module that has grown says nothing about dependencies.
 
@@ -211,9 +231,12 @@ mutation was denied otherwise looks exactly like a run that did the work.
 
 ## Surfaces
 
-Two, and neither is privileged. Both consume the same `Event` stream and supply
-an `Approver`; nothing else crosses the boundary, which is why `--json` is a
-renderer rather than a second loop.
+Three now — one-shot, the inline interactive one, and the window — and none is
+privileged. Each consumes the same `Event` stream and supplies an `Approver`;
+nothing else crosses the boundary, which is why `--json` is a renderer rather
+than a second loop, and why the window is a surface rather than a second
+product. The rest of this section is about the interactive one; the window is in
+`docs/roadmap.md` under M13 and its own hazards are in `docs/gotchas.md`.
 
 The interactive one uses an **inline** viewport rather than the alternate
 screen. A full-screen application owns scrollback, selection and the scrollbar
