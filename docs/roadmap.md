@@ -239,8 +239,18 @@ state and boundary types sit *outside* that feature, which is what lets the
 whole surface behind the glass be unit-tested with no webview — and what stops
 state quietly migrating into the frontend.
 
-The boundary is still hand-mirrored, and that is the next change to it rather
-than a later one. Generating it is what the typed-IPC tripwire was waiting for.
+The boundary is generated rather than hand-mirrored: ts-rs writes it during
+`cargo test -p axio-app`, so a Rust change with no regeneration shows up as a
+dirty tree and `git diff --exit-code` on that directory is the drift check. It
+earned itself on the first run, disagreeing with the hand-written mirror about a
+`u64` — declared `number` there, read as `bigint` by the derive, and delivered
+as a JS number by an IPC layer that is JSON underneath.
+
+The window renders from a release build, which took one more correction than
+expected: Tauri decides dev-versus-production from a *feature*, so without
+`tauri/custom-protocol` a `--release` build compiles, links, launches, and shows
+a connection refused against a dev server that is not running. Two crates here
+have now hit it, the second after the first had written it down.
 
 ### M14 - other agents, in terminals axio owns
 
