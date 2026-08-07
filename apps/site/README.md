@@ -38,24 +38,49 @@ Two consequences worth knowing:
 
 ## Design
 
-Built in the Umbra design language so the site reads as one of the family. The
-tokens come from `products/web-stack/packages/ui/tailwind.config.ts` in the
-Umbra control plane rather than from eyeballing a screenshot: `#050505` ground,
-`#18181b` surfaces, `#262626` hairlines, `0.5rem` radius, Geist, blurred colour
-fields behind the fold, pill section labels, a gradient phrase in the headline,
-a stat strip, bordered cards.
+The desktop application's visual system, ported rather than paraphrased.
+`crates/axio-app/ui/src/styles/tokens.css` states the thesis — **the chrome is
+glass and the content is slate** — and this page is built on it. The header,
+the section labels and the panel the headline sits in are translucent and
+float; the parts you actually read — a transcript, the verification ledger, an
+install command — are dense near-opaque slabs sitting on top of the page rather
+than in it.
 
-What makes it axio rather than Umbra is the accent, using a mechanism that
-design system already has: every product carries its own hue inside the shared
-dark shell — aegis emerald, hermes violet, nebula pink, nexus indigo. axio takes
-amber, the colour a terminal has historically been and the only warm note
-against an otherwise cold palette, and its gradient resolves from that amber
-into the house violet.
+In the application the glass is translucent to your desktop. A web page has no
+wallpaper, so the hero supplies its own: `Surface.tsx` draws a slab of the
+application's own surface — four sessions across two repositories, each wearing
+its agent's colour, one of them holding a question nobody has answered yet —
+and the headline sits in a glass panel lapping over its left edge.
 
-The ambient texture behind the hero is axio's too. umbra.me drifts a
-constellation network; this drifts scrollback, rendered from the product's own
-output rather than filler, and masked away from the centre so it reads as
-material and never as content.
+**The lap is 1rem, and that is a ceiling rather than a taste call.** The rail
+begins at the slab's left edge and the first session dot sits about 28px in, so
+a larger lap hides the four agent colours — the one thing in the hero that
+cannot afford to be behind anything. An earlier 128px lap buried three of them.
+Depth is carried by the panel's drop shadow and by the slab running off the
+right edge of the frame instead.
+
+The palette is the application's rather than the house one this site opened
+with: `#05070a` ground, `#0a0d13` slabs, `#7ba0ff` for axio itself, and one
+colour for each agent it can host — claude violet, codex green, pi cyan. That
+is a system rather than an accent, and it is what keeps "this belongs to an
+agent" and "this belongs to axio" different questions on the page, as they are
+in the window. The amber and its gradient are gone: one product with two
+surfaces cannot credibly wear two identities, and the application has no
+gradient anywhere.
+
+The display face is Geist Mono, not Geist Sans. The usual pairing runs a sans
+display over mono captions; this product's entire material is monospaced
+output, and the application's UI face deliberately stops at 30px because it is
+a tool rather than a poster. The cost is real and the headline pays it: Geist
+Mono's advance is roughly twice Geist Sans's, so a display line here buys about
+twelve characters.
+
+Structure carries content rather than decorating it. The strip under the hero
+is the application's status bar — the count is the fact and the noun beside it
+is the caption, so they are not the same colour, and the one figure that is not
+neutral does not read as neutral. Each behaviour card is marked by a string the
+product actually prints (`exit 5`, `--probe`, `~/.axio`) rather than by a
+tinted square with a glyph in it, which would have meant nothing.
 
 Geist is self-hosted through `next/font`. The page makes no external request.
 
@@ -67,10 +92,19 @@ browsers and a button that silently does nothing is worse than none; the command
 is still there to select. A skip link precedes the header, and its target takes
 `tabindex="-1"` so focus actually moves rather than the page merely scrolling.
 
-Motion is opt-out throughout: the drifting scrollback sits behind a
-`prefers-reduced-motion: no-preference` query, the caret hides under `reduce`,
-and `HeroTranscript` checks the same query in JS and jumps straight to its
-settled state.
+Motion is one curve — the application's `cubic-bezier(0.16, 1, 0.3, 1)` — and
+very little uses it. The authored moment is ported from the application
+unchanged: the selected session's accent wipes down its leading edge as the
+page settles, and a running session's dot breathes. Nothing else animates
+position or glow, and the drifting scrollback the hero used to carry is gone —
+with a real slab behind the glass there was already material back there, and
+two ambient textures competed for the same space.
+
+Motion is opt-out throughout, through one mechanism rather than a habit each
+rule has to remember: `--fast`, `--base` and `--slow` collapse to `1ms` under
+`prefers-reduced-motion: reduce`, the wipe and the breathing stop outright, the
+caret hides, and `HeroTranscript` checks the same query in JS and jumps
+straight to its settled state.
 
 ## Metadata and generated images
 
@@ -89,10 +123,16 @@ lives in this repository and no dependency was added for them.
 | `opengraph-image.tsx` | `/opengraph-image` | the 1200×630 card, reused for `twitter:image` |
 | `robots.ts`, `sitemap.ts` | `/robots.txt`, `/sitemap.xml` | — |
 
-The mark is Geist Mono's `a` on the product gradient, which is what the header
-wordmark is. It is drawn rather than hand-authored as an SVG path because an SVG
-favicon would have to name a font the browser has no reason to have, and would
-fall back to whatever the platform calls monospace.
+The mark is Geist Mono's `a` on the accent. It is drawn rather than
+hand-authored as an SVG path because an SVG favicon would have to name a font
+the browser has no reason to have, and would fall back to whatever the platform
+calls monospace.
+
+The header wordmark is **not** the same object any more. It is the
+application's own mark — a small filled square at the accent with a short
+bloom, the same primitive its running-session dot uses, so one shape does
+identity and state. A letterless square is right beside the word `axio` and
+wrong in a 32×32 tab, which is why the icons keep the glyph.
 
 `brand.ts` holds the tokens and loads the fonts. Three things there are easy to
 get wrong:
@@ -117,11 +157,16 @@ into a page whose entire content is a script.
 
 The card repeats the mark, the headline and the install command, so someone who
 sees it and never clicks still knows what axio is and how to install it. Its
-headline is set the way `.hero h1` sets it, 700 at -0.045em over 1.03, rather
-than approximately. The gradient word fades toward pale violet at its tail; the
-page does that too, because `.gradient-text` puts the gradient box around the
-word itself. If that is ever changed, change it in both places — the card is
-meant to match the page, not improve on it.
+headline is set the way `.hero h1` sets it — Geist Mono at 600, `-0.035em` over
+1.06 — rather than approximately, and its second line takes the accent as the
+page's does. It carries one thing the page states in words instead: the four
+agent colours, as dots on the install slab. At this size that palette is the
+part of the identity a sentence cannot deliver, and it is what makes the card
+recognisably this product rather than another dark card with a monospaced
+headline.
+
+If the headline or its treatment changes, change it in both places — the card
+is meant to match the page, not improve on it.
 
 ## Install scripts
 

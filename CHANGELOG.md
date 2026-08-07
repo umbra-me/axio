@@ -9,6 +9,39 @@ a minor bump may break things.
 
 ### Changed
 
+- **axio.sh now wears the desktop application's design system rather than the
+  house one.** The site was built in the Umbra language with amber as its
+  per-product hue, which was the right answer when the only surface was a
+  terminal and there was no application to disagree with. There is one now, and
+  it settled the question differently, so the website follows it: one product
+  with two surfaces cannot credibly wear two identities.
+
+  The thesis is ported rather than paraphrased. `tokens.css` says the chrome is
+  glass and the content is slate, and the page is built on that — header,
+  section labels and the panel the headline sits in are translucent and float,
+  while the transcript, the ledger and the install commands are dense slabs
+  sitting on top. The application's glass is translucent to your desktop and a
+  web page has no wallpaper, so the hero supplies its own: a drawn slab of the
+  application's surface, with the headline in a glass panel lapping its left
+  edge. The lap is capped at 1rem, because the rail starts at that edge and a
+  larger one hides the four agent colours the hero exists to show.
+
+  The palette is the application's — `#7ba0ff` for axio and one colour per agent
+  it can host — so "this belongs to an agent" and "this belongs to axio" stay
+  different questions on the page as they are in the window. The amber gradient
+  is gone; the application has no gradient anywhere. The display face is now
+  Geist Mono, since this product's material is monospaced output, and its
+  roughly doubled advance is a real constraint on headline length rather than a
+  reason to shrink the type.
+
+  The content was as stale as the paint. The page claimed four crates and
+  described a terminal-only tool; there are nine, three binaries, a supervisor,
+  a desktop window, quota across ten providers and cost across twenty-three
+  agents, and none of the last four were mentioned anywhere on it. The
+  verification ledger gained no rows: what the desktop surface has actually been
+  run against is not written down, and that table's whole value is that it does
+  not guess.
+
 - **The desktop surface is glass, and the glass is real.** The stylesheet had
   described translucent chrome over a window that never set `transparent`, so
   every blur in it was compositing one flat colour against another — no effect,
