@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::buffer::Ring;
-use crate::harness::{Harness, child_env};
+use crate::harness::{Harness, child_env, stripped_names};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PtyError {
@@ -92,16 +92,27 @@ impl HarnessSession {
     /// laziness: agent CLIs installed by npm are `.cmd` shims, which
     /// `CreateProcess` will not execute. `/d` skips AutoRun, so a registry key
     /// somebody set years ago does not run first.
+    ///
+    /// `rows` and `cols` are the pane the terminal is about to appear in. They
+    /// are optional because a caller may genuinely not know yet, but a caller
+    /// that does should say: a harness paints its opening screen at whatever
+    /// size it is handed, and that paint is in scrollback for good. Resizing
+    /// afterwards repaints the live area and leaves the mis-sized opening
+    /// sitting above it.
     pub fn spawn(
         harness: Harness,
         cwd: &std::path::Path,
         args: &[String],
+        rows: Option<u16>,
+        cols: Option<u16>,
     ) -> Result<Self, PtyError> {
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
-                rows: 32,
-                cols: 120,
+                // A terminal with no rows is not a smaller terminal, it is one
+                // that divides by zero somewhere in a curses layout.
+                rows: rows.filter(|r| *r > 0).unwrap_or(32),
+                cols: cols.filter(|c| *c > 0).unwrap_or(120),
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -111,6 +122,11 @@ impl HarnessSession {
         command.cwd(plain_path(cwd).as_ref());
         for arg in args {
             command.arg(arg);
+        }
+        // Removal first, and by name: the builder inherits this process's
+        // environment, so a marker only goes if it is asked for.
+        for name in stripped_names() {
+            command.env_remove(name);
         }
         for (key, value) in child_env() {
             command.env(key, value);
@@ -146,7 +162,10 @@ impl HarnessSession {
 
         Ok(Self {
             harness,
-            cwd: cwd.to_path_buf(),
+            // The same path the shell was given, so what a surface displays and
+            // what the agent is actually in cannot disagree — and so nobody has
+            // to read `\\?\` in a breadcrumb.
+            cwd: plain_path(cwd).into_owned(),
             writer: Arc::new(Mutex::new(writer)),
             master: Mutex::new(Some(pair.master)),
             output,
@@ -262,6 +281,11 @@ impl HarnessSession {
             command.arg(arg);
         }
         command.cwd(std::env::temp_dir());
+        // Removal first, and by name: the builder inherits this process's
+        // environment, so a marker only goes if it is asked for.
+        for name in stripped_names() {
+            command.env_remove(name);
+        }
         for (key, value) in child_env() {
             command.env(key, value);
         }

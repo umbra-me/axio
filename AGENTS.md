@@ -172,6 +172,13 @@ Three invariants everything else follows from:
 - **A hosted agent must not inherit `CLAUDE_CODE_*` or `CLAUDE_PID`.** A tool
   that finds them concludes it was started by a copy of itself and behaves as a
   child session. axio may itself have been launched by one, so they are stripped.
+- **`CommandBuilder` inherits this process's environment, and `env()` only adds
+  to it.** Filtering `std::env::vars()` on the way in therefore removes nothing:
+  the child still gets every variable this process has, and the filtered list
+  merely re-sets the survivors. Removal is `env_remove`, by name. This shipped
+  wrong under a passing test, because the test asserted the *name was on the
+  list* rather than that a built command had lost it — and the symptom was a
+  hosted agent announcing it had turned transcript saving off.
 - **`NO_COLOR` is stripped and `TERM`/`COLORTERM` are set.** axio strips colour
   from the tools *it* runs because a model reads them; a hosted agent is read by
   a person through a real terminal, and `TERM=dumb` makes its interface unusable.

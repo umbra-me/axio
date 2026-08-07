@@ -87,18 +87,30 @@ const STRIP: &[&str] = &[
     "NO_COLOR",
 ];
 
+/// Names that must not reach a hosted agent, for a caller that removes rather
+/// than rebuilds.
+pub fn stripped_names() -> &'static [&'static str] {
+    STRIP
+}
+
 /// The environment a hosted agent runs in.
 ///
-/// Inherited, minus the markers above, plus the two that tell it a real
-/// terminal is on the other end. `TERM=dumb` — which axio sets for its own
-/// tools — would make a provider's interface unusable.
+/// The two that tell it a real terminal is on the other end. `TERM=dumb` —
+/// which axio sets for its own tools — would make a provider's interface
+/// unusable.
+///
+/// What this deliberately no longer does is rebuild the whole environment minus
+/// [`STRIP`]. It used to, and it did nothing: a `CommandBuilder` inherits the
+/// parent's environment by default and `env()` only adds or overrides, so
+/// filtering a list on the way in removed nothing on the way out. Every hosted
+/// agent inherited every marker, decided it was a child of itself, and turned
+/// off transcript saving. Removal has to be asked for by name — see
+/// [`stripped_names`].
 pub fn child_env() -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = std::env::vars()
-        .filter(|(k, _)| !STRIP.contains(&k.as_str()))
-        .collect();
-    out.push(("TERM".to_owned(), "xterm-256color".to_owned()));
-    out.push(("COLORTERM".to_owned(), "truecolor".to_owned()));
-    out
+    vec![
+        ("TERM".to_owned(), "xterm-256color".to_owned()),
+        ("COLORTERM".to_owned(), "truecolor".to_owned()),
+    ]
 }
 
 /// Split configured arguments the way a shell would, without running one.
@@ -129,17 +141,40 @@ mod tests {
         assert_eq!(Harness::parse("rm"), None, "the allowlist is the allowlist");
     }
 
-    /// The four markers are the reason this exists. A hosted Claude Code that
+    /// The four markers are the reason this exists. A hosted agent that
     /// inherits them decides it is a child of itself.
+    ///
+    /// This asserts against a *built command*, not against the list. The
+    /// previous version checked that `STRIP` contained each name, which it
+    /// always did — while the child inherited every one of them anyway, because
+    /// nothing ever asked the builder to remove them. A test that reads the
+    /// constant it is testing cannot fail.
     #[test]
     fn the_session_markers_never_reach_a_hosted_agent() {
+        let mut command = portable_pty::CommandBuilder::new("cmd.exe");
+        for name in stripped_names() {
+            command.env_remove(name);
+        }
+        for (key, value) in child_env() {
+            command.env(key, value);
+        }
+
         for marker in [
             "CLAUDE_CODE_CHILD_SESSION",
             "CLAUDE_CODE_ENTRYPOINT",
             "CLAUDE_CODE_SESSION_ID",
             "CLAUDE_PID",
+            "NO_COLOR",
         ] {
-            assert!(STRIP.contains(&marker), "{marker} would be inherited");
+            assert!(
+                stripped_names().contains(&marker),
+                "{marker} is not on the list"
+            );
+            assert_eq!(
+                command.get_env(marker),
+                None,
+                "{marker} still reaches the child"
+            );
         }
     }
 
