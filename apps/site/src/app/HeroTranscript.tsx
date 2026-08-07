@@ -34,39 +34,9 @@ const ANSWER = "Done — the lexer now owns the span table.";
 
 type Phase = "thinking" | "streaming" | "done";
 
-/**
- * The ambient texture behind the hero. umbra.me drifts a constellation network;
- * axio drifts scrollback, because that is the material this product is made of.
- * Rendered from the same lines the transcript uses so it is the product's own
- * output rather than lorem noise, repeated three times so the drift can loop by
- * translating exactly one third.
- */
-export function ScrollbackBackdrop() {
-  const block = [
-    "$ axio -p \"explain this repo\"",
-    "  ⏺ read    src/parse.rs                    3ms",
-    "  ⏺ grep    fn parse_span                  11ms",
-    "  ⏺ edit    src/parse.rs  +12 −4           18ms",
-    "  Done — the lexer now owns the span table.",
-    "",
-    "$ axio --doctor",
-    "  provider   ollama          ✓ configured",
-    "  model      gpt-oss:120b",
-    "  workspace  ~/src/axio",
-    "",
-    "$ cat src/lib.rs | axio -p \"review this\"",
-    "  ⏺ read    src/lib.rs                       2ms",
-    "  approve  edit:src/lib.rs",
-    "  allow? y once  a this session  n no",
-    "",
-  ].join("\n");
-
-  return (
-    <div className="hero__scrollback" aria-hidden="true">
-      {`${block}\n${block}\n${block}`}
-    </div>
-  );
-}
+// The drifting scrollback that used to sit behind the hero lived here too. The
+// hero now has a slab of the desktop surface behind its glass, and two ambient
+// textures competing for the same space is one more than the page can spend.
 
 export default function HeroTranscript() {
   const [tools, setTools] = useState(0);

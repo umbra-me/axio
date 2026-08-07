@@ -1,4 +1,5 @@
-import HeroTranscript, { ScrollbackBackdrop } from "./HeroTranscript";
+import HeroTranscript from "./HeroTranscript";
+import Surface from "./Surface";
 import Term from "./Term";
 
 const REPO = "https://github.com/umbra-me/axio";
@@ -15,23 +16,18 @@ export default function Page() {
       <header className="header">
         <div className="container header__row">
           <a className="wordmark" href="/">
-            <span className="wordmark__mark" aria-hidden="true">
-              a
-            </span>
+            <i aria-hidden="true" />
             axio
           </a>
           <nav className="header__nav">
             <a className="header__nav-link" href="#install">
               Install
             </a>
+            <a className="header__nav-link" href="#counts">
+              Quota
+            </a>
             <a className="header__nav-link" href="#verification">
               Verification
-            </a>
-            <a
-              className="header__nav-link"
-              href={`${REPO}/blob/main/docs/architecture.md`}
-            >
-              Docs
             </a>
             <a className="btn btn--ghost" href={REPO}>
               Repository →
@@ -45,69 +41,85 @@ export default function Page() {
           screen reader and appearing to. */}
       <main id="content" tabIndex={-1}>
         <section className="hero">
-          <div className="hero__glow" aria-hidden="true">
-            <span />
-            <span />
-          </div>
-          <ScrollbackBackdrop />
-
           <div className="container">
-            <div className="hero__body">
-              <span className="pill">
-                <span className="pill__dot" />
-                Pre-release · nothing tagged
-              </span>
-              <h1>
-                It stays in your <span className="gradient-text">terminal.</span>
-              </h1>
-              <p className="hero__sub">
-                A cross-platform AI coding agent in Rust. One binary, two
-                surfaces — a one-shot CLI when you pipe into it, an inline
-                composer when you don&apos;t. It prints into your scrollback
-                instead of taking the screen.
-              </p>
-              <div className="hero__actions">
-                <a className="btn btn--primary" href="#install">
-                  Install it
-                </a>
-                <a className="btn btn--ghost" href="#verification">
-                  What has been verified
-                </a>
+            {/* The panel is first in the DOM and the slab second. Both are
+                placed by an explicit grid-area on desktop, so order does not
+                decide the overlap there — but below 64rem the two simply stack,
+                and source order is the whole layout. Reversed, the page opened
+                on a decorative illustration and reached the headline a screen
+                later. */}
+            <div className="hero__stage">
+              <div className="hero__glass">
+                <span className="eyebrow label">
+                  <i aria-hidden="true" />
+                  Pre-release · nothing tagged
+                </span>
+                <h1 className="display">
+                  Many agents.
+                  <em>One queue.</em>
+                </h1>
+                <p className="hero__sub">
+                  A local-first coding agent in Rust. Every supervised session
+                  gets its own git worktree and branch, so an agent edits an
+                  isolated checkout rather than the one you are working in — and
+                  every approval they need arrives in one place.
+                </p>
+                <div className="hero__actions">
+                  <a className="btn btn--primary" href="#install">
+                    Install it
+                  </a>
+                  <a className="btn btn--ghost" href="#verification">
+                    See what has been verified
+                  </a>
+                </div>
               </div>
+
+              <Surface className="hero__surface" />
             </div>
           </div>
         </section>
 
-        <div className="container">
-          <dl className="stats">
-            <div>
-              <dt>4</dt>
-              <dd>Crates</dd>
-            </div>
-            <div>
-              <dt>3</dt>
-              <dd>Wire dialects</dd>
-            </div>
-            <div>
-              <dt>0</dt>
-              <dd>Releases cut</dd>
-            </div>
-            <div>
-              <dt>Apache-2.0</dt>
-              <dd>Open source</dd>
-            </div>
-          </dl>
+        {/* The application's status bar rather than a row of stat tiles. The
+            count is the fact and the noun is the caption, so they are not the
+            same colour — and the one figure that is not neutral does not read
+            as neutral. */}
+        <div className="strip">
+          <div className="container">
+            <dl>
+              <div>
+                <dt>9</dt>
+                <dd>crates</dd>
+              </div>
+              <div>
+                <dt>6</dt>
+                <dd>tools</dd>
+              </div>
+              <div>
+                <dt>4</dt>
+                <dd>providers over 3 dialects</dd>
+              </div>
+              <div>
+                <dt>23</dt>
+                <dd>agents priced</dd>
+              </div>
+              <div data-state="warn">
+                <dt>0</dt>
+                <dd>releases tagged</dd>
+              </div>
+            </dl>
+          </div>
         </div>
 
         <section className="section">
           <div className="container">
             <div className="section__head">
-              <span className="section-label">A turn</span>
-              <h2>Watch one run.</h2>
+              <span className="label">One turn</span>
+              <h2 className="display">Watch one run.</h2>
               <p>
                 The transcript is printed into your terminal&apos;s own
                 scrollback, so it survives the process, scrolls with the
-                scrollbar and copies with the mouse. Only the live part is
+                scrollbar and copies with the mouse. Only the live part — the
+                status line, the composer, the question being asked — is
                 redrawn.
               </p>
             </div>
@@ -118,25 +130,26 @@ export default function Page() {
         <section className="section">
           <div className="container">
             <div className="section__head">
-              <span className="section-label">How it behaves</span>
-              <h2>Predictable where it matters.</h2>
+              <span className="label">How it behaves</span>
+              <h2 className="display">Predictable where it matters.</h2>
+              <p>
+                Six behaviours you can check from the outside, each named by the
+                string the product actually prints.
+              </p>
             </div>
             <div className="cards">
               <article className="card">
-                <div className="card__icon" aria-hidden="true">
-                  ⏺
-                </div>
+                <span className="card__artifact">allow? y a n</span>
                 <h3>Reads don&apos;t ask. Writes do.</h3>
                 <p>
                   The diff or the command lands in scrollback first, then the
-                  viewport asks. A shell command is shown as the string the shell
-                  actually receives, never a word-split of it.
+                  viewport asks. A shell command is shown as the string the
+                  shell actually receives, never a word-split of it — the split
+                  reads as a simpler command than the one that runs.
                 </p>
               </article>
               <article className="card">
-                <div className="card__icon" aria-hidden="true">
-                  5
-                </div>
+                <span className="card__artifact">exit 5</span>
                 <h3>Refusals have an exit code.</h3>
                 <p>
                   In a one-shot run there is nobody to ask, so those actions are
@@ -146,52 +159,96 @@ export default function Page() {
                 </p>
               </article>
               <article className="card">
-                <div className="card__icon" aria-hidden="true">
-                  ⇄
-                </div>
-                <h3>Four providers, three dialects.</h3>
+                <span className="card__artifact">.axio/config.toml</span>
+                <h3>A project adds rules. It never removes them.</h3>
                 <p>
-                  Not a plugin system. The model list is fetched from the
-                  provider, never compiled in — a name missing from a built-in
-                  catalogue looks exactly like a name the provider refuses.
+                  That covers <code>[permissions] allow</code>, and it covers{" "}
+                  <code>[worktree] enabled = false</code> — which does not look
+                  like a permission, and is the point. A repository that could
+                  switch worktrees off would be deciding, for everyone who
+                  cloned it, that its agents may write to your working tree.
                 </p>
               </article>
               <article className="card">
-                <div className="card__icon" aria-hidden="true">
-                  ~
-                </div>
-                <h3>One config path, everywhere.</h3>
-                <p>
-                  <code>~/.axio</code> is the same on Windows, WSL, Linux and
-                  macOS rather than each platform&apos;s own directory. One path
-                  to document, to sync between machines, and to name in a bug
-                  report.
-                </p>
-              </article>
-              <article className="card">
-                <div className="card__icon" aria-hidden="true">
-                  ▣
-                </div>
-                <h3>A sandbox on Linux.</h3>
-                <p>
-                  <code>--sandbox</code> adds Landlock, inherited by every
-                  command axio spawns. It says nothing about the network, and it
-                  is a second wall behind the permission engine rather than a
-                  replacement for it.
-                </p>
-              </article>
-              <article className="card">
-                <div className="card__icon" aria-hidden="true">
-                  ?
-                </div>
+                <span className="card__artifact">--probe</span>
                 <h3>Ask the model, not the config.</h3>
                 <p>
-                  <code>--probe</code> sends two short requests, one carrying a
-                  tool. A model can serve chat perfectly and reject every request
-                  that offers it a tool; nothing in your configuration is wrong
-                  when that happens, and only asking finds it.
+                  It sends two short requests, one carrying a tool. A model can
+                  serve chat perfectly and reject every request that offers it a
+                  tool; nothing in your configuration is wrong when that
+                  happens, and only asking finds it.
                 </p>
               </article>
+              <article className="card">
+                <span className="card__artifact">~/.axio</span>
+                <h3>One config path, everywhere.</h3>
+                <p>
+                  The same on Windows, WSL, Linux and macOS rather than each
+                  platform&apos;s own directory. One path to document, to sync
+                  between machines, and to name in a bug report.
+                </p>
+              </article>
+              <article className="card">
+                <span className="card__artifact">--sandbox</span>
+                <h3>A second wall on Linux.</h3>
+                <p>
+                  Landlock, inherited by every command axio spawns. It says
+                  nothing about the network, and it stands behind the permission
+                  engine rather than replacing it.
+                </p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section className="section" id="counts">
+          <div className="container">
+            <div className="section__head">
+              <span className="label">Quota and cost</span>
+              <h2 className="display">
+                What you have left. What you already spent.
+              </h2>
+              <p>
+                Two commands that never take a turn. Neither reads axio&apos;s
+                own stored credentials — a usage probe and an agent turn are
+                different trust boundaries, so they are kept apart in the code
+                as well as in the sentence.
+              </p>
+            </div>
+            <div className="duo">
+              <div>
+                <h3>axio quota</h3>
+                <p>
+                  How much of each provider&apos;s limit is left and when it
+                  resets, across ten providers. Six are read from a credential
+                  another tool already wrote, so they need no configuration at
+                  all.
+                </p>
+                <Term label="provider limits">{`
+> axio quota
+Codex (pro)
+  Weekly                        «22% used  resets in 5d»
+Claude (max)
+  5h                             «8% used  resets in 2h»
+  Weekly                         «2% used  resets in 6d»
+  Weekly (Fable)                 «0% used»
+`}</Term>
+              </div>
+              <div>
+                <h3>axio cost</h3>
+                <p>
+                  What every coding agent on this machine has spent, read from
+                  the transcripts they already write. No network, no
+                  credentials. A model with no known rate is reported unpriced,
+                  never as zero.
+                </p>
+                <Term label="local spend" wrap>{`
+$ axio cost --by client
+$ axio cost --calendar   «the year, shaded»
+$ axio cost --wide       «cache share, $/M, share»
+$ axio cost --diagnose   «what each parser skipped»
+`}</Term>
+              </div>
             </div>
           </div>
         </section>
@@ -199,8 +256,8 @@ export default function Page() {
         <section className="section" id="verification">
           <div className="container">
             <div className="section__head">
-              <span className="section-label">Verification</span>
-              <h2>What has actually been run.</h2>
+              <span className="label">Verification</span>
+              <h2 className="display">What has actually been run.</h2>
               <p>
                 Against a live endpoint, as opposed to built to a documented
                 spec. These are not the same claim, so they are not written as
@@ -211,9 +268,15 @@ export default function Page() {
               <table className="ledger">
                 <thead>
                   <tr>
-                    <th scope="col">Path</th>
-                    <th scope="col">State</th>
-                    <th scope="col">Basis</th>
+                    <th scope="col" className="label">
+                      Path
+                    </th>
+                    <th scope="col" className="label">
+                      State
+                    </th>
+                    <th scope="col" className="label">
+                      Basis
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -221,8 +284,8 @@ export default function Page() {
                     <th scope="row">Chat-completions transport</th>
                     <td className="state state--met">met</td>
                     <td>
-                      Thirteen checks over seven turns, end to end against a real
-                      model, including on Windows.
+                      Thirteen checks over seven turns, end to end against a
+                      real model, including on Windows.
                     </td>
                   </tr>
                   <tr>
@@ -260,8 +323,8 @@ export default function Page() {
         <section className="section" id="install">
           <div className="container">
             <div className="section__head">
-              <span className="section-label">Install</span>
-              <h2>Build it from main.</h2>
+              <span className="label">Install</span>
+              <h2 className="display">Build it from main.</h2>
               <p>
                 There is no published binary yet — releases are built by tag and
                 none has been cut. Needs a Rust toolchain at 1.88 or newer; the
