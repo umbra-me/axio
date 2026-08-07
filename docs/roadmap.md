@@ -252,6 +252,15 @@ expected: Tauri decides dev-versus-production from a *feature*, so without
 a connection refused against a dev server that is not running. Two crates here
 have now hit it, the second after the first had written it down.
 
+It is also glass, which it had claimed to be for a while without being: nothing
+set `transparent`, so every blur in the stylesheet was compositing one flat
+colour against another. The compositor owns the blur now. The material inverts
+deliberately — chrome floats, content does not — because the parts that identify
+and navigate can afford to belong to the desktop and the parts you read cannot.
+Contrast is pinned by tinting the effect rather than trusting the wallpaper,
+which is what makes a ratio checkable once instead of true only on the machine
+it was checked on.
+
 ### M14 - other agents, in terminals axio owns
 
 `axio-pty`, the ninth crate, and the hosted half of the desktop surface. Claude
