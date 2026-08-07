@@ -23,6 +23,16 @@ import { api, type HostedView } from "./bridge";
 // missing a signal means arriving late, never losing output.
 const FALLBACK_MS = 1000;
 
+// The stylesheet is the palette, here too.
+//
+// xterm renders to a canvas and cannot read a custom property itself, so the
+// choice is between resolving them once here and keeping a second copy of every
+// colour in this file. The second copy is what existed, and it had already
+// drifted from the tokens it was copied from.
+function token(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 export function HostedTerminal({ session }: { session: HostedView }) {
   const host = useRef<HTMLDivElement>(null);
 
@@ -41,27 +51,26 @@ export function HostedTerminal({ session }: { session: HostedView }) {
       lineHeight: 1.0,
       scrollback: 10000,
       theme: {
-        background: "#040507",
-        foreground: "#eeeeef",
-        cursor: "#7c9dff",
-        cursorAccent: "#040507",
-        selectionBackground: "#28375c",
-        black: "#0d0e12",
-        red: "#ef7178",
-        green: "#62d9b3",
-        yellow: "#d7bd76",
-        blue: "#7c9dff",
-        magenta: "#a98bfa",
-        cyan: "#69c7d5",
-        white: "#eeeeef",
-        brightBlack: "#70727a",
-        brightWhite: "#ffffff",
+        background: token("--term-bg"),
+        foreground: token("--term-fg"),
+        cursor: token("--accent"),
+        cursorAccent: token("--term-bg"),
+        selectionBackground: token("--term-selection"),
+        black: token("--term-black"),
+        red: token("--danger"),
+        green: token("--ok"),
+        yellow: token("--warn"),
+        blue: token("--accent"),
+        magenta: token("--agent-claude"),
+        cyan: token("--agent-pi"),
+        white: token("--term-white"),
+        brightBlack: token("--term-bright-black"),
+        brightWhite: token("--term-bright-white"),
       },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host.current);
-    fit.fit();
 
     let cursor = 0;
     let stopped = false;
@@ -84,7 +93,6 @@ export function HostedTerminal({ session }: { session: HostedView }) {
         stopped = true;
       }
     };
-    void pull();
     const timer = window.setInterval(() => void pull(), FALLBACK_MS);
     // The real path: read because something was written, not because a timer
     // fired. Sixteen IPC round trips a second per open terminal was the cost of
@@ -97,9 +105,26 @@ export function HostedTerminal({ session }: { session: HostedView }) {
       fit.fit();
       void api.hostedResize(session.id, term.rows, term.cols).catch(() => {});
     };
-    resize();
+
+    // Measure after the font is real, and read only after that.
+    //
+    // The fit addon sizes a cell by measuring one, so a fit that runs while the
+    // mono face is still resolving measures the *fallback* face — and every
+    // column of every box-drawing character a provider's interface is made of
+    // lands at the wrong x for the rest of the session. Nothing errors; the
+    // interface is simply drawn on a grid that does not match the one the
+    // harness was told about.
+    //
+    // The first read waits on the same promise for the same reason: bytes that
+    // arrive before the harness has been told its real size get wrapped at the
+    // wrong width, and a wrapped line stays wrapped in scrollback forever.
     const observer = new ResizeObserver(resize);
-    observer.observe(host.current);
+    void document.fonts.ready.then(() => {
+      if (stopped || !host.current) return;
+      resize();
+      observer.observe(host.current);
+      void pull();
+    });
 
     return () => {
       stopped = true;
