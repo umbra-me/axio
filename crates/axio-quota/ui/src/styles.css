@@ -1,8 +1,19 @@
 /* axio quota — desktop app styles.
  *
- * Tokens are lifted from apps/site/src/app/globals.css rather than eyeballed, so the app
- * and the site are visibly the same product: the #050505 ground, #18181b surfaces,
- * #262626 hairlines, 0.5rem radius, and amber as axio's accent against a cold palette.
+ * Tokens were lifted from apps/site/src/app/globals.css rather than eyeballed, so this app
+ * and the site read as the same product: the #050505 ground, #18181b surfaces, #262626
+ * hairlines, 0.5rem radius, and amber as axio's accent against a cold palette.
+ *
+ * **That is no longer true, and this sheet is the one that did not move.** On 2026-08-07
+ * the website was rebuilt on axio-app's tokens — a colder #05070a ground, #7ba0ff for
+ * axio, and a colour per hosted agent — so the estate now has three surfaces wearing two
+ * palettes, and this is the odd one. The rules below still hold *within* this sheet; what
+ * has lapsed is the claim that its colours match anything outside it.
+ *
+ * Porting it is deliberate work rather than a find-and-replace, which is why it has not
+ * been done here: rule 1 spends amber on identity and reserves geometry to keep it apart
+ * from the caution ramp, and axio-app's palette already assigns its accent and its warn
+ * colour different jobs. Whoever does it decides what "you are here" becomes first.
  *
  * Two surfaces share this sheet. The window is a normal page; the flyout is a floating
  * panel that has to read as part of the shell, so it gets a border and a shadow and
