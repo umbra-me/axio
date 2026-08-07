@@ -503,3 +503,44 @@ button.act:focus-visible {
   height: 100%;
   padding: 14px 12px 10px;
 }
+
+.hosted-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.hosted-row .session {
+  min-width: 0;
+}
+
+/* Revealed on hover or focus, so a row is not permanently wearing a control
+   that ends somebody's work. Focus-within keeps it reachable by keyboard. */
+.hosted-close {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  opacity: 0;
+  cursor: default;
+}
+
+.hosted-row:hover .hosted-close,
+.hosted-row:focus-within .hosted-close {
+  opacity: 1;
+}
+
+.hosted-close:hover {
+  background: rgba(239, 113, 120, 0.18);
+  color: #ffdadd;
+}
+
+.hosted-close:focus-visible {
+  opacity: 1;
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(124, 157, 255, 0.58);
+}

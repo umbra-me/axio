@@ -88,7 +88,13 @@ export default function App() {
         <Rail
           snapshot={snapshot}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={(id) => {
+            setSelected(id);
+            // Leaving the terminal is the point. Without this the pane showed a
+            // terminal forever once one had been opened, and a session's diff
+            // became unreachable for the rest of the window's life.
+            setTerminal(null);
+          }}
           onStarted={(id) => {
             setSelected(id);
             void refresh();
@@ -374,6 +380,19 @@ function HostedRail({
     }
   };
 
+  // Not named `close`: that resolves to `window.close` without an error, and
+  // the collision only surfaces as an argument-count mismatch at the call.
+  const stopHosted = async (id: string) => {
+    try {
+      await api.hostedKill(id);
+    } catch (e) {
+      onError(String(e));
+    }
+    if (id === terminal) {
+      onOpenTerminal(null);
+    }
+  };
+
   return (
     <div className="hosted">
       <div className="hosted-head">
@@ -392,17 +411,26 @@ function HostedRail({
         </div>
       </div>
       {hosted.map((h) => (
-        <button
-          key={h.id}
-          className={`session${h.id === terminal ? " active" : ""}`}
-          style={{ ["--agent-accent" as string]: `var(${h.accentVar})` }}
-          onClick={() => onOpenTerminal(h.id)}
-          title={h.cwd}
-        >
-          <span className={`dot ${h.status === "running" ? "running" : "closed"}`} />
-          <span className="label">{h.label}</span>
-          <small>{h.status === "running" ? "live" : h.status}</small>
-        </button>
+        <div className="hosted-row" key={h.id}>
+          <button
+            className={`session${h.id === terminal ? " active" : ""}`}
+            style={{ ["--agent-accent" as string]: `var(${h.accentVar})` }}
+            onClick={() => onOpenTerminal(h.id)}
+            title={h.cwd}
+          >
+            <span className={`dot ${h.status === "running" ? "running" : "closed"}`} />
+            <span className="label">{h.label}</span>
+            <small>{h.status === "running" ? "live" : h.status}</small>
+          </button>
+          <button
+            className="hosted-close"
+            onClick={() => void stopHosted(h.id)}
+            title={`Stop ${h.label} and everything it started`}
+            aria-label={`Stop ${h.label}`}
+          >
+            ✕
+          </button>
+        </div>
       ))}
     </div>
   );
