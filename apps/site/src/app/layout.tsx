@@ -4,9 +4,9 @@ import { GeistMono } from "geist/font/mono";
 import { BG, SITE } from "./brand";
 import "./globals.css";
 
-const TITLE = "axio — an AI coding agent that stays in your terminal";
+const TITLE = "axio — a local-first AI coding agent in Rust";
 const DESCRIPTION =
-  "A cross-platform AI coding agent in Rust: a one-shot CLI and an inline terminal interface. Pre-release, Apache-2.0.";
+  "Run many coding sessions at once, each in its own git worktree, and answer every question they raise from one queue. A one-shot CLI, an inline terminal interface and a desktop window. Pre-release, Apache-2.0.";
 
 // Geist is the Umbra house face. next/font self-hosts it, so the page still
 // makes no external request.
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
 
 // The site has one palette and no light variant. Declaring that stops the
 // browser rendering scrollbars, form controls and the address bar in light
-// chrome around a page that is #050505 throughout.
+// chrome around a page that is the application's cold near-black throughout.
 export const viewport: Viewport = {
   themeColor: BG,
   colorScheme: "dark",

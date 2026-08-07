@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { BG, GRADIENT, MARK_INK, geistMono } from "./brand";
+import { ACCENT, BG, MARK_INK, geistMono } from "./brand";
 
 // Home-screen icons are composited onto whatever wallpaper is behind them, and
 // iOS applies its own mask, so this one keeps the ground rather than bleeding
@@ -27,7 +27,7 @@ export default function AppleIcon() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            backgroundImage: GRADIENT,
+            background: ACCENT,
             borderRadius: 30,
             color: MARK_INK,
             fontFamily: "Geist Mono",

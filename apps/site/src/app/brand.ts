@@ -9,13 +9,32 @@ export const SITE = "https://axio.sh";
 // are rendered by satori, which never sees the stylesheet, so the tokens have to
 // exist here too. Keep them in step by hand — nothing checks it, which is the
 // same trade the site already makes against web-stack's Tailwind config.
-export const BG = "#050505";
-export const FG = "#fafafa";
-export const MUTED = "#8c8c8c";
-export const ACCENT = "#f59e0b";
-export const GRADIENT = "linear-gradient(110deg, #fbbf24 0%, #f59e0b 52%, #8b5cf6 100%)";
-/** The wordmark's letter sits on the gradient, so it is dark rather than light. */
-export const MARK_INK = "#1a1204";
+//
+// They are the desktop application's, from crates/axio-app/ui/src/styles/
+// tokens.css, rather than the house palette this site opened with. One product
+// with two surfaces cannot credibly wear two identities, and the application is
+// the one with a stated visual thesis to inherit: the chrome is glass and the
+// content is slate.
+export const BG = "#05070a";
+export const SLATE = "#0a0d13";
+export const LINE = "rgba(255,255,255,0.10)";
+export const FG = "#f4f5f7";
+export const TEXT_2 = "#bfc3cb";
+export const MUTED = "#8f939d";
+export const FAINT = "#63666f";
+
+/** axio's own. Focus rings, the mark, anything belonging to the application. */
+export const ACCENT = "#7ba0ff";
+/** The hosted agents, each with its own. A session never borrows the chrome's. */
+export const CLAUDE = "#b492fd";
+export const CODEX = "#55dcb0";
+export const PI = "#63cbdc";
+
+export const OK = "#55dcb0";
+export const WARN = "#e2c67e";
+
+/** The wordmark's letter sits on the accent, so it is the ground rather than light. */
+export const MARK_INK = "#05070a";
 
 // satori cannot read woff2, and geist ships both — these are the .ttf twins of
 // the faces next/font serves to the browser, so the generated images render in
@@ -51,5 +70,5 @@ function font(family: "geist-sans" | "geist-mono", file: string): ArrayBuffer {
 
 export const geistSans = (weight: "Regular" | "SemiBold" | "Bold") =>
   font("geist-sans", `Geist-${weight}.ttf`);
-export const geistMono = (weight: "Regular" | "Bold") =>
+export const geistMono = (weight: "Regular" | "SemiBold" | "Bold") =>
   font("geist-mono", `GeistMono-${weight}.ttf`);

@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { GRADIENT, MARK_INK, geistMono } from "./brand";
+import { ACCENT, MARK_INK, geistMono } from "./brand";
 
 // The header wordmark's mark, rendered at build time so the tab shows the same
 // object the page opens with. Drawn rather than hand-authored as an SVG path
@@ -19,7 +19,7 @@ export default function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          backgroundImage: GRADIENT,
+          background: ACCENT,
           borderRadius: 7,
           color: MARK_INK,
           fontFamily: "Geist Mono",
