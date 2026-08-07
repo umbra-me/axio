@@ -1,92 +1,169 @@
 /*
  * The whole visual system, as variables.
  *
- * Near-black glass: translucent graphite chrome, subtle blur, low-contrast
- * dividers, and colour used only where it identifies something. The terminal
- * and content surfaces are kept *darker and more opaque* than the chrome around
- * them — that inversion is what makes the chrome read as glass without a single
- * gradient or glow.
+ * The thesis is an inversion: **the chrome is glass and the content is slate.**
+ * The parts that identify and navigate — title bar, rail, toolbar, status bar —
+ * are genuinely translucent to the desktop behind the window, so the shell
+ * belongs to the machine it is running on. The part you *read* — a diff, a
+ * terminal, an approval — is dense and near-opaque, because code judged against
+ * a moving background is code judged badly.
  *
- * Radii, spacing and shadow are tokens here rather than literals at call sites,
- * which is the one thing the design this is drawn from does not do. Values that
- * appear thirty times and are only ever written by hand are values that drift.
+ * That inversion used to be written here and was not true: nothing set
+ * `transparent`, so every `backdrop-filter` in the stylesheet was blurring a
+ * flat colour against another flat colour. The blur is done by the compositor
+ * now (`windowEffects: acrylic`), and `backdrop-filter` is reserved for the two
+ * places something genuinely floats over page content.
+ *
+ * Acrylic samples the wallpaper, which would otherwise make text contrast a
+ * property of somebody's desktop picture. `windowEffects.color` pins a dark
+ * tint underneath it, so the ground has a guaranteed ceiling on brightness and
+ * every ratio below survives a white background image.
  */
 
 :root {
   color-scheme: dark;
 
-  /* --- surfaces, darkest to lightest ------------------------------------ */
-  --stage: #020305;
-  --content: rgba(4, 5, 7, 0.96);
-  --content-deep: #050609;
-  --rail: rgba(10, 11, 14, 0.9);
-  --rail-deep: #08090c;
-  --tabs: rgba(11, 12, 15, 0.88);
-  --frame: rgba(15, 16, 19, 0.9);
-  --panel: rgba(7, 8, 10, 0.97);
-  --raised: #1a1c22;
-  --raised-hover: #23262e;
-  --field: #111216;
+  /* --- glass: the chrome, translucent to the desktop -------------------- */
+  /* Alpha is the design decision in this block. Below ~0.45 the wallpaper
+     starts competing with 12px labels; above ~0.7 the effect stops reading as
+     glass at all and the window is merely dark. */
+  --glass-frame: rgba(13, 15, 20, 0.66);
+  --glass-rail: rgba(11, 13, 17, 0.56);
+  --glass-bar: rgba(13, 15, 20, 0.62);
+  --glass-raised: rgba(32, 36, 45, 0.78);
+  --glass-raised-hover: rgba(44, 49, 60, 0.86);
+  --glass-field: rgba(6, 8, 11, 0.62);
+
+  /* --- slate: the content, dense enough to read against ----------------- */
+  --content: rgba(7, 9, 12, 0.84);
+  --content-deep: rgba(3, 4, 6, 0.93);
+  --overlay: rgba(16, 18, 23, 0.9);
 
   /* --- lines ------------------------------------------------------------ */
-  --line: rgba(255, 255, 255, 0.065);
-  --line-soft: rgba(255, 255, 255, 0.035);
-  --line-strong: rgba(255, 255, 255, 0.13);
-  --edge: rgba(255, 255, 255, 0.095);
+  /* The previous set topped out at 6.5% white on near-black — about a 1.5%
+     luminance step, which is to say invisible. Glass edges need to be seen. */
+  --line: rgba(255, 255, 255, 0.1);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --line-strong: rgba(255, 255, 255, 0.17);
+  /* The lit top edge that makes a translucent panel read as a solid sheet of
+     something rather than as a hole. */
+  --lit: rgba(255, 255, 255, 0.08);
 
   /* --- text ------------------------------------------------------------- */
-  --text: #eeeeef;
-  --text-2: #a9abb2;
-  --muted: #70727a;
-  --faint: #555861;
+  /* Ratios are against the darkest ground the acrylic tint permits, so they
+     hold on any wallpaper: --text 15.8:1, --text-2 8.4:1, --muted 5.1:1.
+     --faint is decorative only and never carries a word that must be read. */
+  --text: #f4f5f7;
+  --text-2: #bfc3cb;
+  --muted: #8f939d;
+  --faint: #63666f;
 
   /* --- accents ---------------------------------------------------------- */
   /* `--accent` is axio's own: focus rings, primary actions, anything that
      belongs to the application rather than to an agent. Agent-owned surfaces
      read `--agent-accent` instead and mix it down for inactive states, so a
      session never borrows the chrome's colour or vice versa. */
-  --accent: #7c9dff;
-  --agent-axio: #7c9dff;
-  --agent-claude: #a98bfa;
-  --agent-codex: #62d9b3;
-  --agent-pi: #69c7d5;
-  --ok: #62d9b3;
-  --warn: #d7bd76;
-  --danger: #ef7178;
+  --accent: #7ba0ff;
+  --agent-axio: #7ba0ff;
+  --agent-claude: #b492fd;
+  --agent-codex: #55dcb0;
+  --agent-pi: #63cbdc;
+  --ok: #55dcb0;
+  --warn: #e2c67e;
+  --danger: #f4808a;
+
+  /* --- terminal palette ------------------------------------------------- */
+  /* xterm paints to a canvas, so it needs resolved colours rather than these
+     tokens — and opaque ones, because a translucent terminal would put
+     somebody's wallpaper behind their code. They live here anyway so the
+     terminal and the interface around it drift together or not at all; the
+     component reads them with `getComputedStyle` rather than restating them. */
+  --term-bg: #05060a;
+  --term-fg: #f4f5f7;
+  --term-selection: #2c3b62;
+  --term-black: #0f1116;
+  --term-bright-black: #8f939d;
+  --term-white: #f4f5f7;
+  --term-bright-white: #ffffff;
 
   /* --- radii ------------------------------------------------------------ */
-  --r-xs: 3px;
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 7px;
-  --r-xl: 11px;
+  /* No window radius: the compositor rounds an undecorated window itself, and
+     a CSS radius on top of that clips the content inside a corner the acrylic
+     backdrop does not share. Let the platform own its own corner. */
+  --r-1: 4px;
+  --r-2: 7px;
+  --r-3: 10px;
+  --r-4: 14px;
 
   /* --- spacing ---------------------------------------------------------- */
+  /* One 4px rhythm. The previous scale ran 4, 7, 9, 12, 16, 22 — no ratio, no
+     multiple, and call sites hand-wrote past it constantly. */
   --s-1: 4px;
-  --s-2: 7px;
-  --s-3: 9px;
-  --s-4: 12px;
-  --s-5: 16px;
-  --s-6: 22px;
-
-  /* --- elevation -------------------------------------------------------- */
-  --shadow-window: 0 28px 100px rgba(0, 0, 0, 0.64), inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --shadow-menu: 0 18px 48px rgba(0, 0, 0, 0.58);
-  --shadow-panel: -28px 0 70px rgba(0, 0, 0, 0.32);
-  --blur-window: blur(30px) saturate(108%);
-  --blur-chrome: blur(22px) saturate(112%);
-
-  /* --- structure -------------------------------------------------------- */
-  --titlebar: 36px;
-  --statusbar: 24px;
-  --rail-width: 272px;
-  --tabbar: 60px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
 
   /* --- type ------------------------------------------------------------- */
+  /* Six steps with real distance between them. There were previously eleven
+     sizes inside a 5px band, which is not a scale — it is a range. */
+  --t-micro: 11px;
+  --t-small: 12px;
+  --t-body: 13px;
+  --t-mid: 15px;
+  --t-lg: 19px;
+  --t-display: 30px;
+
+  --w-normal: 400;
+  --w-medium: 500;
+  --w-semi: 600;
+
+  --lh-tight: 1.2;
+  --lh: 1.45;
+  --lh-loose: 1.6;
+
+  /* Uppercase section labels get tracking; display sizes get it removed. */
+  --track-label: 0.07em;
+  --track-display: -0.025em;
+
   --ui-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono-font: "JetBrainsMono NFM", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
 
+  /* --- elevation -------------------------------------------------------- */
+  /* Offset and blur, never a zero-offset halo. Light in this world comes from
+     above, so every shadow drops. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 16px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 18px 44px rgba(0, 0, 0, 0.55);
+
+  /* --- motion ----------------------------------------------------------- */
+  /* One curve. Exponential ease-out: fast departure, long settle — the motion
+     of something heavy being placed rather than something light being thrown. */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --fast: 110ms;
+  --base: 200ms;
+  --slow: 420ms;
+
+  /* --- structure -------------------------------------------------------- */
+  --titlebar: 40px;
+  --statusbar: 28px;
+  --rail-width: 300px;
+  --toolbar: 44px;
+
   font-family: var(--ui-font);
-  background: var(--stage);
+  font-size: var(--t-body);
   color: var(--text);
+}
+
+/* The one motion contract: everything below animates through `--base` and
+   `--ease`, so honouring the preference is a single rule rather than a habit
+   each component has to remember. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --fast: 1ms;
+    --base: 1ms;
+    --slow: 1ms;
+  }
 }

@@ -2,6 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, accentFor, type ApprovalView, type HostedView, type SessionView, type Snapshot } from "./bridge";
 import { HostedTerminal } from "./Terminal";
+import {
+  IconBranch,
+  IconClose,
+  IconMaximize,
+  IconMinimize,
+  IconRepo,
+  IconStart,
+  IconStop,
+  IconTerminal,
+} from "./icons";
 
 // The whole surface is a function of one snapshot from Rust.
 //
@@ -78,6 +88,15 @@ export default function App() {
     [snapshot, selected],
   );
 
+  // Resolved rather than asserted. A terminal can leave the list without this
+  // component being the one that ended it — the process exits, or it is stopped
+  // from another row — and a non-null assertion on that lookup renders
+  // `undefined` into a component that dereferences it.
+  const liveTerminal = useMemo(
+    () => (terminal ? (hosted.find((h) => h.id === terminal) ?? null) : null),
+    [hosted, terminal],
+  );
+
   const running = snapshot?.sessions.filter((s) => s.status === "running").length ?? 0;
 
   return (
@@ -110,26 +129,32 @@ export default function App() {
           <div className="crumbs">
             {session ? (
               <>
-                <span>{session.projectName}</span>
+                <span className="repo">{session.projectName}</span>
                 <span className="sep">/</span>
-                <span>{session.label ?? session.shortId}</span>
+                <span className="here">{session.label ?? session.shortId}</span>
                 {session.branch && (
-                  <>
-                    <span className="sep">·</span>
-                    <span className="branch">{session.branch}</span>
-                  </>
+                  <span className="branch">
+                    <IconBranch size={12} />
+                    {session.branch}
+                  </span>
                 )}
               </>
+            ) : liveTerminal ? (
+              <>
+                <span className="repo">{liveTerminal.label}</span>
+                <span className="sep">/</span>
+                <span className="here">{liveTerminal.cwd}</span>
+              </>
             ) : (
-              <span className="sep">no session selected</span>
+              <span className="sep">nothing selected</span>
             )}
           </div>
 
-          <div className="pane">
+          {/* A terminal is somebody's live interface and owns the pane edge to
+              edge; everything else is a document and gets the reading margin. */}
+          <div className={terminal ? "pane flush" : "pane"}>
             {snapshot?.unavailable && (
-              <p className="notice">
-                Sessions are unavailable: {snapshot.unavailable}
-              </p>
+              <p className="notice">Sessions are unavailable: {snapshot.unavailable}</p>
             )}
             {error && <p className="notice">{error}</p>}
 
@@ -138,18 +163,12 @@ export default function App() {
               onResolved={() => void refresh()}
             />
 
-            {terminal ? (
-              <HostedTerminal key={terminal} session={hosted.find((h) => h.id === terminal)!} />
+            {liveTerminal ? (
+              <HostedTerminal key={liveTerminal.id} session={liveTerminal} />
             ) : session ? (
               <Diff text={diff} />
             ) : (
-              <div className="empty">
-                <p>Nothing selected.</p>
-                <p>
-                  Start one with <code>axio session start -p "…"</code> or{" "}
-                  <code>/new</code> in the terminal interface.
-                </p>
-              </div>
+              <Opening />
             )}
           </div>
         </main>
@@ -169,6 +188,7 @@ function TitleBar({ session }: { session: SessionView | null }) {
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="wordmark" data-tauri-drag-region>
+        <i />
         axio
       </div>
       <div className="title" data-tauri-drag-region>
@@ -183,17 +203,49 @@ function TitleBar({ session }: { session: SessionView | null }) {
         )}
       </div>
       <div className="window-actions">
-        <button onClick={() => void api.windowControl("minimize")} title="Minimise">
-          ─
+        <button onClick={() => void api.windowControl("minimize")} aria-label="Minimise">
+          <IconMinimize size={14} />
         </button>
-        <button onClick={() => void api.windowControl("toggle-maximize")} title="Maximise">
-          ▢
+        <button onClick={() => void api.windowControl("toggle-maximize")} aria-label="Maximise">
+          <IconMaximize size={13} />
         </button>
-        <button className="close" onClick={() => void api.windowControl("close")} title="Close">
-          ✕
+        <button className="close" onClick={() => void api.windowControl("close")} aria-label="Close">
+          <IconClose size={14} />
         </button>
       </div>
     </header>
+  );
+}
+
+// What the window opens on, every time, until something is selected.
+//
+// This was three lines of small grey text in the middle of a black rectangle —
+// the product's first impression was an empty pane. An empty state on a surface
+// with no content yet is a first run, and its job is to say what this is and
+// hand over the two ways to start.
+function Opening() {
+  return (
+    <div className="opening">
+      <h1>Every agent working on your code, in one window.</h1>
+      <p>
+        Supervised sessions run in their own git worktree on their own branch, so
+        several work at once without touching the checkout you are in.
+      </p>
+      <ul>
+        <li>
+          <IconStart size={14} />
+          <code>axio session start -p "…"</code> from a shell
+        </li>
+        <li>
+          <IconStart size={14} />
+          <code>/new</code> in the terminal interface
+        </li>
+        <li>
+          <IconTerminal size={14} />
+          Or start another agent's tool from the rail
+        </li>
+      </ul>
+    </div>
   );
 }
 
@@ -220,27 +272,26 @@ function Rail({
 }) {
   return (
     <nav className="rail">
-      <div className="rail-head">
-        <span>Projects</span>
-        <small style={{ color: "var(--muted)", fontSize: 10 }}>
-          {snapshot?.projects.length ?? 0}
-        </small>
-      </div>
-
       <NewSession
         projects={snapshot?.projects ?? []}
         onStarted={onStarted}
         onError={onError}
       />
 
+      <div className="rail-head">
+        <span>Repositories</span>
+        <span className="count">{snapshot?.projects.length ?? 0}</span>
+      </div>
+
       <div className="rail-list">
         {(snapshot?.projects ?? []).map((project) => (
           <section className="project" key={project.id}>
             <h2 title={project.root}>
-              {project.name}
-              <small>
+              <IconRepo size={13} />
+              <span className="name">{project.name}</span>
+              <span className="count">
                 {project.openSessions}/{project.totalSessions}
-              </small>
+              </span>
             </h2>
             <div className="sessions">
               {(snapshot?.sessions ?? [])
@@ -262,9 +313,7 @@ function Rail({
           </section>
         ))}
         {(snapshot?.projects.length ?? 0) === 0 && !snapshot?.unavailable && (
-          <p style={{ padding: "12px 13px", fontSize: 11, color: "var(--muted)" }}>
-            No sessions yet.
-          </p>
+          <p className="rail-empty">No sessions yet.</p>
         )}
       </div>
 
@@ -324,24 +373,30 @@ function NewSession({
   };
 
   return (
-    <div className="new-session">
-      <select ref={repo} defaultValue={projects[0]?.root}>
-        {projects.map((p) => (
-          <option key={p.id} value={p.root}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <input
-        value={prompt}
-        placeholder="Start a session…"
-        disabled={busy}
-        onChange={(e) => setPrompt(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void start();
-        }}
-      />
-    </div>
+    <>
+      <div className="rail-head">
+        <span>New session</span>
+      </div>
+      <div className="new-session">
+        <select ref={repo} defaultValue={projects[0]?.root} aria-label="Repository">
+          {projects.map((p) => (
+            <option key={p.id} value={p.root}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <input
+          value={prompt}
+          aria-label="What the session should do"
+          placeholder="What should it do?"
+          disabled={busy}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void start();
+          }}
+        />
+      </div>
+    </>
   );
 }
 
@@ -395,20 +450,22 @@ function HostedRail({
 
   return (
     <div className="hosted">
-      <div className="hosted-head">
+      <div className="rail-head">
         <span>Agents</span>
-        <div className="hosted-launch">
-          {available.map((a) => (
-            <button
-              key={a.harness}
-              style={{ ["--agent-accent" as string]: `var(${a.accentVar})` }}
-              onClick={() => void start(a.harness)}
-              title={`Run ${a.label} in a terminal`}
-            >
-              {a.label}
-            </button>
-          ))}
-        </div>
+        <span className="count">{hosted.length}</span>
+      </div>
+      <div className="hosted-launch">
+        {available.map((a) => (
+          <button
+            key={a.harness}
+            style={{ ["--agent-accent" as string]: `var(${a.accentVar})` }}
+            onClick={() => void start(a.harness)}
+            title={`Run ${a.label} in a terminal`}
+          >
+            <IconTerminal size={12} />
+            {a.label}
+          </button>
+        ))}
       </div>
       {hosted.map((h) => (
         <div className="hosted-row" key={h.id}>
@@ -428,7 +485,7 @@ function HostedRail({
             title={`Stop ${h.label} and everything it started`}
             aria-label={`Stop ${h.label}`}
           >
-            ✕
+            <IconStop size={12} />
           </button>
         </div>
       ))}
@@ -456,7 +513,7 @@ function Approvals({
         <article className="approval" key={approval.id}>
           <header>
             <strong>{approval.subject}</strong>
-            <span style={{ color: "var(--muted)" }}>{approval.shortSessionId}</span>
+            <span className="who">{approval.shortSessionId}</span>
           </header>
           <p>{approval.reason}</p>
           {approval.preview?.kind === "diff" && <pre>{approval.preview.unified}</pre>}
@@ -486,7 +543,7 @@ function Approvals({
 }
 
 function Diff({ text }: { text: string | null }) {
-  if (text === null) return <p style={{ color: "var(--muted)", fontSize: 11 }}>Reading…</p>;
+  if (text === null) return <div className="empty">Reading…</div>;
   if (text.trim() === "") {
     // A real outcome and a different one from a failure to read, which an empty
     // pane would be indistinguishable from.
@@ -528,14 +585,18 @@ function StatusBar({
   return (
     <footer className="statusbar">
       <div>
-        <span>local</span>
+        <span className="quiet">local</span>
         <span>
-          {projects} project{projects === 1 ? "" : "s"}
+          <b>{projects}</b> repositor{projects === 1 ? "y" : "ies"}
         </span>
       </div>
       <div>
-        <span className={running > 0 ? "ok" : undefined}>{running} running</span>
-        <span>{sessions} total</span>
+        <span className={running > 0 ? "ok" : "quiet"}>
+          <b>{running}</b> running
+        </span>
+        <span>
+          <b>{sessions}</b> total
+        </span>
       </div>
       <div>{approvals > 0 && <span className="warn">{approvals} waiting</span>}</div>
     </footer>

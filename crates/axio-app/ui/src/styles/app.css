@@ -1,35 +1,40 @@
 @import "./tokens.css";
 
-/* The shell: a title bar, a body, a status bar, and nothing else fixed. */
+/*
+ * The shell: a title bar, a body, a status bar, and nothing else fixed.
+ *
+ * Everything here spends the tokens; nothing here invents a value. A padding
+ * written as `13px` at a call site is a value that will drift away from the six
+ * others that meant the same thing, and the previous version of this file had
+ * nine of them.
+ */
 
 * {
   box-sizing: border-box;
 }
 
-body {
+/* Transparent all the way down to the window. Any opaque ancestor would paint
+   over the compositor's acrylic and the glass would be a flat colour again. */
+html,
+body,
+#root {
+  height: 100%;
   margin: 0;
-  overflow: hidden;
-  -webkit-font-smoothing: antialiased;
+  background: transparent;
 }
 
-#root {
-  display: grid;
-  height: 100vh;
-  place-items: center;
-  background: var(--stage);
+body {
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .window {
   display: grid;
-  width: 100vw;
-  height: 100vh;
+  height: 100%;
   grid-template-rows: var(--titlebar) minmax(0, 1fr) var(--statusbar);
   overflow: hidden;
-  border: 1px solid var(--edge);
-  border-radius: var(--r-md);
-  background: var(--content);
-  box-shadow: var(--shadow-window);
-  backdrop-filter: var(--blur-window);
+  background: transparent;
 }
 
 /* --- title bar ---------------------------------------------------------- */
@@ -39,29 +44,50 @@ body {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   border-bottom: 1px solid var(--line);
-  background: var(--frame);
-  color: var(--text-2);
+  background: var(--glass-frame);
+  box-shadow: inset 0 1px 0 var(--lit);
   user-select: none;
 }
 
 .wordmark {
-  padding-left: var(--s-6);
-  font-family: var(--mono-font);
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.04em;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-left: var(--s-4);
+  font-size: var(--t-mid);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-display);
   color: var(--text);
+}
+
+/* The mark: a filled square at the accent, the same shape the running dot
+   uses. One primitive, two jobs — identity and state. */
+.wordmark i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .title {
-  font-family: var(--mono-font);
-  font-size: 12px;
-  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-small);
+  color: var(--text-2);
 }
 
-.title span {
-  padding-inline: 5px;
+.title .sep {
   color: var(--faint);
+}
+
+.title .branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  font-family: var(--mono-font);
 }
 
 .window-actions {
@@ -72,25 +98,30 @@ body {
 
 .window-actions button {
   display: grid;
-  width: 46px;
+  width: 44px;
   height: 100%;
   border: 0;
   background: transparent;
   color: var(--text-2);
   place-items: center;
   font: inherit;
-  font-size: 13px;
   cursor: default;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 
 .window-actions button:hover {
-  background: rgba(255, 255, 255, 0.065);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
 
 .window-actions button.close:hover {
-  background: #b83e45;
+  background: #c0353d;
   color: #fff;
+}
+
+.window-actions button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* --- body --------------------------------------------------------------- */
@@ -101,93 +132,154 @@ body {
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
 }
 
+/* Flex rather than fixed grid rows: the composer disappears entirely when no
+   repository is known, so the child count is not a constant and a
+   `grid-template-rows` list would silently misalign every section below it. */
 .rail {
-  display: grid;
+  display: flex;
   min-height: 0;
-  grid-template-rows: 60px minmax(0, 1fr) auto;
+  flex-direction: column;
   border-right: 1px solid var(--line);
-  background: var(--rail);
-  backdrop-filter: var(--blur-chrome);
+  background: var(--glass-rail);
 }
 
+.rail-list {
+  flex: 1;
+}
+
+/* One label style for every section header in the rail. */
 .rail-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px 0 20px;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
-  font-weight: 600;
+  padding: var(--s-4) var(--s-4) var(--s-2);
+  font-size: var(--t-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: var(--muted);
+}
+
+.rail-head .count {
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  font-weight: var(--w-normal);
+  letter-spacing: 0;
+  color: var(--faint);
 }
 
 .rail-list {
   overflow-y: auto;
-  padding: var(--s-3) 6px;
-  scrollbar-color: #34363d transparent;
+  padding: var(--s-1) var(--s-2) var(--s-3);
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
   scrollbar-width: thin;
 }
 
-.project {
-  margin-bottom: 5px;
+.project + .project {
+  margin-top: var(--s-3);
 }
 
 .project > h2 {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 42px;
+  gap: var(--s-2);
+  min-height: 30px;
   margin: 0;
-  padding: 0 13px;
-  border-radius: var(--r-sm);
-  font-size: 14px;
-  font-weight: 500;
+  padding: 0 var(--s-2);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
   color: var(--text-2);
 }
 
-.project > h2 small {
-  font-size: 10px;
-  color: var(--muted);
+.project > h2 svg {
+  color: var(--faint);
+  flex: none;
 }
 
+.project > h2 .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project > h2 .count {
+  margin-left: auto;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+/* Sessions indent under their repository, against a rule that makes the
+   grouping structural rather than a matter of remembering the gap. */
 .sessions {
   display: grid;
-  padding: 0 0 5px 20px;
+  gap: 1px;
+  margin-left: var(--s-3);
+  padding-left: var(--s-3);
+  border-left: 1px solid var(--line-soft);
 }
 
 /* A session row carries its agent's colour, mixed down when it is not the one
    being looked at. Chrome never borrows it — that is what keeps "this belongs
    to an agent" and "this belongs to axio" visually different questions. */
 .session {
+  position: relative;
   display: grid;
-  min-height: 40px;
+  min-height: 34px;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--s-3);
-  padding: 0 11px;
+  gap: var(--s-2);
+  padding: 0 var(--s-2);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-1);
   background: transparent;
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 42%, #d4dae2);
+  color: var(--text-2);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--t-body);
   text-align: left;
   cursor: default;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 
 .session:hover {
-  background: var(--line-soft);
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, var(--text));
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
 }
 
 .session.active {
-  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 11%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--agent-accent, var(--accent)) 90%, transparent);
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, var(--text));
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 14%, transparent);
+  color: var(--text);
+}
+
+/* The authored moment.
+   Selecting a session wipes its accent down the leading edge and lets a short
+   bloom settle behind it. It is the one place in this interface where motion
+   carries meaning — the colour arriving *is* the answer to "which one am I
+   looking at" — so nothing else animates position or glow. */
+.session.active::before {
+  content: "";
+  position: absolute;
+  inset: 3px auto 3px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--agent-accent, var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--agent-accent, var(--accent)) 70%, transparent);
+  animation: wipe-in var(--slow) var(--ease);
+}
+
+@keyframes wipe-in {
+  from {
+    clip-path: inset(0 0 100% 0);
+    box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 90%, transparent);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
 }
 
 .session:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 
 .session .label {
@@ -198,8 +290,8 @@ body {
 
 .session small {
   font-family: var(--mono-font);
-  font-size: 10px;
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 42%, var(--muted));
+  font-size: var(--t-micro);
+  color: var(--faint);
 }
 
 .dot {
@@ -209,15 +301,52 @@ body {
   background: var(--agent-accent, var(--accent));
 }
 
-.dot.idle { opacity: 0.4; }
-.dot.running { opacity: 0.95; }
-.dot.closed { filter: grayscale(1); opacity: 0.35; }
+.dot.idle {
+  opacity: 0.45;
+}
+
+/* Running is the one state worth seeing from across a room, so it is the one
+   state that moves. The pulse is slow enough to read as breathing rather than
+   as an alert. */
+.dot.running {
+  box-shadow: 0 0 9px color-mix(in srgb, var(--agent-accent, var(--accent)) 75%, transparent);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.dot.closed {
+  background: var(--faint);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.running {
+    animation: none;
+  }
+  .session.active::before {
+    animation: none;
+  }
+}
+
+.rail-empty {
+  padding: var(--s-3) var(--s-2);
+  font-size: var(--t-small);
+  color: var(--muted);
+}
 
 .rail-foot {
-  padding: var(--s-3) 14px;
+  padding: var(--s-3) var(--s-4);
   border-top: 1px solid var(--line-soft);
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--t-micro);
+  color: var(--faint);
 }
 
 /* --- main --------------------------------------------------------------- */
@@ -226,7 +355,7 @@ body {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: var(--toolbar) minmax(0, 1fr);
   background: var(--content);
 }
 
@@ -234,103 +363,226 @@ body {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  height: var(--tabbar);
-  padding: 0 var(--s-6);
+  padding: 0 var(--s-5);
   border-bottom: 1px solid var(--line);
-  background: var(--tabs);
-  font-family: var(--mono-font);
-  font-size: 13px;
-  backdrop-filter: var(--blur-chrome);
+  background: var(--glass-bar);
+  font-size: var(--t-small);
 }
 
-.crumbs .sep { color: var(--faint); }
-.crumbs .branch { color: var(--accent); }
+.crumbs .sep {
+  color: var(--muted);
+}
+
+.crumbs .repo {
+  color: var(--text-2);
+}
+
+.crumbs .here {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: var(--w-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumbs .branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 3px var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  color: color-mix(in srgb, var(--accent) 72%, var(--text));
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+}
 
 .pane {
   min-height: 0;
   overflow-y: auto;
-  padding: var(--s-6);
-  scrollbar-color: #30323a transparent;
+  padding: var(--s-5);
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
   scrollbar-width: thin;
 }
 
+.pane.flush {
+  padding: 0;
+}
+
+/* --- the first thing anyone sees ---------------------------------------- */
+
+/* This was three lines of small grey text centred in a void, which is what the
+   application opened on every time. An empty state is a first run: it should
+   say what the thing is and hand over the two ways to start it. */
+.opening {
+  display: grid;
+  height: 100%;
+  align-content: center;
+  max-width: 60ch;
+  gap: var(--s-3);
+  padding-left: var(--s-2);
+}
+
+.opening h1 {
+  /* Narrower than the prose it sits above: 30px type wants a shorter measure
+     than 15px type, and sharing one width is what orphaned the last word of the
+     first line. `balance` then distributes what remains across both. */
+  max-width: 20ch;
+  margin: 0;
+  font-size: var(--t-display);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-display);
+  line-height: var(--lh-tight);
+  text-wrap: balance;
+  color: var(--text);
+}
+
+.opening p {
+  max-width: 54ch;
+  margin: 0;
+  font-size: var(--t-mid);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+/* The three ways in, as rows rather than as a paragraph of afterthoughts.
+   Given borders they carry weight, which is what stops the whole block hanging
+   in the middle of an otherwise empty pane. */
+.opening ul {
+  display: grid;
+  gap: 0;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  list-style: none;
+  overflow: hidden;
+}
+
+.opening li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--t-body);
+  color: var(--muted);
+}
+
+.opening li + li {
+  border-top: 1px solid var(--line-soft);
+}
+
+.opening li svg {
+  flex: none;
+  color: var(--faint);
+}
+
+.opening code {
+  padding: 3px var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--glass-field);
+  color: var(--text-2);
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+  white-space: nowrap;
+}
+
+/* The quieter empty states — a session that changed nothing, a pane still
+   reading. Not the opening, and not shouting. */
 .empty {
   display: grid;
   height: 100%;
-  gap: var(--s-3);
   place-content: center;
-  justify-items: center;
   color: var(--muted);
-  font-size: 12px;
-  text-align: center;
-}
-
-.empty code {
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-xs);
-  background: rgba(255, 255, 255, 0.045);
-  color: var(--text-2);
-  font-family: var(--mono-font);
-  font-size: 11px;
+  font-size: var(--t-body);
 }
 
 .diff {
   margin: 0;
   overflow-x: auto;
   font-family: var(--mono-font);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--t-small);
+  line-height: var(--lh);
   color: var(--text-2);
   white-space: pre;
 }
 
-.diff .add { color: var(--ok); }
-.diff .del { color: var(--danger); }
-.diff .hunk { color: var(--accent); }
+.diff .add {
+  color: var(--ok);
+}
+
+.diff .del {
+  color: var(--danger);
+}
+
+.diff .hunk {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+}
 
 /* --- approvals ---------------------------------------------------------- */
 
+/* The one place a `backdrop-filter` is doing real work: an approval floats over
+   whatever the pane was already showing, and blurring that content is what
+   separates the question from the thing it is asking about. */
 .approvals {
   display: grid;
   gap: var(--s-3);
-  margin-bottom: var(--s-6);
+  margin-bottom: var(--s-5);
 }
 
 .approval {
   display: grid;
-  gap: var(--s-2);
+  gap: var(--s-3);
   padding: var(--s-4);
-  border: 1px solid rgba(215, 189, 118, 0.34);
-  border-radius: var(--r-lg);
-  background: rgba(12, 13, 16, 0.94);
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  border-radius: var(--r-3);
+  background: var(--overlay);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(18px) saturate(115%);
 }
 
 .approval header {
   display: flex;
   align-items: baseline;
   gap: var(--s-2);
-  font-family: var(--mono-font);
-  font-size: 12px;
+  font-size: var(--t-body);
   color: var(--warn);
+}
+
+.approval header strong {
+  font-family: var(--mono-font);
+  font-weight: var(--w-semi);
+}
+
+.approval header .who {
+  margin-left: auto;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
 }
 
 .approval p {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--t-body);
+  line-height: var(--lh);
   color: var(--text-2);
 }
 
 .approval pre {
-  max-height: 180px;
+  max-height: 200px;
   margin: 0;
   overflow: auto;
-  padding: var(--s-2);
-  border-radius: var(--r-sm);
+  padding: var(--s-3);
+  border-radius: var(--r-2);
   background: var(--content-deep);
   font-family: var(--mono-font);
-  font-size: 11px;
+  font-size: var(--t-small);
+  line-height: var(--lh);
   color: var(--text-2);
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
 }
 
 .approval .actions {
@@ -339,42 +591,49 @@ body {
 }
 
 button.act {
-  min-height: 27px;
-  padding: 0 12px;
+  min-height: 30px;
+  padding: 0 var(--s-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-sm);
-  background: var(--raised);
+  border-radius: var(--r-2);
+  background: var(--glass-raised);
   color: var(--text-2);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
   cursor: default;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
 
 button.act:hover {
-  background: var(--raised-hover);
+  background: var(--glass-raised-hover);
   color: var(--text);
 }
 
 button.act.primary {
-  border-color: rgba(124, 157, 255, 0.34);
-  background: rgba(124, 157, 255, 0.12);
-  color: #dfe6ff;
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--accent) 32%, #fff);
 }
 
 button.act.primary:hover {
-  border-color: rgba(124, 157, 255, 0.65);
-  background: rgba(124, 157, 255, 0.18);
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 button.act.danger {
-  border-color: rgba(239, 113, 120, 0.5);
-  background: rgba(239, 113, 120, 0.14);
-  color: #ffdadd;
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: color-mix(in srgb, var(--danger) 30%, #fff);
+}
+
+button.act.danger:hover {
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
 }
 
 button.act:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(124, 157, 255, 0.35);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 /* --- status bar --------------------------------------------------------- */
@@ -384,66 +643,122 @@ button.act:focus-visible {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   border-top: 1px solid var(--line);
-  background: var(--frame);
+  background: var(--glass-bar);
   color: var(--text-2);
-  font-size: 10px;
+  font-size: var(--t-micro);
+}
+
+/* The count is the fact; the noun beside it is the caption. Reading order
+   should follow that, and it did not when both were the same grey. */
+.statusbar b {
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+/* A count inside a state-coloured span keeps the state's colour: green is the
+   information there, and overriding it back to white throws it away. */
+.statusbar .ok b,
+.statusbar .warn b {
+  color: inherit;
+}
+
+.statusbar .quiet {
+  color: var(--muted);
 }
 
 .statusbar > div {
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding-inline: 18px;
+  gap: var(--s-4);
+  padding-inline: var(--s-4);
 }
 
-.statusbar > div:last-child { justify-self: end; }
-.statusbar .ok { color: var(--ok); }
-.statusbar .warn { color: var(--warn); }
+.statusbar > div:last-child {
+  justify-self: end;
+}
+
+.statusbar .ok {
+  color: var(--ok);
+}
+
+.statusbar .warn {
+  color: var(--warn);
+}
 
 .notice {
-  padding: var(--s-4);
-  border: 1px solid rgba(239, 113, 120, 0.4);
-  border-radius: var(--r-md);
-  background: rgba(12, 13, 16, 0.92);
-  color: #edb9bc;
-  font-size: 11px;
+  margin: 0 0 var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent);
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--danger) 12%, var(--overlay));
+  color: color-mix(in srgb, var(--danger) 28%, #fff);
+  font-size: var(--t-small);
+  line-height: var(--lh);
 }
 
 /* --- new session -------------------------------------------------------- */
 
+/* One composer, not two loose fields.
+   The repository and the prompt are a single act — "start this, there" — so
+   they share one border and one focus treatment, and the seam between them is a
+   rule rather than a gap. */
 .new-session {
   display: grid;
-  gap: 5px;
-  padding: var(--s-3) 13px;
-  border-bottom: 1px solid var(--line-soft);
+  margin: 0 var(--s-3) var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+  overflow: hidden;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.new-session:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .new-session select,
 .new-session input {
   width: 100%;
-  min-height: 30px;
+  min-height: 32px;
   padding: 0 var(--s-3);
-  border: 1px solid #30333b;
-  border-radius: var(--r-sm);
-  background: var(--field);
+  border: 0;
+  background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--t-small);
 }
 
+.new-session select,
 .new-session input {
-  font-family: var(--mono-font);
+  outline: none;
+}
+
+/* The stock control is the one thing on screen wearing another design system:
+   the platform's own arrow, its own metrics, its own idea of a focus ring.
+   `appearance: none` removes all of it, and the chevron below is drawn on the
+   same 16-unit grid and 1.5 stroke as every other icon here. */
+.new-session select {
+  appearance: none;
+  border-bottom: 1px solid var(--line-soft);
+  padding-right: var(--s-6);
+  color: var(--text-2);
+  font-weight: var(--w-medium);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%238f939d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 6.5L8 10l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--s-2) center;
+  cursor: default;
+}
+
+/* The dropdown itself is painted by the platform, so it gets the one colour it
+   will actually honour rather than a transparent background it will not. */
+.new-session select option {
+  background: #14161c;
+  color: var(--text);
 }
 
 .new-session input::placeholder {
-  color: #90939d;
-}
-
-.new-session select:focus,
-.new-session input:focus {
-  outline: none;
-  border-color: rgba(124, 157, 255, 0.7);
-  box-shadow: 0 0 0 2px rgba(124, 157, 255, 0.1);
+  color: var(--muted);
 }
 
 .new-session input:disabled {
@@ -454,54 +769,41 @@ button.act:focus-visible {
 
 .hosted {
   display: grid;
-  padding: var(--s-3) 6px;
+  padding: 0 var(--s-2) var(--s-2);
   border-top: 1px solid var(--line-soft);
-}
-
-.hosted-head {
-  display: grid;
-  gap: 5px;
-  padding: 0 7px var(--s-2);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
 }
 
 .hosted-launch {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--s-1);
+  padding: 0 var(--s-2) var(--s-2);
 }
 
 .hosted-launch button {
-  padding: 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent)) 28%, transparent);
-  border-radius: var(--r-xs);
-  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 9%, transparent);
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 70%, var(--text));
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px var(--s-2);
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent)) 30%, transparent);
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 10%, transparent);
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 40%, var(--text));
   font: inherit;
-  font-size: 10px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
   cursor: default;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
 
 .hosted-launch button:hover {
-  border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 60%, transparent);
-  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 62%, transparent);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 18%, transparent);
 }
 
-/* xterm measures the element it was opened on, so padding goes on `.xterm`
-   itself. On the host, the fit addon overstates the row count and clips a
-   provider's interface at the bottom. */
-.terminal-host {
-  position: relative;
-  height: 100%;
-  background: var(--content-deep);
-}
-
-.terminal-host .xterm {
-  height: 100%;
-  padding: 14px 12px 10px;
+.hosted-launch button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .hosted-row {
@@ -517,16 +819,19 @@ button.act:focus-visible {
 /* Revealed on hover or focus, so a row is not permanently wearing a control
    that ends somebody's work. Focus-within keeps it reachable by keyboard. */
 .hosted-close {
-  width: 22px;
-  height: 22px;
+  display: grid;
+  width: 24px;
+  height: 24px;
   border: 0;
-  border-radius: var(--r-xs);
+  border-radius: var(--r-1);
   background: transparent;
   color: var(--muted);
+  place-items: center;
   font: inherit;
-  font-size: 10px;
   opacity: 0;
   cursor: default;
+  transition: opacity var(--fast) var(--ease), background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
 
 .hosted-row:hover .hosted-close,
@@ -535,12 +840,26 @@ button.act:focus-visible {
 }
 
 .hosted-close:hover {
-  background: rgba(239, 113, 120, 0.18);
-  color: #ffdadd;
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  color: color-mix(in srgb, var(--danger) 25%, #fff);
 }
 
 .hosted-close:focus-visible {
   opacity: 1;
   outline: none;
-  box-shadow: inset 0 0 0 1px rgba(124, 157, 255, 0.58);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+/* xterm measures the element it was opened on, so padding goes on `.xterm`
+   itself. On the host, the fit addon overstates the row count and clips a
+   provider's interface at the bottom. */
+.terminal-host {
+  position: relative;
+  height: 100%;
+  background: var(--content-deep);
+}
+
+.terminal-host .xterm {
+  height: 100%;
+  padding: var(--s-3) var(--s-3) var(--s-2);
 }

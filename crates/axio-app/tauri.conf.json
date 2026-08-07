@@ -19,7 +19,13 @@
         "minWidth": 860,
         "minHeight": 540,
         "decorations": false,
-        "resizable": true
+        "resizable": true,
+        "transparent": true,
+        "shadow": true,
+        "windowEffects": {
+          "effects": ["acrylic"],
+          "color": [8, 9, 12, 190]
+        }
       }
     ],
     "security": {
