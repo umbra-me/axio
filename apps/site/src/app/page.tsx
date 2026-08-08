@@ -368,7 +368,16 @@ cargo install --git ${REPO} --locked axio
             <a href={`${REPO}/blob/main/docs/roadmap.md`}>Roadmap</a>
             <a href={`${REPO}/blob/main/SECURITY.md`}>Security</a>
           </div>
-          <span>Apache-2.0 · a product of Umbra</span>
+          {/* data-umbra-link is what the shared collector watches for. The
+              press is counted as an hourly total against this site and this
+              link name, with no visitor identifier, and the navigation is
+              never delayed waiting for it. */}
+          <span>
+            Apache-2.0 ·{" "}
+            <a href="https://umbra.me" data-umbra-link="umbra-attribution">
+              a product of Umbra
+            </a>
+          </span>
         </div>
       </footer>
     </>
