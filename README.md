@@ -69,9 +69,8 @@ curl -fsSL https://axio.sh/install | sh      # macOS, Linux, WSL
 irm https://axio.sh/install.ps1 | iex        # Windows
 ```
 
-Those scripts live in this repository at `apps/site/scripts/`, and the site
-serves them as `text/plain` so a browser shows the source rather than
-downloading it. Read one before running it — that applies to every script anyone
+Those scripts live in `umbra-me/axio-sh-web` at `scripts/`, and the site serves
+them as `text/plain` so a browser shows the source rather than downloading it. Read one before running it — that applies to every script anyone
 asks you to pipe into a shell, including these. They check for a toolchain and
 refuse if it is missing or older than 1.88, install into `CARGO_HOME` as the
 invoking user, use no `sudo`, and change no shell profile. `AXIO_INSTALL_REF`
@@ -445,11 +444,11 @@ The core emits a stream of events and knows nothing about rendering, so each
 surface is a consumer of the same channel. `--json` is a second renderer, never
 a second loop.
 
-`apps/site` is the axio.sh website and the only thing here that is not Rust: a
-Next.js app, plus the two install scripts the site serves. It is not a Cargo
-workspace member and holds no `.rs` files, so `scripts/limits.sh` — which counts
-members and Rust lines under `crates/` — does not see it. `scripts/firewall.sh`
-greps the whole tracked tree, so it applies there like anywhere else.
+This repository is Rust and nothing else. The axio.sh website used to live here
+as `apps/site`; ADR 0013 in the Umbra control plane moved it to
+`umbra-me/axio-sh-web`, because a Next.js app and a Rust agent share a product
+and nothing else — not a language, not a release cadence, and not a reason for a
+website deploy to appear in the agent's history.
 
 See [`docs/architecture.md`](docs/architecture.md) for the invariants,
 [`docs/gotchas.md`](docs/gotchas.md) for the traps, and

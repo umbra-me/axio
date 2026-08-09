@@ -64,7 +64,7 @@ src/
   history.rs       JSONL readings, 45-day retention
   focus.rs         which provider the single tray icon shows  <-- unimplemented
   app/             Tauri: commands, tray, icon rasteriser, state, cost, schedule
-ui/                React + TypeScript, Vite. Design tokens from apps/site.
+ui/                React + TypeScript, Vite. Design tokens from the axio.sh website.
 icons/make-icon.mjs  regenerates icon.ico; tauri-build requires it
 ```
 

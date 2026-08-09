@@ -55,7 +55,7 @@ tracing = "0.1.44"
 # the notification-area surface actually calls are enabled.
 # The desktop app: tray, HTML flyout and window, all one Tauri process. Behind the `app`
 # feature so a default `cargo install axio` links none of it. The frontend is React and
-# TypeScript, matching apps/site, built by Vite rather than Next — a desktop app has no
+# TypeScript, matching the axio.sh website, built by Vite rather than Next — a desktop app
 # server to render on.
 tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-build = { version = "2.6.3" }

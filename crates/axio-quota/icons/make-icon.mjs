@@ -5,7 +5,7 @@
 //
 // The mark is a ring: a quota is a gauge, and a ring reads as one at 16px where anything
 // with interior detail turns to mush. Amber is axio's accent (--accent #f59e0b in
-// apps/site), and the ring is left open at the top-right so it does not read as a full
+// the axio.sh website), and the ring is left open at the top-right so it does not read as a full
 // circle — a full ring at 100% would say the opposite of what the app is for.
 
 import { writeFileSync, mkdirSync } from "node:fs";

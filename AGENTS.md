@@ -121,9 +121,9 @@ check.
 It is off by default and verified absent from the default tree: `cargo tree -p axio
 -e normal` names no tauri, wry or webview2.
 
-The frontend is React and TypeScript under `crates/axio-quota/ui`, matching
-`apps/site`, built by Vite rather than Next — a desktop app has no server to
-render on. `build.rs` calls `tauri_build::build()` behind `#[cfg(feature =
+The frontend is React and TypeScript under `crates/axio-quota/ui`, matching the
+axio.sh website in `umbra-me/axio-sh-web`, built by Vite rather than Next — a
+desktop app has no server to render on. `build.rs` calls `tauri_build::build()` behind `#[cfg(feature =
 "app")]`, so a headless `cargo build -p axio-quota` neither reads
 `tauri.conf.json` nor links `tauri-build`.
 
