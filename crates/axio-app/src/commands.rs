@@ -21,7 +21,8 @@ use tauri::{Emitter, Manager, State};
 
 use crate::hosted::{HostedOutput, HostedView, StartHostedInput};
 use crate::model::{
-    AppError, ApprovalView, DecisionInput, SessionView, Snapshot, StartSessionInput,
+    AppError, ApprovalView, DecisionInput, ProjectView, SessionView, Snapshot, StartSessionInput,
+    TranscriptView,
 };
 use crate::state::AppState;
 
@@ -73,6 +74,47 @@ pub async fn close_session(
 #[tauri::command]
 pub async fn session_diff(state: Shared<'_>, session_id: String) -> Result<String, AppError> {
     state.diff(&session_id).await
+}
+
+#[tauri::command]
+pub async fn session_transcript(
+    state: Shared<'_>,
+    session_id: String,
+) -> Result<TranscriptView, AppError> {
+    state.transcript(&session_id)
+}
+
+/// Register a repository the interface already knows the path of.
+#[tauri::command]
+pub async fn open_project(state: Shared<'_>, path: String) -> Result<ProjectView, AppError> {
+    state.open_project(&path).await
+}
+
+/// Ask for a repository with the native folder picker, then register it.
+///
+/// The dialog is opened from here rather than from the webview so that what
+/// reaches the supervisor is a path this side chose to accept — the same
+/// reason window controls are a command. `None` means the picker was
+/// dismissed, which is not an error and must not be shown as one.
+#[tauri::command]
+pub async fn add_repository(
+    app: tauri::AppHandle,
+    state: Shared<'_>,
+) -> Result<Option<ProjectView>, AppError> {
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = app.dialog().file().set_title("Add a repository");
+    // Blocking by design, on a worker: the picker is modal for as long as it is
+    // open, and an async command already runs off the thread that paints.
+    let picked = tauri::async_runtime::spawn_blocking(move || dialog.blocking_pick_folder())
+        .await
+        .map_err(|e| AppError::Supervisor(format!("the folder picker did not return: {e}")))?;
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| AppError::NoRepository(format!("not a usable path: {e}")))?;
+    state.open_project(&path.to_string_lossy()).await.map(Some)
 }
 
 #[tauri::command]

@@ -28,14 +28,18 @@ export type { SessionView } from "./generated/SessionView";
 export type { Snapshot } from "./generated/Snapshot";
 export type { StartHostedInput } from "./generated/StartHostedInput";
 export type { StartSessionInput } from "./generated/StartSessionInput";
+export type { TranscriptEntry } from "./generated/TranscriptEntry";
+export type { TranscriptView } from "./generated/TranscriptView";
 
 import type { ApprovalView } from "./generated/ApprovalView";
 import type { DecisionInput } from "./generated/DecisionInput";
 import type { HostedOutput } from "./generated/HostedOutput";
 import type { HostedView } from "./generated/HostedView";
+import type { ProjectView } from "./generated/ProjectView";
 import type { SessionView } from "./generated/SessionView";
 import type { Snapshot } from "./generated/Snapshot";
 import type { StartSessionInput } from "./generated/StartSessionInput";
+import type { TranscriptView } from "./generated/TranscriptView";
 
 export const api = {
   snapshot: () => invoke<Snapshot>("snapshot"),
@@ -44,6 +48,11 @@ export const api = {
   sendPrompt: (sessionId: string, prompt: string) =>
     invoke<void>("send_prompt", { sessionId, prompt }),
   sessionDiff: (sessionId: string) => invoke<string>("session_diff", { sessionId }),
+  sessionTranscript: (sessionId: string) =>
+    invoke<TranscriptView>("session_transcript", { sessionId }),
+  openProject: (path: string) => invoke<ProjectView>("open_project", { path }),
+  // The native folder picker, opened by Rust. `null` means it was dismissed.
+  addRepository: () => invoke<ProjectView | null>("add_repository"),
   cancelSession: (sessionId: string) => invoke<void>("cancel_session", { sessionId }),
   closeSession: (sessionId: string, discard: boolean) =>
     invoke<void>("close_session", { sessionId, discard }),
@@ -71,6 +80,19 @@ export const api = {
     invoke<void>("hosted_resize", { id, rows, cols }),
   hostedKill: (id: string) => invoke<void>("hosted_kill", { id }),
 };
+
+// What went wrong, as words.
+//
+// A command's error arrives as the tagged `AppError` object — `{kind,
+// message}` — and `String()` of an object is "[object Object]", which is what
+// the window showed for its first real failure. The message is the part a
+// person reads; the kind is for code that wants to branch.
+export function describe(e: unknown): string {
+  if (e && typeof e === "object" && "message" in e && typeof e.message === "string") {
+    return e.message;
+  }
+  return String(e);
+}
 
 // Which colour identifies a supervised session.
 //

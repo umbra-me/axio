@@ -72,6 +72,85 @@ a minor bump may break things.
 
 ### Added
 
+- **The window works the way a multi-agent desktop is expected to.** Sessions
+  and hosted terminals open as tabs across the pane, and a tab is a place the
+  window is looking rather than the work itself — closing one stops nothing.
+  The keyboard reaches everything: new session, new terminal, next and
+  previous tab, tab by number, close tab, add a repository, and a command
+  palette that lists every session, terminal and action by name with fuzzy
+  matching. Chords use the platform's own modifier and are named in one table
+  the palette reads, so the menu cannot drift from the bindings.
+
+  Agents say when they need you. A session with a question waiting turns its
+  dot warm in the rail, on its tab and in the status bar; one that finishes a
+  turn while another tab is in front is marked until it is looked at. Each
+  session's questions sit above its own composer; the pooled queue shows when
+  no session is in front. The rail rows carry a chip — working, needs you,
+  done, idle, closed — so the state of several agents reads without opening
+  any of them.
+
+  The model's prose is rendered from its markdown — fenced code with its
+  language, lists, headings, quotes, inline code and emphasis — by a
+  hand-written renderer that produces elements rather than HTML, so nothing
+  the model writes can become markup; links show their address rather than
+  being clickable. And transcript and changes can sit side by side instead of
+  behind tabs, toggled from the keyboard or the palette.
+
+- **The window can drive a session, not only watch its diff.** Selecting one
+  opens its transcript — what it said, what it ran and what each call returned,
+  streaming as tokens arrive, with the diff beside it as a second tab that is
+  split per file and re-read when a turn ends rather than per token. Under the
+  transcript is a composer: a follow-up prompt is queued behind the running
+  turn, Stop interrupts it, Close keeps the worktree and Discard deletes it,
+  behind a confirmation. Every one of those is a command the CLI already had —
+  `send_prompt`, `cancel_session`, `close_session` were exposed and nothing in
+  the interface called them, so the surface that promised to hold no capability
+  the command line lacks was lacking three the command line had.
+
+  The transcript is Rust's. `axio-app` folds the supervisor's event stream into
+  a per-session record as it arrives, so the window asks for a projection and
+  never re-parses a session file per paint; a session this process did not
+  watch — one the CLI ran, or one that ended before the window opened — is
+  seeded from its file the first time it is asked for, and the view says so.
+
+- **A refusal carries a note.** The Deny button sent `feedback: null`, and the
+  field beside it now sends what was typed — which becomes the tool result the
+  model reads, so "no, use the existing helper" steers the next step instead of
+  ending it. This is the one line the roadmap's claim about review being the
+  centre of gravity had been missing.
+
+- **The pane is the composer, and a repository can be added from it.** Starting
+  a session had been a one-line input in the rail while the pane — most of the
+  screen — explained what a session was; and that input only rendered once a
+  project existed, which only happened once a session had been started, so a
+  fresh window had no way in. The opening state is now the composer: pick a
+  repository, say what to do, start. The rail keeps a "New session" entry that
+  leads back to it. Adding a repository is a native folder picker opened from
+  Rust so the path that reaches the supervisor is one this side accepted; the
+  picked repository is registered and selected, and not written anywhere, for
+  the reason `Projects` gives.
+
+- **An error is shown as its message.** A command's error is the tagged
+  `AppError` object, and the first real failure the window met was displayed
+  as `[object Object]`.
+
+- **Closed sessions are history.** The rail hides them behind a toggle, keeps
+  the one being looked at visible, and `SessionView` gained `open` so a
+  session that is merely not live in this process — the CLI's, or a previous
+  run's — is told apart from one somebody actually closed. Closing such a
+  session works now: the supervisor closes from the index when it holds no
+  live handle, which the CLI's `session close` had been doing on its own.
+
+- **One window per machine.** A second launch brings the first forward instead
+  of starting a second supervisor over the same index and worktrees.
+
+- **On macOS the window wears its own chrome.** A platform configuration file
+  keeps the native traffic lights, placed inside the custom title bar, and asks
+  the compositor for the HUD material rather than acrylic, which it does not
+  have; the drawn window controls are not rendered there. Before this the
+  window on a Mac was transparent with no blur behind it and two sets of
+  controls, one of which the platform ignored.
+
 - **`axio-supervisor`: many sessions at once, across many repositories.** A
   session per task, each isolated in its own git worktree on its own branch, all
   reporting into one event stream and one pooled queue of approvals, with a
@@ -491,6 +570,18 @@ a minor bump may break things.
   Clipboard API exists, so it is never a control that silently does nothing.
 
 ### Fixed
+
+- **Closing the window over running work looked like a hang.** Rust refused
+  the close and emitted an event saying why, and nothing listened: the button
+  did nothing and the window stayed. The refusal is a question now — how many
+  turns and terminals are live, keep working or close anyway — and "close
+  anyway" is the one caller allowed to reach `destroy`.
+
+- **An error from an action vanished before it could be read.** The window had
+  one error slot, and the five-second fallback poll cleared it on every
+  successful read — so "could not start that session" lasted at most five
+  seconds. Read errors still clear themselves; action errors stay until
+  dismissed.
 
 - **Hosted agents ran where you asked, rather than in the Windows directory.**
   `canonicalize` returns the extended-length path form, the command interpreter

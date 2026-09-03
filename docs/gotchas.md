@@ -979,6 +979,44 @@ surface behind the glass exercisable by ordinary unit tests with no webview, and
 it is the enforcement mechanism for "Rust owns all state": logic that has to
 compile without Tauri cannot quietly become a TypeScript store.
 
+**A platform gets its own configuration file, not a branch in the code.** Tauri
+merges `tauri.<platform>.conf.json` over `tauri.conf.json` at build time. The
+base window asks for acrylic and no decorations, which macOS cannot honour —
+the window came up transparent with nothing blurring behind it, and drew a set
+of controls beside no native ones. The macOS file keeps decorations with the
+overlay title bar so the traffic lights sit inside the custom bar, and asks for
+the HUD material. The webview checks the platform once, to hide the drawn
+controls and inset the wordmark.
+
+**One window per machine, and the plugin that enforces it is registered first.**
+Two windows would be two supervisors over one index and one set of worktrees,
+each unaware of what the other is running. The second launch is answered inside
+the single-instance plugin before the rest of the builder runs; registered
+later, the second process has already opened a supervisor by the time it is
+told to leave.
+
+**The relay feeds the state before it tells the window.** Each supervisor event
+is folded into the session's transcript and only then emitted, so a read woken
+by the event never races the write it was woken for. A session this process did
+not watch is seeded from its file the first time it is asked for, and the view
+says which it was.
+
+**A tab is not a session.** The tab strip holds what the window is looking at;
+closing a tab stops nothing, and a session with no tab is still running. Which
+sessions finished while unwatched is likewise the window's knowledge — kept in
+the webview and cleared on view, because it is about attention rather than
+about work, and it is the one such thing the webview is allowed to hold.
+
+**Chords are named in one table, and the palette reads it.** The key handler
+matches against the same entries the palette prints as labels, so a binding and
+its menu entry cannot disagree. The modifier is the platform's own.
+
+**Markdown is rendered to elements, never to HTML.** The renderer builds React
+nodes from a small block and inline grammar; nothing in the webview sets
+`innerHTML`, and a link is shown with its address rather than followed. The CSP
+is what makes the window safe against a model's output; the renderer keeps that
+from being the only thing.
+
 **A command no caller reaches is not a capability.** Two shipped that way — one
 to start a session, one to stop a hosted terminal — and both looked complete
 from the Rust side, where the command exists, is registered, and has a passing

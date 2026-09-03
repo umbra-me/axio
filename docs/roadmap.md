@@ -224,7 +224,14 @@ than a diff between two stores that can disagree.
 
 Structure and a first surface, not a finished product: the rail, the session
 list, the approval queue, a diff view, the custom frame and the status bar.
-Starting turns still belongs to the CLI — the shell reviews.
+Starting turns belonged to the CLI at first and the shell only reviewed; it
+has since gained the transcript, a follow-up composer, stop, close and
+discard, a refusal that carries a note, and a folder picker for adding a
+repository — each one a command the CLI already had, which is the rule. On
+top of that the shape a multi-agent desktop is expected to have: sessions and
+terminals as tabs, a command palette, chords for everything, rendered
+markdown, transcript beside diff, and agents that mark themselves when they
+need you or when they finished while you were looking elsewhere.
 
 Four rules it is built on, three of them corrections to what the prior art does.
 Every command is `async`, because one declared without it runs on the thread

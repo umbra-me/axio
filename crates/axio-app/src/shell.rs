@@ -24,6 +24,17 @@ pub fn run(
     events: Option<crate::SessionEvents>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let app = tauri::Builder::default()
+        // First, as its documentation asks: a second launch must be answered
+        // before anything else in this process has been set up. Two windows
+        // would be two supervisors over one index and one set of worktrees,
+        // each unaware of what the other is running — so the second launch
+        // brings the first window forward instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
@@ -34,6 +45,9 @@ pub fn run(
             commands::cancel_session,
             commands::close_session,
             commands::session_diff,
+            commands::session_transcript,
+            commands::open_project,
+            commands::add_repository,
             commands::resolve_approval,
             commands::window_control,
             commands::hosted_available,
@@ -61,13 +75,17 @@ pub fn run(
     //
     // It was being dropped, and the window polled for state it was already
     // being handed. The relay sends the session id and nothing else: what
-    // changed still comes back through `snapshot`, so a listener that missed
-    // one is late rather than wrong — the same discipline the terminal path
-    // follows, for the same reason.
+    // changed still comes back through `snapshot` and `session_transcript`,
+    // so a listener that missed one is late rather than wrong — the same
+    // discipline the terminal path follows, for the same reason.
+    //
+    // The state sees each event before the window is told about it, so the
+    // window's read never races the write it was woken for.
     if let Some(mut events) = events {
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = events.recv().await {
+                handle.state::<AppState>().observe(&event);
                 let _ = handle.emit("axio://session-activity", event.event.session.to_string());
             }
         });

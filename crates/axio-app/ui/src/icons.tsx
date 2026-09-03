@@ -111,3 +111,27 @@ export const IconStart = (p: IconProps) => (
     <path d="M8 3.5v9M3.5 8h9" />
   </Icon>
 );
+
+export const IconPlus = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 3.5v9M3.5 8h9" />
+  </Icon>
+);
+
+export const IconMessage = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 3.5h10a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H7.5L4.5 13.5V11H3a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" />
+  </Icon>
+);
+
+export const IconSend = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 8h10M8.5 3.5L13 8l-4.5 4.5" />
+  </Icon>
+);
+
+export const IconHistory = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6M8 5v3.2l2.2 1.3" />
+  </Icon>
+);

@@ -50,6 +50,10 @@ pub struct SessionView {
     pub workspace: String,
     pub isolation: Isolation,
     pub status: SessionStatus,
+    /// Whether the index still counts it as open. `Closed` above means "not
+    /// live in this process", which a session started from the command line
+    /// also is; this says whether anyone has actually closed it.
+    pub open: bool,
     /// `number`, not `bigint`. ts-rs maps `u64` to `bigint` by default, which
     /// would be right for a boundary that preserved 64-bit integers — and this
     /// one does not: Tauri's IPC is JSON, so what actually arrives is a JS
@@ -177,6 +181,90 @@ pub struct StartSessionInput {
     pub isolation: Option<Isolation>,
 }
 
+/// One row of a session's transcript, in the shape a reader needs.
+///
+/// A projection of `axio_core::protocol::Item`, flattened: the tool call's
+/// status and its output are fields rather than a nested enum, because a row
+/// wants "is it done, and what did it say" and not the wire's state machine.
+/// Turn boundaries and notices are rows too, so the whole thing is one list
+/// in the order it happened.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    export,
+    export_to = "../ui/src/generated/",
+    rename_all_fields = "camelCase"
+)]
+pub enum TranscriptEntry {
+    User {
+        id: String,
+        text: String,
+    },
+    Agent {
+        id: String,
+        text: String,
+        /// Still arriving. A reader can show a cursor; nothing else changes.
+        streaming: bool,
+    },
+    Reasoning {
+        id: String,
+        text: String,
+    },
+    Tool {
+        id: String,
+        name: String,
+        subject: String,
+        /// `pending`, `awaitingApproval`, `running`, `ok`, `failed`, `denied`
+        /// or `cancelled` — the wire's own status names.
+        status: String,
+        /// The tool's output when it ran, or the message when it did not.
+        output: String,
+        truncated: bool,
+        preview: Option<PreviewView>,
+        #[ts(type = "number")]
+        ms: u64,
+    },
+    Interrupted {
+        id: String,
+        after_steps: u32,
+    },
+    Elision {
+        id: String,
+        dropped_items: u32,
+    },
+    /// A turn ended. `outcome` is the wire's snake_case tag: `completed`,
+    /// `refused`, `interrupted`, `step_limit`, `budget_exceeded`, `failed`.
+    Turn {
+        id: String,
+        outcome: String,
+        detail: String,
+        cost_usd: f64,
+    },
+    Notice {
+        id: String,
+        level: String,
+        message: String,
+    },
+}
+
+/// A session's transcript, as far as this process has seen it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct TranscriptView {
+    pub entries: Vec<TranscriptEntry>,
+    pub model: Option<String>,
+    pub cost_usd: f64,
+    /// Read back from the session file rather than watched live. True for a
+    /// session another process ran, or one that ended before this window
+    /// opened; the transcript is complete up to the last record written.
+    pub from_record: bool,
+}
+
 /// Everything the interface needs to paint itself once.
 ///
 /// One call rather than four, so a first paint cannot show a project list from
@@ -240,6 +328,7 @@ mod tests {
             workspace: "w".into(),
             isolation: Isolation::Worktree,
             status: SessionStatus::Running,
+            open: true,
             started_ms: 1,
         };
         let json = serde_json::to_value(&view).expect("serialises");

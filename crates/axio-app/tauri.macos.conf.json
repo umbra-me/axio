@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "axio",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 860,
+        "minHeight": 540,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 14, "y": 13 },
+        "resizable": true,
+        "transparent": true,
+        "shadow": true,
+        "windowEffects": {
+          "effects": ["hudWindow"]
+        }
+      }
+    ]
+  }
+}

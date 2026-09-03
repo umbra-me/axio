@@ -282,6 +282,38 @@ Three invariants everything else follows from:
   `app.run(closure)`; `.run(context)` cannot intercept it.
 - **The lib target is named apart from the binary.** Both otherwise emit
   `axio_app.pdb` and cargo warns about the collision on every Windows build.
+- **`tauri.macos.conf.json` overrides the window for one platform.** Tauri
+  merges `tauri.<platform>.conf.json` over `tauri.conf.json` at build time. The
+  base file asks for acrylic and no decorations, which macOS has no equivalent
+  for — the window came up transparent with nothing blurring behind it and a
+  drawn set of controls beside no native ones. The macOS file keeps decorations
+  with `titleBarStyle: Overlay` so the traffic lights sit inside the custom
+  title bar, and asks for `hudWindow`. The webview checks `isMac` once to hide
+  the drawn controls and inset the wordmark; nothing else branches.
+- **The single-instance plugin is registered first, and must be.** A second
+  launch is answered inside that plugin before the rest of the builder runs;
+  registered later, the second process has already opened a supervisor over
+  the same index by the time it is told to go away.
+- **Transcripts are built from the event stream, and the relay feeds the state
+  before it emits.** `shell.rs` hands each `SupervisedEvent` to
+  `AppState::observe` and only then tells the window, so a `session_transcript`
+  read woken by the event never races the write. A session not seen live is
+  seeded from its file through the `SessionStore` the app is given; tests
+  build an `AppState` without one, and then such a session has an empty
+  transcript rather than an error.
+- **A tab is not a session.** The tab strip holds *what the window is looking
+  at*; closing a tab stops nothing and a session with no tab is still running.
+  Which sessions finished while unwatched is likewise the window's knowledge,
+  kept in the webview and cleared on view — it is about attention, not about
+  work, and is the one such thing the webview is allowed to hold.
+- **Chords live in `shortcuts.ts` and nowhere else.** The palette reads its
+  labels from the same table the key handler matches against, so a binding
+  and its menu entry cannot disagree. `Cmd` on macOS, `Ctrl` elsewhere.
+- **Markdown is rendered to elements, never to HTML.** `Markdown.tsx` builds
+  React nodes from a small block and inline grammar; there is no `innerHTML`
+  in the webview and a link is shown with its address rather than followed.
+  The CSP is what makes the window safe against a model's output; the
+  renderer is what keeps that from being the only thing.
 - **Nothing in `state` or `model` may link Tauri.** That is the rule that keeps
   the state layer testable and stops it drifting into the webview.
 

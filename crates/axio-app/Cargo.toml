@@ -35,6 +35,7 @@ app = [
     "dep:tauri",
     "dep:tauri-build",
     "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-single-instance",
     "dep:axio",
     # Not optional, and not obvious. Tauri decides dev-versus-production from a
     # *feature*, never from the cargo profile: without this `tauri-build` emits
@@ -67,6 +68,9 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tauri = { workspace = true, optional = true }
 tauri-plugin-dialog = { version = "2.7.2", optional = true }
+# One window per machine. Two of them would be two supervisors over one index
+# and one set of worktrees, each unaware of what the other is running.
+tauri-plugin-single-instance = { version = "2.4.4", optional = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

@@ -421,23 +421,27 @@ body {
 
 /* --- the first thing anyone sees ---------------------------------------- */
 
-/* This was three lines of small grey text centred in a void, which is what the
-   application opened on every time. An empty state is a first run: it should
-   say what the thing is and hand over the two ways to start it. */
+/* The pane centres the composer; the notices above it stay at the top. */
+.pane.opening-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.pane.opening-pane .opening {
+  margin: auto;
+}
+
 .opening {
   display: grid;
-  height: 100%;
-  align-content: center;
-  max-width: 60ch;
-  gap: var(--s-3);
-  padding-left: var(--s-2);
+  width: min(680px, 100%);
+  gap: var(--s-4);
+  padding: var(--s-4) 0;
 }
 
 /* An empty state, not a landing page. It says where you are and what to do
    next at the scale a tool talks, rather than announcing the product to
    somebody who already opened it. */
 .opening h1 {
-  max-width: 24ch;
   margin: 0;
   font-size: var(--t-lg);
   font-weight: var(--w-semi);
@@ -448,20 +452,108 @@ body {
 }
 
 .opening p {
-  max-width: 56ch;
+  max-width: 64ch;
   margin: 0;
   font-size: var(--t-body);
   line-height: var(--lh);
   color: var(--text-2);
 }
 
-/* The three ways in, as rows rather than as a paragraph of afterthoughts.
-   Given borders they carry weight, which is what stops the whole block hanging
-   in the middle of an otherwise empty pane. */
+/* The composer: where, what, go. One bordered surface, one focus ring. */
+.start {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--glass-field);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.start:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.start.disabled {
+  border-style: dashed;
+}
+
+.start-where {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.start-where select {
+  flex: 1;
+  min-height: 32px;
+  padding: 0 var(--s-6) 0 var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background-color: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  appearance: none;
+  outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%238f939d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 6.5L8 10l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--s-2) center;
+  cursor: default;
+}
+
+.start-where select option {
+  background: #14161c;
+  color: var(--text);
+}
+
+.start textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-mid);
+  line-height: var(--lh);
+  resize: vertical;
+  outline: none;
+}
+
+.start textarea::placeholder {
+  color: var(--muted);
+}
+
+.start-go {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.start-go .hint {
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.start-go .act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.start .act:disabled {
+  opacity: 0.5;
+}
+
+/* The other ways in, as quiet rows under the composer. */
 .opening ul {
   display: grid;
   gap: 0;
-  margin: var(--s-3) 0 0;
+  margin: 0;
   padding: 0;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-2);
@@ -473,8 +565,8 @@ body {
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
-  font-size: var(--t-body);
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--t-small);
   color: var(--muted);
 }
 
@@ -488,13 +580,13 @@ body {
 }
 
 .opening code {
-  padding: 3px var(--s-2);
+  padding: 2px var(--s-2);
   border: 1px solid var(--line);
   border-radius: var(--r-1);
   background: var(--glass-field);
   color: var(--text-2);
   font-family: var(--mono-font);
-  font-size: var(--t-small);
+  font-size: var(--t-micro);
   white-space: nowrap;
 }
 
@@ -705,73 +797,41 @@ button.act:focus-visible {
   line-height: var(--lh);
 }
 
-/* --- new session -------------------------------------------------------- */
+/* --- new session: the way to the composer ------------------------------- */
 
-/* One composer, not two loose fields.
-   The repository and the prompt are a single act — "start this, there" — so
-   they share one border and one focus treatment, and the seam between them is a
-   rule rather than a gap. */
-.new-session {
-  display: grid;
-  margin: 0 var(--s-3) var(--s-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--glass-field);
-  overflow: hidden;
-  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
-}
-
-.new-session:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.new-session select,
-.new-session input {
-  width: 100%;
+.rail-new {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-3) var(--s-3) 0;
   min-height: 32px;
   padding: 0 var(--s-3);
-  border: 0;
-  background: transparent;
-  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--glass-raised);
+  color: var(--text-2);
   font: inherit;
   font-size: var(--t-small);
-}
-
-.new-session select,
-.new-session input {
-  outline: none;
-}
-
-/* The stock control is the one thing on screen wearing another design system:
-   the platform's own arrow, its own metrics, its own idea of a focus ring.
-   `appearance: none` removes all of it, and the chevron below is drawn on the
-   same 16-unit grid and 1.5 stroke as every other icon here. */
-.new-session select {
-  appearance: none;
-  border-bottom: 1px solid var(--line-soft);
-  padding-right: var(--s-6);
-  color: var(--text-2);
   font-weight: var(--w-medium);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%238f939d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 6.5L8 10l3.5-3.5'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right var(--s-2) center;
   cursor: default;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
 
-/* The dropdown itself is painted by the platform, so it gets the one colour it
-   will actually honour rather than a transparent background it will not. */
-.new-session select option {
-  background: #14161c;
+.rail-new:hover {
+  background: var(--glass-raised-hover);
   color: var(--text);
 }
 
-.new-session input::placeholder {
-  color: var(--muted);
+.rail-new.on {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
 }
 
-.new-session input:disabled {
-  color: var(--muted);
+.rail-new:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 /* --- hosted agents ------------------------------------------------------ */
@@ -871,4 +931,1092 @@ button.act:focus-visible {
 .terminal-host .xterm {
   height: 100%;
   padding: var(--s-3) var(--s-3) var(--s-2);
+}
+
+/* --- macOS: native controls at the left ----------------------------------- */
+
+/* The traffic lights are placed by `tauri.macos.conf.json` at x=14, and three
+   of them at their native spacing end around 70px. The wordmark starts after
+   that; the drawn controls are not rendered at all on this platform. */
+.window.mac .wordmark {
+  padding-left: 84px;
+}
+
+/* --- notices that stay ---------------------------------------------------- */
+
+.notice.dismissable {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.notice.dismissable span {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.notice.dismissable button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: inherit;
+  place-items: center;
+  font: inherit;
+  cursor: default;
+  opacity: 0.7;
+}
+
+.notice.dismissable button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  opacity: 1;
+}
+
+/* --- rail tools ----------------------------------------------------------- */
+
+.rail-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.rail-tool {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  cursor: default;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.rail-tool:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.rail-tool.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--accent) 40%, #fff);
+}
+
+.rail-tool:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+/* A closed session reads as history: present, dimmed, not moving. */
+.session.done {
+  color: var(--muted);
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+  font: inherit;
+  cursor: default;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --- the session pane ----------------------------------------------------- */
+
+/* The pane stops scrolling as a whole and hands that to the transcript, so the
+   bar above and the composer below stay put while the middle moves. */
+.pane.session-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.pane.session-pane > .notice,
+.pane.session-pane > .approvals {
+  margin: var(--s-4) var(--s-5) 0;
+}
+
+.session {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-5);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--s-1);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 var(--s-3);
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  cursor: default;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+}
+
+.tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.session-actions .act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.session-actions .cost,
+.session-actions .closed-tag {
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.session-actions .confirm {
+  font-size: var(--t-small);
+  color: color-mix(in srgb, var(--danger) 30%, #fff);
+}
+
+.session-body {
+  display: grid;
+  min-height: 0;
+}
+
+/* The diff, inside the session pane, gets its own scroll and the reading
+   margin the pane no longer supplies. */
+.session-body .diff-files,
+.session-body .empty {
+  overflow: auto;
+  padding: var(--s-4) var(--s-5);
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+/* --- composer ------------------------------------------------------------- */
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s-2);
+  align-items: end;
+  padding: var(--s-3) var(--s-5) var(--s-4);
+  border-top: 1px solid var(--line-soft);
+  background: var(--content-deep);
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 40px;
+  max-height: 160px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-body);
+  line-height: var(--lh);
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.composer textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.composer textarea::placeholder {
+  color: var(--muted);
+}
+
+.composer .act {
+  display: grid;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  place-items: center;
+}
+
+.composer .act:disabled {
+  opacity: 0.45;
+}
+
+.composer-note {
+  padding: var(--s-3) var(--s-5);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--t-small);
+  color: var(--muted);
+}
+
+/* --- transcript ----------------------------------------------------------- */
+
+.transcript {
+  display: grid;
+  align-content: start;
+  gap: var(--s-3);
+  overflow-y: auto;
+  padding: var(--s-4) var(--s-5) var(--s-5);
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.transcript-note {
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--muted);
+}
+
+.row {
+  display: grid;
+  gap: var(--s-1);
+  max-width: 88ch;
+}
+
+.row .who {
+  font-size: var(--t-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: var(--faint);
+}
+
+.row.agent .who {
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+}
+
+.row .text {
+  font-size: var(--t-body);
+  line-height: var(--lh);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.row.user .text {
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+  color: var(--text);
+}
+
+.row.agent .text {
+  color: var(--text);
+}
+
+/* The streaming caret: the one moving thing in a transcript, so it is small
+   and it is the accent — the same signal the running dot gives in the rail. */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: breathe 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+}
+
+.row.reasoning summary,
+.tool-output summary,
+.preview-diff summary {
+  font-size: var(--t-micro);
+  color: var(--faint);
+  cursor: default;
+  user-select: none;
+}
+
+.row.reasoning .text {
+  margin-top: var(--s-1);
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
+/* A tool call is a row that carries its own state colour on the dot only —
+   the same primitive the rail uses, for the same reason. */
+.row.tool {
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-small);
+}
+
+.tool-head .dot {
+  background: var(--muted);
+}
+
+.row.tool.running .dot,
+.row.tool.pending .dot {
+  background: var(--accent);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 75%, transparent);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.row.tool.awaitingApproval .dot {
+  background: var(--warn);
+}
+
+.row.tool.ok .dot {
+  background: var(--ok);
+}
+
+.row.tool.failed .dot,
+.row.tool.denied .dot {
+  background: var(--danger);
+}
+
+.row.tool.cancelled .dot {
+  background: var(--faint);
+}
+
+.tool-head .name {
+  font-family: var(--mono-font);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.tool-head .subject {
+  overflow: hidden;
+  font-family: var(--mono-font);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-head .status {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.row.tool pre {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--content-deep);
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+  line-height: var(--lh);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.tool-output pre,
+.preview-diff pre {
+  margin-top: var(--s-1);
+}
+
+.tool-message {
+  margin: 0;
+  font-size: var(--t-small);
+  color: color-mix(in srgb, var(--danger) 30%, #fff);
+  white-space: pre-wrap;
+}
+
+.preview-diff summary {
+  display: flex;
+  gap: var(--s-2);
+  font-family: var(--mono-font);
+}
+
+.counts {
+  display: inline-flex;
+  gap: var(--s-2);
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+}
+
+.counts .add {
+  color: var(--ok);
+}
+
+.counts .del {
+  color: var(--danger);
+}
+
+.row.marker {
+  padding: var(--s-1) 0;
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.row.marker.turn {
+  display: flex;
+  gap: var(--s-3);
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--line-soft);
+}
+
+.row.marker.turn .detail {
+  color: var(--muted);
+}
+
+.row.marker.turn .cost {
+  margin-left: auto;
+  font-family: var(--mono-font);
+}
+
+.row.marker.warn,
+.row.marker.turn.step_limit,
+.row.marker.turn.budget_exceeded,
+.row.marker.turn.interrupted {
+  color: var(--warn);
+}
+
+.row.marker.error,
+.row.marker.turn.failed,
+.row.marker.turn.refused {
+  color: var(--danger);
+}
+
+/* --- per-file diff -------------------------------------------------------- */
+
+.diff-files {
+  display: grid;
+  gap: var(--s-3);
+  align-content: start;
+}
+
+.diff-file {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.diff-file > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+  color: var(--text);
+  cursor: default;
+  user-select: none;
+}
+
+.diff-file > summary .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file > summary .counts {
+  margin-left: auto;
+}
+
+.diff-file .diff {
+  padding: var(--s-2) var(--s-3) var(--s-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.diff .meta {
+  color: var(--faint);
+}
+
+/* --- approvals: the note that travels with a refusal ----------------------- */
+
+.approval .actions {
+  flex-wrap: wrap;
+}
+
+.approval .feedback {
+  flex: 1;
+  min-width: 200px;
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-small);
+  outline: none;
+}
+
+.approval .feedback:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+.approval .feedback::placeholder {
+  color: var(--muted);
+}
+
+/* --- the close guard ------------------------------------------------------ */
+
+/* The second place a `backdrop-filter` does real work: the question floats
+   over the whole window, and blurring the window is what says "answer this
+   before anything else". */
+.scrim {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 4, 6, 0.55);
+  backdrop-filter: blur(10px);
+  z-index: 10;
+}
+
+.modal {
+  display: grid;
+  gap: var(--s-3);
+  width: min(440px, calc(100vw - 2 * var(--s-5)));
+  padding: var(--s-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  background: var(--overlay);
+  box-shadow: var(--shadow-3);
+}
+
+.modal h2 {
+  margin: 0;
+  font-size: var(--t-mid);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-display);
+  color: var(--text);
+}
+
+.modal p {
+  margin: 0;
+  font-size: var(--t-body);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+.modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+/* --- the tab strip -------------------------------------------------------- */
+
+/* Replaces the crumb bar: what is open, across the top of the pane. Chrome,
+   so it is glass; the tabs themselves are quiet until one is in front. */
+.tabs-strip {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0 var(--s-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--glass-bar);
+  scrollbar-width: none;
+}
+
+.tab-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 240px;
+  min-width: 0;
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border-right: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: var(--t-small);
+  cursor: default;
+  user-select: none;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.tab-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-2);
+}
+
+/* The front tab is the content's own material rather than the bar's, and the
+   accent runs along its top edge — the same edge the rail row lights. */
+.tab-item.on {
+  background: var(--content);
+  color: var(--text);
+}
+
+.tab-item.on::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--agent-accent, var(--accent));
+}
+
+.tab-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.tab-item .dot {
+  flex: none;
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-sub {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--t-micro);
+}
+
+.tab-item.fresh .tab-title {
+  color: var(--text);
+  font-weight: var(--w-medium);
+}
+
+.tab-close {
+  display: grid;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: var(--s-1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  opacity: 0;
+  cursor: default;
+}
+
+.tab-item:hover .tab-close,
+.tab-item.on .tab-close,
+.tab-item:focus-within .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.tab-new {
+  display: grid;
+  flex: none;
+  width: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  cursor: default;
+}
+
+.tab-new:hover {
+  color: var(--text);
+}
+
+/* Attention: a question is waiting. The dot goes warm and does not breathe —
+   breathing is "working"; this is "stopped, and needs you". */
+.dot.needs {
+  background: var(--warn);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--warn) 75%, transparent);
+}
+
+/* --- rail chips ----------------------------------------------------------- */
+
+.session .chip {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: var(--w-medium);
+  letter-spacing: 0.02em;
+  color: var(--faint);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.session .chip.working {
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 60%, #fff);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+}
+
+.session .chip.needs-you {
+  color: color-mix(in srgb, var(--warn) 70%, #fff);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+.session .chip.done {
+  color: color-mix(in srgb, var(--ok) 70%, #fff);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+
+.session.fresh .label {
+  color: var(--text);
+  font-weight: var(--w-medium);
+}
+
+/* --- the session bar carries the crumbs now ------------------------------- */
+
+.session-bar .crumbs {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.session-bar .crumbs .branch {
+  margin-left: 0;
+}
+
+.session-bar .crumbs .model,
+.session-bar .crumbs .cost {
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+/* --- split: transcript beside changes ------------------------------------- */
+
+.session-body.split {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+
+.session-body.split > * + * {
+  border-left: 1px solid var(--line-soft);
+}
+
+/* This session's own questions sit above the composer, edge to edge. */
+.session > .approvals {
+  max-height: 45%;
+  margin: 0;
+  overflow-y: auto;
+  padding: var(--s-3) var(--s-5);
+  border-top: 1px solid var(--line-soft);
+}
+
+.session {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+/* --- composer: working ---------------------------------------------------- */
+
+.composer .working {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  grid-column: 1 / -1;
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: var(--muted);
+}
+
+.composer .working .act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  min-height: 24px;
+  margin-left: auto;
+  padding: 0 var(--s-2);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* --- markdown ------------------------------------------------------------- */
+
+.md {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 0;
+}
+
+.md p {
+  white-space: pre-wrap;
+}
+
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: var(--t-body);
+  font-weight: var(--w-semi);
+  color: var(--text);
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+
+.md li + li {
+  margin-top: 2px;
+}
+
+.md blockquote {
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.md code {
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+  background: rgba(255, 255, 255, 0.07);
+  font-family: var(--mono-font);
+  font-size: 0.92em;
+}
+
+.md .md-code {
+  position: relative;
+  margin: 0;
+  overflow: auto;
+  padding: var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--content-deep);
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+  line-height: var(--lh);
+  color: var(--text-2);
+  white-space: pre;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.md .md-code[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 6px;
+  right: var(--s-2);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.md .md-link {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+}
+
+.md .md-href {
+  color: var(--faint);
+  font-size: 0.9em;
+}
+
+/* --- status bar: the palette key ------------------------------------------ */
+
+.statusbar-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-micro);
+  cursor: default;
+}
+
+.statusbar-key:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--r-1);
+  background: rgba(255, 255, 255, 0.04);
+  font-family: var(--ui-font);
+  font-size: 10px;
+  color: var(--text-2);
+}
+
+/* --- the palette ---------------------------------------------------------- */
+
+.scrim.top {
+  align-items: start;
+  padding-top: 12vh;
+}
+
+.palette {
+  width: min(560px, calc(100vw - 2 * var(--s-5)));
+  max-height: 60vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  background: var(--overlay);
+  box-shadow: var(--shadow-3);
+}
+
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.palette-input input {
+  flex: 1;
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-mid);
+  outline: none;
+}
+
+.palette-input input::placeholder {
+  color: var(--muted);
+}
+
+.palette-input button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  cursor: default;
+}
+
+.palette-list {
+  margin: 0;
+  overflow-y: auto;
+  padding: var(--s-2);
+  list-style: none;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.palette-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 34px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-2);
+  font-size: var(--t-body);
+  color: var(--text-2);
+  cursor: default;
+}
+
+.palette-list li[data-group]::before {
+  content: attr(data-group);
+  position: absolute;
+  margin-top: -26px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: var(--faint);
+}
+
+.palette-list li[data-group] {
+  position: relative;
+  margin-top: 22px;
+}
+
+.palette-list li[data-group]:first-child {
+  margin-top: 18px;
+}
+
+.palette-list li.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+}
+
+.palette-list li .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-list li .detail {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.palette-empty {
+  color: var(--muted);
 }

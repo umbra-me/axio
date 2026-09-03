@@ -16,6 +16,12 @@ shortId: string, projectId: string, projectName: string,
  */
 label: string | null, branch: string | null, workspace: string, isolation: Isolation, status: SessionStatus, 
 /**
+ * Whether the index still counts it as open. `Closed` above means "not
+ * live in this process", which a session started from the command line
+ * also is; this says whether anyone has actually closed it.
+ */
+open: boolean, 
+/**
  * `number`, not `bigint`. ts-rs maps `u64` to `bigint` by default, which
  * would be right for a boundary that preserved 64-bit integers — and this
  * one does not: Tauri's IPC is JSON, so what actually arrives is a JS
