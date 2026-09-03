@@ -229,15 +229,33 @@ impl Supervisor {
     /// then the turn is cancelled and the task joined; only then is the
     /// worktree touched, because removing a checkout out from under a running
     /// tool is how a session ends in a way nobody can explain afterwards.
+    ///
+    /// A session that is not running here can still be closed. One started by
+    /// another process, or by a run of this one that has since ended, is open
+    /// in the index with a worktree still on disk — and "keep or discard that
+    /// work" is a question about the directory, not about a task. So the
+    /// index is consulted when the live map has nothing, and the checkout is
+    /// closed from what the index recorded.
     pub async fn close(&self, session: SessionId, disposition: Disposition) -> Result<()> {
-        let handle = self
-            .lock_live()
-            .remove(&session)
-            .ok_or(SupervisorError::NoSuchSession(session))?;
-
-        self.approvals.close_session(session);
-        handle.close().await?;
-        handle.checkout.close(disposition).await?;
+        let live = self.lock_live().remove(&session);
+        match live {
+            Some(handle) => {
+                self.approvals.close_session(session);
+                handle.close().await?;
+                handle.checkout.close(disposition).await?;
+            }
+            None => {
+                let entry = self
+                    .lock_index()
+                    .get(session)
+                    .cloned()
+                    .ok_or(SupervisorError::NoSuchSession(session))?;
+                if !entry.is_open() {
+                    return Err(SupervisorError::AlreadyClosed(session));
+                }
+                entry.checkout().close(disposition).await?;
+            }
+        }
         self.lock_index()
             .record_closed(session, disposition == Disposition::Discard)?;
         Ok(())
@@ -650,6 +668,43 @@ mod tests {
             "SessionStarted must be the first thing a surface sees"
         );
         assert!(ended, "a turn always ends");
+    }
+
+    /// The CLI starts a session in one process and the window closes it from
+    /// another. Neither holds the other's handle; the index is what they share.
+    #[tokio::test]
+    async fn a_session_started_elsewhere_is_closed_from_the_index() {
+        let repo = Repo::new().await;
+        let state = state();
+        let (first, _events) = supervisor(state.path(), Arc::new(ScriptedFactory::default()));
+        let handle = first
+            .start(repo.path(), StartOptions::default())
+            .await
+            .unwrap();
+        let path = handle.checkout.path.clone();
+
+        let (second, _) = supervisor(state.path(), Arc::new(ScriptedFactory::default()));
+        assert!(second.sessions().is_empty(), "not live here");
+        second
+            .close(handle.session, Disposition::Keep)
+            .await
+            .expect("closed from the index");
+
+        assert!(
+            path.exists(),
+            "keep means keep, wherever it was closed from"
+        );
+        let entry = second
+            .history()
+            .into_iter()
+            .find(|e| e.session == handle.session)
+            .expect("the index remembers");
+        assert!(!entry.is_open());
+
+        match second.close(handle.session, Disposition::Keep).await {
+            Err(SupervisorError::AlreadyClosed(_)) => {}
+            other => panic!("expected AlreadyClosed, got {other:?}"),
+        }
     }
 
     #[tokio::test]

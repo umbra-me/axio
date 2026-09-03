@@ -32,6 +32,9 @@ pub enum SupervisorError {
     #[error("no session {0}")]
     NoSuchSession(axio_core::protocol::SessionId),
 
+    #[error("session {0} was already closed")]
+    AlreadyClosed(axio_core::protocol::SessionId),
+
     #[error("no project {0}")]
     NoSuchProject(String),
 
