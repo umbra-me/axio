@@ -379,12 +379,19 @@ impl Drop for HarnessSession {
     }
 }
 
+/// The command that starts a harness: the located executable when there is
+/// one, so a window launched from a dock — with the login shell's `PATH`, or
+/// with axio beside it and on no path at all — still finds it; the bare name
+/// otherwise, so the error names what was looked for.
 fn command_for(harness: Harness) -> CommandBuilder {
-    let exe = harness.executable();
+    let exe = harness
+        .locate()
+        .map_or_else(|| harness.executable().into(), |p| p.into_os_string());
     #[cfg(windows)]
     {
         let mut command = CommandBuilder::new("cmd.exe");
-        command.args(["/d", "/s", "/c", exe]);
+        command.args(["/d", "/s", "/c"]);
+        command.arg(exe);
         command
     }
     #[cfg(not(windows))]

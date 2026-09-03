@@ -5,6 +5,8 @@
 //! says" in a desktop application is a remote-code-execution primitive dressed
 //! as a preference.
 
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 /// A coding agent axio can host in a terminal it owns.
@@ -57,6 +59,28 @@ impl Harness {
         }
     }
 
+    /// Where the executable is, if this process can see it at all.
+    ///
+    /// `PATH` as the process has it — which for a desktop application launched
+    /// from a dock is the login shell's, not the terminal's. axio's own binary
+    /// is looked for beside this one first, because the window and the CLI
+    /// ship together and a person who has not put `axio` on their path should
+    /// still be able to open it here.
+    ///
+    /// `None` means the harness must not be offered: a launcher that fails with
+    /// a page of `PATH` is worse than one that is not there.
+    pub fn locate(self) -> Option<PathBuf> {
+        if self == Harness::Axio
+            && let Ok(me) = std::env::current_exe()
+            && let Some(dir) = me.parent()
+            && let Some(found) = locate_in(std::iter::once(dir.to_path_buf()), self.executable())
+        {
+            return Some(found);
+        }
+        let path = std::env::var_os("PATH")?;
+        locate_in(std::env::split_paths(&path), self.executable())
+    }
+
     pub fn parse(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "axio" => Some(Harness::Axio),
@@ -66,6 +90,47 @@ impl Harness {
             _ => None,
         }
     }
+}
+
+/// The first directory in `dirs` holding an executable called `name`.
+///
+/// On Windows the name is tried with the extensions `PATHEXT` would supply for
+/// the cases that matter here — a native `.exe`, and the `.cmd` and `.bat`
+/// shims npm writes — because that is what `cmd.exe /c name` would resolve.
+fn locate_in(dirs: impl IntoIterator<Item = PathBuf>, name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    const EXTENSIONS: &[&str] = &["exe", "cmd", "bat"];
+    #[cfg(not(windows))]
+    const EXTENSIONS: &[&str] = &[];
+    for dir in dirs {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let bare = dir.join(name);
+        if is_executable(&bare) {
+            return Some(bare);
+        }
+        for ext in EXTENSIONS {
+            let candidate = dir.join(format!("{name}.{ext}"));
+            if is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 /// Variables never passed to a hosted agent.
@@ -208,5 +273,36 @@ mod tests {
         );
         assert!(split_args("--unbalanced \"quote").is_err());
         assert!(split_args("a\0b").is_err());
+    }
+
+    #[test]
+    fn locate_finds_an_executable_and_skips_a_plain_file() {
+        let dir = std::env::temp_dir().join(format!("axio-pty-locate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a directory");
+        let exe = dir.join("codex");
+        std::fs::write(&exe, "#!/bin/sh\n").expect("written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        std::fs::write(dir.join("pi"), "not runnable").expect("written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.join("pi"), std::fs::Permissions::from_mode(0o644))
+                .expect("chmod");
+        }
+
+        assert_eq!(locate_in([dir.clone()], "codex"), Some(exe));
+        #[cfg(unix)]
+        assert_eq!(locate_in([dir.clone()], "pi"), None);
+        assert_eq!(locate_in([dir.clone()], "claude"), None);
+        assert_eq!(
+            locate_in([PathBuf::new()], "codex"),
+            None,
+            "an empty entry is not `.`"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
