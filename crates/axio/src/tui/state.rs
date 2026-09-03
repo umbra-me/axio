@@ -11,6 +11,12 @@ pub(super) enum Mode {
     Idle,
     Running,
     Approving(Box<ApprovalRequest>, tokio::sync::oneshot::Sender<Decision>),
+    /// Refusing, with a note on its way. Entered from `Approving` by `n`: the
+    /// composer takes the note, Enter sends it as the refusal's feedback — the
+    /// tool result the model reads next — and Esc refuses without one. Its
+    /// own mode because while it is on, Enter must not submit a prompt and
+    /// `y` must not allow anything.
+    Denying(Box<ApprovalRequest>, tokio::sync::oneshot::Sender<Decision>),
     /// Storing a credential. Its own mode rather than a flag, because while it
     /// is on every keystroke belongs to it — a character typed here must not
     /// also reach the composer, where it would be drawn.

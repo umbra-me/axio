@@ -11,6 +11,7 @@
 //! `--json` does and supplies an `Approver`, which is the whole surface
 //! contract.
 
+mod approval;
 mod approver;
 mod background;
 mod commands;
@@ -289,7 +290,7 @@ pub async fn run(
                     TermEvent::Resize(..) => continue,
                     TermEvent::Paste(text) => {
                         match &mut app.mode {
-                            Mode::Idle => app.composer.paste(&text),
+                            Mode::Idle | Mode::Denying(..) => app.composer.paste(&text),
                             // Pasting is how a credential normally arrives, so
                             // routing it to the composer here would print the
                             // key on screen — the one thing this flow exists
@@ -399,7 +400,7 @@ pub fn approver() -> (TuiApprover, mpsc::UnboundedReceiver<Ask>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axio_core::protocol::{Item, ItemId, SessionId};
+    use axio_core::protocol::{ApprovalId, Item, ItemId, SessionId};
     use ratatui::backend::TestBackend;
 
     /// A surface over a fake terminal, which is what makes any of this
@@ -706,5 +707,115 @@ mod tests {
         app.on_event(&mut terminal, &call(ok())).expect("handled");
         let visible = everything(&terminal);
         assert_eq!(visible.matches("notes.md").count(), 1, "{visible}");
+    }
+
+    fn ask() -> (Ask, tokio::sync::oneshot::Receiver<Decision>) {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let request = ApprovalRequest {
+            id: ApprovalId::nil(),
+            call_id: "toolu_1".into(),
+            tool: "write".into(),
+            subject: "write:src/lib.rs".into(),
+            effects: axio_core::tool::Effects {
+                reads: true,
+                writes: true,
+                executes: false,
+                network: false,
+            },
+            preview: None,
+            reason: "writes are not auto-approved".into(),
+        };
+        (Ask { request, reply }, answer)
+    }
+
+    fn press(app: &mut Tui, terminal: &mut Terminal<TestBackend>, code: KeyCode) {
+        let cancel = CancellationToken::new();
+        app.on_key(terminal, KeyEvent::from(code), &cancel)
+            .expect("handled");
+    }
+
+    fn type_text(app: &mut Tui, terminal: &mut Terminal<TestBackend>, text: &str) {
+        for c in text.chars() {
+            press(app, terminal, KeyCode::Char(c));
+        }
+    }
+
+    /// The window sends what was typed with a refusal; the terminal sent a
+    /// fixed sentence. `n` now opens a note, and Enter sends it — so refusing
+    /// steers the next step here too, instead of only ending this one.
+    #[test]
+    fn a_refusal_carries_the_note_typed_after_n() {
+        let (mut app, mut terminal) = surface(80, 24);
+        let (ask, mut answer) = ask();
+        app.on_ask(&mut terminal, ask).expect("asked");
+        press(&mut app, &mut terminal, KeyCode::Char('n'));
+        assert!(matches!(app.mode, Mode::Denying(..)));
+
+        // The frame says what is being typed and for whom.
+        app.draw(&mut terminal).expect("drawn");
+        let visible = rows(terminal.backend().buffer()).join("\n");
+        assert!(visible.contains("deny  write:src/lib.rs"), "{visible}");
+
+        type_text(&mut app, &mut terminal, "use the existing helper");
+        press(&mut app, &mut terminal, KeyCode::Enter);
+
+        let decision = answer.try_recv().expect("answered");
+        let Decision::Deny {
+            feedback: Some(note),
+        } = decision
+        else {
+            panic!("not a refusal with a note: {decision:?}");
+        };
+        assert!(note.contains("use the existing helper"), "{note}");
+        assert!(matches!(app.mode, Mode::Running));
+        assert!(
+            app.composer.is_empty(),
+            "the note must not linger as a prompt"
+        );
+        // The transcript records what the model was told.
+        assert!(everything(&terminal).contains("use the existing helper"));
+    }
+
+    /// Enter on an empty note, and Esc at either stage, refuse plainly —
+    /// nobody is made to write a sentence to say no.
+    #[test]
+    fn an_empty_note_and_esc_both_refuse_plainly() {
+        for path in [
+            vec![KeyCode::Char('n'), KeyCode::Enter],
+            vec![KeyCode::Char('n'), KeyCode::Esc],
+            vec![KeyCode::Esc],
+        ] {
+            let (mut app, mut terminal) = surface(80, 24);
+            let (ask, mut answer) = ask();
+            app.on_ask(&mut terminal, ask).expect("asked");
+            for code in path {
+                press(&mut app, &mut terminal, code);
+            }
+            let decision = answer.try_recv().expect("answered");
+            let Decision::Deny {
+                feedback: Some(note),
+            } = decision
+            else {
+                panic!("not a refusal: {decision:?}");
+            };
+            assert!(note.starts_with("denied by the user."), "{note}");
+            assert!(matches!(app.mode, Mode::Running));
+        }
+    }
+
+    /// While a note is being typed, `y` is a letter. The one key that could
+    /// allow the action from inside a refusal must not exist.
+    #[test]
+    fn typing_y_into_the_note_allows_nothing() {
+        let (mut app, mut terminal) = surface(80, 24);
+        let (ask, mut answer) = ask();
+        app.on_ask(&mut terminal, ask).expect("asked");
+        press(&mut app, &mut terminal, KeyCode::Char('n'));
+        type_text(&mut app, &mut terminal, "yes but not like that");
+        assert!(
+            answer.try_recv().is_err(),
+            "nothing may be answered mid-note"
+        );
+        assert_eq!(app.composer.text(), "yes but not like that");
     }
 }

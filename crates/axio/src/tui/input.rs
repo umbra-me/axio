@@ -17,6 +17,9 @@ impl Tui {
         if let Mode::Approving(..) = self.mode {
             return self.on_approval_key(terminal, key);
         }
+        if let Mode::Denying(..) = self.mode {
+            return self.on_deny_key(terminal, key);
+        }
         if let Mode::LoggingIn(..) = self.mode {
             return self.on_login_key(terminal, key);
         }
@@ -238,56 +241,6 @@ impl Tui {
                 }
                 _ => {}
             },
-        }
-        Ok(Action::None)
-    }
-
-    fn on_approval_key<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        key: KeyEvent,
-    ) -> Result<Action, B::Error> {
-        let decision = match key.code {
-            KeyCode::Char('y') | KeyCode::Enter => Decision::Allow,
-            KeyCode::Char('a') => Decision::AllowSession,
-            KeyCode::Char('n') | KeyCode::Esc => Decision::Deny {
-                feedback: Some(
-                    "denied by the user. Do not retry it; continue without it and \
-                     say what you could not do."
-                        .into(),
-                ),
-            },
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Decision::Deny {
-                feedback: Some("denied by the user".into()),
-            },
-            _ => return Ok(Action::None),
-        };
-
-        let mode = std::mem::replace(&mut self.mode, Mode::Running);
-        if let Mode::Approving(request, reply) = mode {
-            let verdict = match &decision {
-                Decision::Allow => "allowed",
-                Decision::AllowSession => "allowed for this session",
-                Decision::Deny { .. } => "denied",
-            };
-            self.push(
-                terminal,
-                vec![Line::from(vec![
-                    Span::styled("  ", Style::default()),
-                    Span::styled(
-                        verdict,
-                        Style::default().fg(match decision {
-                            Decision::Deny { .. } => Color::Yellow,
-                            _ => Color::Green,
-                        }),
-                    ),
-                    Span::styled(
-                        format!("  {}", request.subject),
-                        Style::default().add_modifier(Modifier::DIM),
-                    ),
-                ])],
-            )?;
-            let _ = reply.send(decision);
         }
         Ok(Action::None)
     }

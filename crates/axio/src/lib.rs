@@ -26,6 +26,11 @@ pub fn supervisor_root() -> PathBuf {
     session_cmd::supervisor_root()
 }
 
+/// `~/.axio`, or `AXIO_HOME`: the directory every surface keeps its files in.
+pub fn home() -> PathBuf {
+    paths::axio_home()
+}
+
 mod input;
 mod surfaces;
 

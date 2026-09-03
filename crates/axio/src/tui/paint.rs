@@ -19,7 +19,7 @@ impl Tui {
             // typed: decoration losing to content is the whole ordering, and
             // this is the same ordering applied to a second kind of pressure.
             let overlaying = matches!(self.mode, Mode::LoggingIn(..) | Mode::PickingModel(..))
-                || commands::choosing(self.composer.text());
+                || (matches!(self.mode, Mode::Idle) && commands::choosing(self.composer.text()));
             let framed = frame.area().height >= FRAMED_ROWS && !overlaying;
             let chrome = if framed { 6 } else { 2 };
             let width = frame.area().width.saturating_sub(chrome) as usize;
@@ -52,7 +52,7 @@ impl Tui {
                 Mode::PickingModel(picker) => {
                     frame.render_widget(self.picker_rows(picker, rows[0]), rows[0])
                 }
-                _ if commands::choosing(self.composer.text()) => {
+                Mode::Idle if commands::choosing(self.composer.text()) => {
                     frame.render_widget(self.menu_rows(rows[0]), rows[0])
                 }
                 _ => frame.render_widget(self.live_rows(rows[0]), rows[0]),
@@ -62,7 +62,7 @@ impl Tui {
             if !framed {
                 frame.render_widget(self.prompt_row(&rows_of_text[first..]), rows[1]);
                 frame.render_widget(self.status_row(rows[2]), rows[2]);
-                if matches!(self.mode, Mode::Idle) {
+                if matches!(self.mode, Mode::Idle | Mode::Denying(..)) {
                     let row = cursor.0.saturating_sub(first) as u16;
                     frame.set_cursor_position((
                         (rows[1].x + 2 + cursor.1 as u16).min(rows[1].right().saturating_sub(1)),
@@ -75,9 +75,10 @@ impl Tui {
             let frame_style = match self.mode {
                 // Both of these are the surface wanting something from the
                 // person, which is one state as far as the border is concerned.
-                Mode::Approving(..) | Mode::LoggingIn(..) | Mode::PickingModel(..) => {
-                    Style::default().fg(Color::Yellow)
-                }
+                Mode::Approving(..)
+                | Mode::Denying(..)
+                | Mode::LoggingIn(..)
+                | Mode::PickingModel(..) => Style::default().fg(Color::Yellow),
                 Mode::Running => Style::default().fg(Color::Cyan),
                 Mode::Idle => Style::default().fg(Color::DarkGray),
             };
@@ -95,7 +96,7 @@ impl Tui {
             frame.render_widget(self.prompt_row(&rows_of_text[first..]), inner);
             frame.render_widget(self.status_row(rows[2]), rows[2]);
 
-            if matches!(self.mode, Mode::Idle) {
+            if matches!(self.mode, Mode::Idle | Mode::Denying(..)) {
                 let row = cursor.0.saturating_sub(first) as u16;
                 let x = inner.x + 2 + cursor.1 as u16;
                 frame.set_cursor_position((
@@ -112,6 +113,9 @@ impl Tui {
     fn title(&self) -> String {
         match &self.mode {
             Mode::Approving(request, _) => format!("approve  {}", request.subject),
+            Mode::Denying(request, _) => {
+                format!("deny  {}  ·  a note for the model", request.subject)
+            }
             _ => self.model.clone(),
         }
     }
@@ -119,7 +123,7 @@ impl Tui {
     /// The turn's cost so far, along the top rule where it is legible without
     /// being in the way.
     fn turn_stats(&self) -> String {
-        if matches!(self.mode, Mode::Approving(..)) {
+        if matches!(self.mode, Mode::Approving(..) | Mode::Denying(..)) {
             return String::new();
         }
         let mut parts = Vec::new();
@@ -170,7 +174,7 @@ impl Tui {
     /// thinking, running a command, or gone.
     fn status_row(&self, area: Rect) -> Paragraph<'static> {
         let left = match &self.mode {
-            Mode::Approving(..) => String::new(),
+            Mode::Approving(..) | Mode::Denying(..) => String::new(),
             _ if self.status.is_empty() => String::new(),
             _ => {
                 let turning = match self.started {
@@ -182,6 +186,9 @@ impl Tui {
         };
         let right = match self.mode {
             Mode::Approving(..) => "the change above is what runs",
+            Mode::Denying(..) => {
+                "enter refuses with the note · empty enter refuses plainly · esc refuses without one"
+            }
             Mode::Running => "ctrl-c or esc to interrupt",
             Mode::LoggingIn(..) => "esc to leave without storing",
             Mode::PickingModel(..) => "enter chooses · esc leaves it unchanged",
@@ -227,9 +234,27 @@ impl Tui {
                 let mut spans = vec![Span::styled("allow?  ", Style::default().fg(Color::Yellow))];
                 spans.extend(key("y", "once"));
                 spans.extend(key("a", "this session"));
-                spans.extend(key("n", "no"));
+                spans.extend(key("n", "no, and say why"));
+                spans.extend(key("esc", "no"));
                 Paragraph::new(Line::from(spans))
             }
+            // The note is typed where a prompt is, and marked the same way in
+            // the frame's colour: what is being written is still addressed to
+            // the model, only as a refusal rather than a request.
+            Mode::Denying(..) => Paragraph::new(
+                rows.iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        Line::from(vec![
+                            Span::styled(
+                                if i == 0 { "› " } else { "  " },
+                                Style::default().fg(Color::Yellow),
+                            ),
+                            Span::raw(row.clone()),
+                        ])
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             Mode::Running => Paragraph::new(Line::styled(
                 "…",
                 Style::default().add_modifier(Modifier::DIM),
