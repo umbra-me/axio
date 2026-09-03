@@ -34,9 +34,11 @@ use crate::transcript::{Transcripts, preview_of};
 
 /// The application's state.
 ///
-/// A supervisor and nothing else, so far, and that is the point: every question
-/// the interface can ask is answered from the same place the CLI answers it
-/// from. When settings arrive they arrive here, not in a TypeScript module.
+/// A supervisor, the terminals this process hosts, and the transcripts folded
+/// from the supervisor's own event stream — and that is the point: every
+/// question the interface can ask is answered from the same place the CLI
+/// answers it from. When settings arrive they arrive here, not in a
+/// TypeScript module.
 pub struct AppState {
     /// Other agents' CLIs, in terminals this process owns. Beside the
     /// supervisor rather than inside it: `axio-supervisor` runs axio's own

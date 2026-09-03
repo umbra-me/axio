@@ -10,13 +10,12 @@
 //! it can be cancelled and closed. That is the whole architecture in one rule:
 //! the webview is shown state, and never handed the means to hold it.
 //!
-//! The next step for this file is generating its TypeScript rather than
-//! mirroring it. The prior art here maintains both sides by hand and warns, in
-//! four separate documents, that "changing one side without the other is a
-//! silent break" — and it has already drifted: one field typed as a union in
-//! TypeScript is an unvalidated `String` in Rust, and the value stored keeps
-//! whatever casing the caller sent. A warning repeated four times is a job for
-//! a build step.
+//! The TypeScript for every shape here is generated, not mirrored: ts-rs
+//! writes `ui/src/generated/` when this crate's tests run, and a Rust change
+//! with no regeneration shows up as a dirty tree. The prior art maintains both
+//! sides by hand and warns, in four separate documents, that "changing one
+//! side without the other is a silent break" — and it drifted anyway. A
+//! warning repeated four times is a job for a build step, and it is one.
 
 use serde::{Deserialize, Serialize};
 

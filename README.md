@@ -156,6 +156,12 @@ may write to your working tree. Turning it off is yours to do, in your own
 config or for one session at a time. Sections axio does not use are ignored — it will not complain about, or
 touch, a file that belongs to something else.
 
+Supervised sessions are driven with `axio session start|list|diff|close`, or
+from the desktop window (`cargo build --release -p axio-app --features app`),
+which opens the same sessions as tabs beside terminals hosting other agents'
+tools, and answers their questions from one queue. Neither surface can do
+something the other cannot; the window merely has a screen.
+
 If the workspace root has an `AGENTS.md` — or a `CLAUDE.md`, when there is no
 `AGENTS.md` — axio reads it and tells the model those instructions describe this
 codebase specifically and outrank its general habits. It is capped, since it is
@@ -432,7 +438,7 @@ Nine crates and three binaries:
 | `axio-cost`     | What the agents on this machine have spent, read from their own transcripts |
 | `axio-supervisor` | Many sessions at once, across many repositories — a worktree and branch each, one queue of approvals |
 | `axio-pty`      | Claude Code, Codex or Pi in a pseudo-terminal axio owns - an allowlist, a byte ring, and tree-killing |
-| `axio-app`      | The desktop surface, behind an `app` feature. Rust owns the state; the webview is shown it |
+| `axio-app`      | The desktop window, behind an `app` feature: sessions and hosted terminals as tabs, transcript beside diff, a command palette. Rust owns the state; the webview is shown it |
 | `axio`          | The binary — one-shot CLI when piped or given `-p`, interactive on a TTY |
 
 `axio-quota` and `axio-cost` are leaves: they depend on no other crate here, and

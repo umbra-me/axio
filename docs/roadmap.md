@@ -222,16 +222,18 @@ what the interface believes and what is running. The process that owns the
 sessions owns the record of them, so a restart is an internal invariant rather
 than a diff between two stores that can disagree.
 
-Structure and a first surface, not a finished product: the rail, the session
-list, the approval queue, a diff view, the custom frame and the status bar.
-Starting turns belonged to the CLI at first and the shell only reviewed; it
-has since gained the transcript, a follow-up composer, stop, close and
-discard, a refusal that carries a note, and a folder picker for adding a
-repository — each one a command the CLI already had, which is the rule. On
-top of that the shape a multi-agent desktop is expected to have: sessions and
-terminals as tabs, a command palette, chords for everything, rendered
-markdown, transcript beside diff, and agents that mark themselves when they
-need you or when they finished while you were looking elsewhere.
+It began as structure and a first surface — the rail, the session list, the
+approval queue, a diff view, the custom frame and the status bar — with
+starting turns left to the CLI. It is a working surface now. The pane is the
+composer; a session opens as a tab carrying its transcript beside its per-file
+diff, a follow-up composer, stop, close and discard, and a refusal that carries
+a note; a repository is added with a folder picker. Each of those is a command
+the CLI already had, which is the rule. Around them, the shape a multi-agent
+desktop is expected to have: sessions and terminals as tabs, a command palette,
+chords for everything, rendered markdown, transcript beside diff on a toggle,
+and agents that mark themselves when they need you or finished while you were
+looking elsewhere. The transcript is Rust's, folded from the event stream and
+seeded from the session file for a session this process did not watch.
 
 Four rules it is built on, three of them corrections to what the prior art does.
 Every command is `async`, because one declared without it runs on the thread

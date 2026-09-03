@@ -238,6 +238,17 @@ than a second loop, and why the window is a surface rather than a second
 product. The rest of this section is about the interactive one; the window is in
 `docs/roadmap.md` under M13 and its own hazards are in `docs/gotchas.md`.
 
+The window differs from the other two in one respect only: it *hosts*. It
+drives `axio-supervisor` through the same factory the CLI does, so a session
+there is the same session — the transcript it shows is folded in Rust from the
+supervisor's event stream, and every control on it (follow up, stop, close,
+answer a question, refuse with a note) is a command `axio session` already
+has. What the command line cannot offer is a terminal it does not already
+have, so the window also runs other agents' tools in pseudo-terminals it owns,
+listed beside its own sessions and never parsed. Sessions and terminals open as
+tabs; a command palette and one table of chords reach everything; the model's
+prose is rendered to elements rather than HTML.
+
 The interactive one uses an **inline** viewport rather than the alternate
 screen. A full-screen application owns scrollback, selection and the scrollbar
 and hands none of them back — so the finished transcript is printed into the
