@@ -30,6 +30,7 @@ impl AppState {
                         Isolation::Direct => SupervisorIsolation::Direct,
                     }),
                     label: input.prompt.clone(),
+                    group: input.group.clone(),
                     ..Default::default()
                 },
             )
@@ -62,6 +63,8 @@ impl AppState {
                 .map(|e| e.project_name.clone())
                 .unwrap_or_default(),
             label: input.prompt,
+            title: None,
+            group: input.group,
             branch: handle.checkout.branch.clone(),
             workspace: handle.checkout.path.display().to_string(),
             isolation: match handle.checkout.isolation {
@@ -72,6 +75,17 @@ impl AppState {
             open: true,
             started_ms: entry.map(|e| e.started_ms).unwrap_or_default(),
         })
+    }
+
+    /// Give a session a name, or take it away with `None`.
+    pub fn rename_session(&self, session_id: &str, title: Option<String>) -> Result<(), AppError> {
+        let supervisor = self.supervisor()?;
+        let id = session_id
+            .parse()
+            .map_err(|_| AppError::NoSuchSession(format!("`{session_id}` is not a session id")))?;
+        supervisor
+            .rename(id, title)
+            .map_err(|e| AppError::Supervisor(e.to_string()))
     }
 
     /// Send a prompt to a session that already exists.

@@ -15,4 +15,9 @@ path: string, prompt: string | null,
  * `None` means whatever `[worktree]` resolved to — which is isolated
  * unless the user turned it off. Never inferred from anything else.
  */
-isolation: Isolation | null, };
+isolation: Isolation | null, 
+/**
+ * Membership of a group started together. Set by `start_group`, not by a
+ * person: a group is a fact about how sessions began.
+ */
+group: string | null, };

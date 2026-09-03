@@ -71,6 +71,10 @@
   --ok: #55dcb0;
   --warn: #e2c67e;
   --danger: #f4808a;
+  /* Text on a tinted button: lifted toward white on the dark ground, the hue
+     itself on the light one. Buttons read these so the theme decides once. */
+  --on-tint-accent: color-mix(in srgb, var(--accent) 32%, #fff);
+  --on-tint-danger: color-mix(in srgb, var(--danger) 30%, #fff);
 
   /* --- terminal palette ------------------------------------------------- */
   /* xterm paints to a canvas, so it needs resolved colours rather than these
@@ -109,12 +113,15 @@
   /* --- type ------------------------------------------------------------- */
   /* Six steps with real distance between them. There were previously eleven
      sizes inside a 5px band, which is not a scale — it is a range. */
-  --t-micro: 11px;
-  --t-small: 12px;
-  --t-body: 13px;
-  --t-mid: 15px;
-  --t-lg: 19px;
-  --t-display: 30px;
+  /* `--ui-scale` is the one knob settings turns; every step follows it, so a
+     person who wants the interface larger gets the same scale, larger. */
+  --ui-scale: 1;
+  --t-micro: calc(11px * var(--ui-scale));
+  --t-small: calc(12px * var(--ui-scale));
+  --t-body: calc(13px * var(--ui-scale));
+  --t-mid: calc(15px * var(--ui-scale));
+  --t-lg: calc(19px * var(--ui-scale));
+  --t-display: calc(30px * var(--ui-scale));
 
   --w-normal: 400;
   --w-medium: 500;
@@ -149,12 +156,115 @@
   /* --- structure -------------------------------------------------------- */
   --titlebar: 40px;
   --statusbar: 28px;
-  --rail-width: 300px;
-  --toolbar: 44px;
+  --rail-width: 260px;
+  --toolbar: 40px;
+  --rail-row: 34px;
 
   font-family: var(--ui-font);
   font-size: var(--t-body);
   color: var(--text);
+}
+
+/* Light: the same system with the ground inverted. The chrome stays glass —
+   now bright glass over the desktop — and the content slate becomes paper.
+   Every token that carries a colour is redefined here and only here, so a
+   component that reads tokens needs no light rule of its own. `system` picks
+   by the OS preference; the two named themes pin it. */
+:root[data-theme="light"],
+:root[data-theme="system"]:not([data-theme="dark"]) {
+  color-scheme: light;
+}
+
+:root[data-theme="light"] {
+  --glass-frame: rgba(244, 245, 248, 0.72);
+  --glass-rail: rgba(240, 241, 245, 0.62);
+  --glass-bar: rgba(244, 245, 248, 0.7);
+  --glass-raised: rgba(255, 255, 255, 0.82);
+  --glass-raised-hover: rgba(255, 255, 255, 0.95);
+  --glass-field: rgba(255, 255, 255, 0.7);
+  --content: rgba(252, 252, 253, 0.9);
+  --content-deep: rgba(255, 255, 255, 0.97);
+  --overlay: rgba(248, 249, 251, 0.94);
+  --line: rgba(15, 18, 26, 0.1);
+  --line-soft: rgba(15, 18, 26, 0.06);
+  --line-strong: rgba(15, 18, 26, 0.18);
+  --lit: rgba(255, 255, 255, 0.6);
+  --text: #14161c;
+  --text-2: #3b3f4a;
+  --muted: #676c78;
+  --faint: #9a9ea8;
+  --accent: #3f6ae6;
+  --agent-axio: #3f6ae6;
+  --agent-claude: #7a4fe0;
+  --agent-codex: #178a6b;
+  --agent-pi: #1a8aa0;
+  --ok: #178a6b;
+  --warn: #a67c0a;
+  --danger: #c8323e;
+  --on-tint-accent: #2c4fb8;
+  --on-tint-danger: #a3232e;
+  --term-bg: #ffffff;
+  --term-fg: #14161c;
+  --term-selection: #cfdcff;
+  --term-black: #14161c;
+  --term-bright-black: #676c78;
+  --term-white: #f4f5f7;
+  --term-bright-white: #ffffff;
+  --shadow-1: 0 1px 2px rgba(15, 18, 26, 0.12);
+  --shadow-2: 0 6px 16px rgba(15, 18, 26, 0.14);
+  --shadow-3: 0 18px 44px rgba(15, 18, 26, 0.18);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --glass-frame: rgba(244, 245, 248, 0.72);
+    --glass-rail: rgba(240, 241, 245, 0.62);
+    --glass-bar: rgba(244, 245, 248, 0.7);
+    --glass-raised: rgba(255, 255, 255, 0.82);
+    --glass-raised-hover: rgba(255, 255, 255, 0.95);
+    --glass-field: rgba(255, 255, 255, 0.7);
+    --content: rgba(252, 252, 253, 0.9);
+    --content-deep: rgba(255, 255, 255, 0.97);
+    --overlay: rgba(248, 249, 251, 0.94);
+    --line: rgba(15, 18, 26, 0.1);
+    --line-soft: rgba(15, 18, 26, 0.06);
+    --line-strong: rgba(15, 18, 26, 0.18);
+    --lit: rgba(255, 255, 255, 0.6);
+    --text: #14161c;
+    --text-2: #3b3f4a;
+    --muted: #676c78;
+    --faint: #9a9ea8;
+    --accent: #3f6ae6;
+    --agent-axio: #3f6ae6;
+    --agent-claude: #7a4fe0;
+    --agent-codex: #178a6b;
+    --agent-pi: #1a8aa0;
+    --ok: #178a6b;
+    --warn: #a67c0a;
+    --danger: #c8323e;
+    --on-tint-accent: #2c4fb8;
+    --on-tint-danger: #a3232e;
+    --term-bg: #ffffff;
+    --term-fg: #14161c;
+    --term-selection: #cfdcff;
+    --term-black: #14161c;
+    --term-bright-black: #676c78;
+    --term-white: #f4f5f7;
+    --term-bright-white: #ffffff;
+    --shadow-1: 0 1px 2px rgba(15, 18, 26, 0.12);
+    --shadow-2: 0 6px 16px rgba(15, 18, 26, 0.14);
+    --shadow-3: 0 18px 44px rgba(15, 18, 26, 0.18);
+  }
+}
+
+/* Compact: rows and bars lose height, type does not. Set by the settings
+   dialog on the root element; a token here rather than a rule per component. */
+:root[data-density="compact"] {
+  --statusbar: 24px;
+  --toolbar: 34px;
+  --rail-row: 28px;
+  --s-3: 10px;
+  --s-4: 12px;
 }
 
 /* The one motion contract: everything below animates through `--base` and

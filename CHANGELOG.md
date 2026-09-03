@@ -9,6 +9,38 @@ a minor bump may break things.
 
 ### Changed
 
+- **The window has less chrome, and the chrome it has says one thing.** A
+  session used to sit under three bars — the title bar, the tab strip and a
+  session bar — that each named the project, and an empty tab strip stayed on
+  screen holding a `+` the rail already had. The strip is now the pane's only
+  toolbar: the front tab's controls (transcript or changes, close, discard, or
+  stop for a terminal) sit at its right end, the branch, model and cost of the
+  session in front moved to the status bar, and the strip is not drawn until
+  something is open. The status bar stopped repeating the rail's counts and
+  shows what the rail cannot: the session in front, how many are working, and
+  how many are waiting on you.
+
+  The rail is 260px, hides with `⌘B` (or the toggle by the wordmark), and lost
+  its footer tagline. Session rows carry a word only where the dot cannot —
+  "needs you", "done", "closed" — rather than beside every row. Two buttons
+  head the rail: **New**, a menu offering an axio session in its own worktree
+  and each agent this machine can host in a terminal, and **Repository**. The
+  row of launcher chips under Terminals and the `+` in the Repositories header
+  are gone; those two buttons are the one place things are added, and the
+  keyboard still reaches all of it. The opening pane is the composer and one line: the
+  repository picker moved into the composer's footer and the paragraph of
+  explanation became its placeholder. In a session, Stop takes the Send
+  button's slot while a turn runs rather than a strip of its own above the
+  textarea, and the streaming caret sits at the end of the last line instead
+  of on a line beneath it.
+
+- **`n` in the terminal's approval prompt opens a note.** The window sent what
+  was typed with a refusal; the terminal sent a fixed sentence, so the claim
+  that refusing steers the next step was true on one surface. `n` now takes a
+  line in the composer, Enter sends it as the refusal's feedback — the tool
+  result the model reads next — and Enter on an empty line, or Esc, refuses
+  plainly as before. The note is recorded in scrollback under the verdict.
+
 - **The desktop window and the quota tray wear the family's colours.**
   `axio-app` now ships the standard icon set — a geometric single-storey `a`
   in the accent on the family's slate tile, generated from
@@ -71,6 +103,93 @@ a minor bump may break things.
   where the window controls had been font glyphs.
 
 ### Added
+
+- **A group of agents on one prompt.** The composer's footer counts axio
+  sessions (`1× axio`, up to eight) and ticks the other agents this machine
+  has; Start with more than one becomes `start_group`, which starts each in a
+  worktree of its own and tags them with one group id. The rail shows the
+  group as one row with its members under it, and the group's tab is a compare
+  view — one card per member with its state, branch and diff side by side, the
+  card's header opening the member itself. The compare view opens on
+  **Overview** — a wall of summary cards, as many across as fit: state, the
+  last thing the agent said, an inline follow-up that sends (or types into a
+  hosted agent's prompt), and model, cost and branch underneath. **Live**
+  shows each member whole — a hosted member is its real terminal at card
+  size, a session its streaming transcript — and **Changes** swaps every card
+  to its diff. Each card has a size: drag its corner to any width and height,
+  or pick small, wide, large or full from its ⋯ menu or the resize control in
+  its header; cards flow around whatever mixture results. A member's pending
+  question is answered on its card. **Add**
+  in its header puts one more member in: an axio session or any agent this
+  machine has, in a worktree of its own, asked the group's prompt. A card's
+  header is inert — clicking it no longer pulls the view to that member — and
+  its ⋯ (or right-click) carries Expand plus the rail row's own menu: rename,
+  reveal, open in editor, copy path or branch, close, discard, stop. Nothing else is pooled: each
+  member has its own approvals, transcript and branch, and is closed on its
+  own. The group id is a field in the session index (`group`), recorded at
+  start and never after. A hosted member is typed at only once its interface
+  has painted — output arrived, then went quiet — and the Enter follows the
+  text after a pause as its own write: sent at spawn, the text landed in the
+  composer and the Enter was lost; sent in one burst, several agents treat it
+  as a paste and submit nothing.
+
+- **Landing, in the window.** Above a session's diff: the branch, the branch
+  the repository is on, commits ahead and files uncommitted, and the three
+  ways this surface lands work — merge into the repository's branch, push,
+  or push and open a pull request with `gh` (the address is copied). Each
+  commits uncommitted work first under the session's name, because an agent
+  rarely commits and a merge that landed nothing would be the worst kind of
+  success. The supervisor still stops at the branch, on purpose; this is the
+  surface making the workflow choice it was told to leave to surfaces.
+  Reveal opens the worktree in the file manager; Editor runs the command
+  Settings names with the path.
+
+- **Rows have names and a menu.** Right-click any rail row, or the ⋯ that
+  appears on hover: rename (a session's name is a new index record, its
+  first prompt stays as the label; a terminal's lives with the terminal),
+  reveal, open in editor, copy path, copy branch, and close, discard or stop.
+  A repository's row reveals or opens the repository.
+
+- **Notifications and a badge.** A session that asks a question posts a
+  system notification; a turn that ends while the window is not in front
+  posts one too. The dock icon carries the number of questions waiting.
+
+- **More of the keyboard.** `⌘⇧A` jumps to the oldest question waiting,
+  `⌘⌥↑`/`⌘⌥↓` move through the rail's rows, `/` from anywhere lands in the
+  composer and Escape leaves a field. The Keyboard settings page lists them.
+
+- **First run explains itself.** Until a provider has a credential the
+  opening pane shows which agents were found on this machine and which
+  providers are signed in, and offers "Sign in with axio" — axio's own CLI in
+  a terminal, where `/login` already knows every provider — instead of a bare
+  "add a repository".
+
+- **A light theme, and a system option.** Appearance → Theme. The palette is
+  redefined in the tokens and only there, including what text sits on a
+  tinted button, so no component carries a light rule of its own.
+
+- **A settings dialog, and a file for it.** `⌘,` (or the control at the right
+  of the status bar) opens Appearance, Terminal, Agents, Model, Repositories
+  and Keyboard. Interface font, size and density, and the terminal's font,
+  size, line height and scrollback, live in `~/.axio/app.toml` — the window's
+  own file, written whole by Rust and read by nothing else. Per-agent
+  arguments live there too and are prepended to every launch of that agent.
+  The default model is the one setting shared with the command line, so it is
+  written to `~/.axio/config.toml` through the same line edit `/model` makes,
+  leaving every other byte of that file alone. Appearance previews live while
+  the dialog is open and is put back on Cancel; a terminal reads its font when
+  it opens, so a change reaches the terminals opened after it rather than
+  re-creating a live one and losing its scrollback.
+
+- **Hosted terminals are named, and get a worktree of their own.** A second
+  Claude Code is `Claude Code 2` — numbered among the live ones of its kind,
+  so the rail can tell them apart, with the lowest free number reused. Every
+  agent opened from **New** runs in a fresh worktree on a fresh branch, cut
+  by the same supervisor code a session's is, so several agents on one
+  repository never share a checkout; the branch shows on the row, the tab
+  and the title bar, and stays when the terminal ends, exactly as a closed
+  session's does. Alt-click on the menu entry runs the agent in the checkout
+  itself — a choice, never a fallback.
 
 - **The window works the way a multi-agent desktop is expected to.** Sessions
   and hosted terminals open as tabs across the pane, and a tab is a place the
@@ -570,6 +689,31 @@ a minor bump may break things.
   Clipboard API exists, so it is never a control that silently does nothing.
 
 ### Fixed
+
+- **The traffic lights sat above the title bar's contents on macOS.** The
+  configuration asked for them at (14, 13) in a 40px bar and macOS left them
+  where it puts them for a 22pt overlay title bar; `trafficLightPosition` is
+  applied from the content view's `drawRect`, which a webview covering the
+  view never triggers, so it had never taken effect. The macOS title bar is
+  now 22px with the wordmark row sized to it, and the inert setting is gone.
+
+- **The window offered `axio` as a terminal and then could not start it.**
+  Launching went by bare name through `PATH`, and a desktop application has
+  the login shell's `PATH`, which need not include `~/.cargo/bin` — so the
+  launcher failed with a page of directories. `Harness::locate` now finds the
+  executable first: axio's own binary is looked for beside the running one,
+  every harness on `PATH`, with the `.exe`/`.cmd`/`.bat` names on Windows.
+  Only harnesses that are found are offered, and a found one is started by
+  its full path.
+
+- **The session pane laid itself out in three columns.** Its container shared
+  the class name `.session` with the rail's row buttons and inherited their
+  grid, so the session bar, the transcript and the composer sat side by side
+  with the composer squeezed against the right edge — on every session, in the
+  shipped build. Only the empty state had ever been looked at, because every
+  other state needed a provider and a repository to reach. The pane is
+  `.session-view`; `VITE_MOCK=1` now renders every state from `ui/src/mock.ts`
+  so this class of thing is a screenshot away rather than a session away.
 
 - **Closing the window over running work looked like a hang.** Rust refused
   the close and emitted an event saying why, and nothing listened: the button

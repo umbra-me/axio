@@ -62,9 +62,11 @@ function Row({ entry }: { entry: TranscriptEntry }) {
       return (
         <div className={entry.streaming ? "row agent streaming" : "row agent"}>
           <span className="who">axio</span>
+          {/* The caret is drawn by the stylesheet at the end of the last block,
+              so it sits where the next word will land rather than on a line
+              of its own under the paragraph. */}
           <div className="text">
             <Markdown text={entry.text} />
-            {entry.streaming && <span className="caret" aria-hidden="true" />}
           </div>
         </div>
       );

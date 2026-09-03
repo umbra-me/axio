@@ -245,9 +245,25 @@ supervisor's event stream, and every control on it (follow up, stop, close,
 answer a question, refuse with a note) is a command `axio session` already
 has. What the command line cannot offer is a terminal it does not already
 have, so the window also runs other agents' tools in pseudo-terminals it owns,
-listed beside its own sessions and never parsed. Sessions and terminals open as
-tabs; a command palette and one table of chords reach everything; the model's
-prose is rendered to elements rather than HTML.
+listed beside its own sessions and never parsed — each in a worktree of its
+own, cut by the same supervisor code a session's is. Sessions and terminals
+open as tabs; a command palette and one table of chords reach everything; the
+model's prose is rendered to elements rather than HTML.
+
+One prompt can start a **group**: several sessions and hosted agents on one
+repository, each in its own worktree, tagged with one id the index records.
+The group's tab lays them side by side — summary cards with an inline
+follow-up, or each member whole, or every diff — and a card is resized by
+dragging its corner. The group is a way of starting and looking, not
+orchestration: closing, approving and landing stay per member.
+
+What the window adds that the command line does not have is deliberate and
+short: a settings file of its own (`~/.axio/app.toml`, fonts and sizes and
+per-agent arguments; the default model still goes to `config.toml`), system
+notifications and a dock badge for questions waiting, and *landing* — merge,
+push, pull request — above a session's diff. The supervisor stops at the
+branch on purpose; the window is the surface that chooses a workflow and says
+which one.
 
 The interactive one uses an **inline** viewport rather than the alternate
 screen. A full-screen application owns scrollback, selection and the scrollbar

@@ -11,6 +11,7 @@ import { isMac } from "./platform";
 export type Chord = {
   key: string;
   shift?: boolean;
+  alt?: boolean;
   /** How the chord is written in a menu. */
   label: string;
 };
@@ -21,9 +22,14 @@ export const chords = {
   palette: { key: "k", label: "K" },
   closeTab: { key: "w", label: "W" },
   split: { key: "\\", label: "\\" },
+  rail: { key: "b", label: "B" },
   nextTab: { key: "]", shift: true, label: "⇧]" },
   prevTab: { key: "[", shift: true, label: "⇧[" },
   addRepository: { key: "o", label: "O" },
+  settings: { key: ",", label: "," },
+  attention: { key: "a", shift: true, label: "⇧A" },
+  railPrev: { key: "arrowup", alt: true, label: "⌥↑" },
+  railNext: { key: "arrowdown", alt: true, label: "⌥↓" },
 } satisfies Record<string, Chord>;
 
 export type Action = keyof typeof chords;
@@ -37,11 +43,13 @@ export function label(action: Action): string {
 /** Which action a key event names, if any. Digits are the tab switcher. */
 export function actionFor(e: KeyboardEvent): Action | { tab: number } | null {
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  if (!mod || e.altKey) return null;
-  if (/^[1-9]$/.test(e.key) && !e.shiftKey) return { tab: Number(e.key) - 1 };
+  if (!mod) return null;
+  if (/^[1-9]$/.test(e.key) && !e.shiftKey && !e.altKey) return { tab: Number(e.key) - 1 };
   const key = e.key.toLowerCase();
   for (const [name, chord] of Object.entries(chords) as [Action, Chord][]) {
-    if (chord.key === key && Boolean(chord.shift) === e.shiftKey) return name;
+    if (chord.key === key && Boolean(chord.shift) === e.shiftKey && Boolean(chord.alt) === e.altKey) {
+      return name;
+    }
   }
   return null;
 }

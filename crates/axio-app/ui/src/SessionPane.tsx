@@ -1,46 +1,51 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { api, describe, type ApprovalView, type SessionView, type TranscriptView } from "./bridge";
+import { api, describe, type ApprovalView, type SessionView, type TranscriptView, listen } from "./bridge";
 import { Approvals } from "./Approvals";
 import { Diff } from "./Diff";
+import { Landing } from "./Landing";
+import type { View } from "./SessionControls";
 import { Transcript } from "./Transcript";
-import { IconBranch, IconDiff, IconMessage, IconSend, IconStop } from "./icons";
+import { IconSend, IconStop } from "./icons";
 
-// One session: what it said, what it changed, and what can be done to it.
+// One session: what it said, what it changed, and a place to answer it.
 //
 // Everything here drives a command the command line already has — a follow-up
-// prompt is `send_prompt`, stop is `cancel_session`, close is `close_session`.
-// That is not a coincidence to preserve but the rule: a surface that could do
-// something the CLI cannot has stopped being a view of the same product.
+// prompt is `send_prompt`, stop is `cancel_session`. The controls that end a
+// session live in the tab strip (`SessionControls`), and the facts about it —
+// branch, model, cost — in the status bar; this pane is the reading and the
+// typing, and nothing that repeats what the chrome around it already says.
 
 // A fallback for a signal that was missed; the event is the mechanism.
 const FALLBACK_MS = 4000;
 
-type Tab = "transcript" | "changes";
+/** What the status bar shows about the session in front. */
+export type SessionMeta = { model: string | null; costUsd: number };
 
 export function SessionPane({
   session,
   approvals,
+  view,
   split,
   onChanged,
-  onClosed,
+  onMeta,
   onError,
+  onNotice,
 }: {
   session: SessionView;
   /** This session's questions only; the others show on their own tabs. */
   approvals: ApprovalView[];
-  /** Transcript and changes side by side rather than as tabs. */
+  view: View;
+  /** Transcript and changes side by side rather than one at a time. */
   split: boolean;
   onChanged: () => void;
-  onClosed: () => void;
+  onMeta: (meta: SessionMeta) => void;
   onError: (message: string) => void;
+  onNotice: (message: string) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("transcript");
   const [transcript, setTranscript] = useState<TranscriptView | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState<"send" | "stop" | "close" | null>(null);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [busy, setBusy] = useState<"send" | "stop" | null>(null);
 
   // One read at a time, and one more if a signal arrived while it ran — the
   // same coalescing the terminal does, for the same reason.
@@ -76,11 +81,20 @@ export function SessionPane({
     };
   }, [pull, session.id]);
 
-  // The diff is re-read when the tab is opened and whenever a turn ends, not
-  // per token: `git diff` on every delta would be the wrong kind of live.
+  // The model and the cost are the status bar's to show, and only when they
+  // change — a re-render per token would repaint a row that did not move.
+  const model = transcript?.model ?? null;
+  const costUsd = transcript?.costUsd ?? 0;
+  useEffect(() => {
+    onMeta({ model, costUsd });
+  }, [model, costUsd, onMeta]);
+
+  // The diff is re-read when the changes come into view and whenever a turn
+  // ends, not per token: `git diff` on every delta would be the wrong kind of
+  // live.
   const turns = transcript?.entries.filter((e) => e.kind === "turn").length ?? 0;
   useEffect(() => {
-    if (tab !== "changes" && !split) return;
+    if (view !== "changes" && !split) return;
     let cancelled = false;
     setDiff(null);
     void api
@@ -90,7 +104,7 @@ export function SessionPane({
     return () => {
       cancelled = true;
     };
-  }, [session.id, tab, split, turns, session.status]);
+  }, [session.id, view, split, turns, session.status]);
 
   const live = session.status !== "closed";
   const running = session.status === "running";
@@ -122,107 +136,24 @@ export function SessionPane({
     }
   };
 
-  const close = async (discard: boolean) => {
-    setBusy("close");
-    try {
-      await api.closeSession(session.id, discard);
-      onClosed();
-    } catch (e) {
-      // A discard the supervisor refused — the branch holds commits that live
-      // nowhere else — arrives here, and is the one message worth reading.
-      onError(describe(e));
-      setConfirmDiscard(false);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
-    <div className="session">
-      <div className="session-bar">
-        <div className="crumbs">
-          <span className="repo">{session.projectName}</span>
-          {session.branch && (
-            <span className="branch">
-              <IconBranch size={12} />
-              {session.branch}
-            </span>
-          )}
-          {transcript?.model && <span className="model">{transcript.model}</span>}
-          {transcript && transcript.costUsd > 0 && (
-            <span className="cost" title="What this session has cost, as seen here">
-              ${transcript.costUsd.toFixed(3)}
-            </span>
-          )}
-        </div>
-        {!split && (
-          <div className="tabs" role="tablist">
-            <button
-              role="tab"
-              aria-selected={tab === "transcript"}
-              className={tab === "transcript" ? "tab on" : "tab"}
-              onClick={() => setTab("transcript")}
-            >
-              <IconMessage size={13} />
-              Transcript
-            </button>
-            <button
-              role="tab"
-              aria-selected={tab === "changes"}
-              className={tab === "changes" ? "tab on" : "tab"}
-              onClick={() => setTab("changes")}
-            >
-              <IconDiff size={13} />
-              Changes
-            </button>
-          </div>
-        )}
-        <div className="session-actions">
-          {session.open && !confirmDiscard && (
-            <>
-              <button
-                className="act"
-                disabled={busy !== null}
-                title="End the session and keep its worktree and branch for review"
-                onClick={() => void close(false)}
-              >
-                Close
-              </button>
-              <button
-                className="act danger"
-                disabled={busy !== null}
-                title="End the session and delete its worktree and branch"
-                onClick={() => setConfirmDiscard(true)}
-              >
-                Discard
-              </button>
-            </>
-          )}
-          {session.open && confirmDiscard && (
-            <>
-              <span className="confirm">Delete the worktree and branch?</span>
-              <button className="act" disabled={busy !== null} onClick={() => setConfirmDiscard(false)}>
-                Keep
-              </button>
-              <button className="act danger" disabled={busy !== null} onClick={() => void close(true)}>
-                Delete
-              </button>
-            </>
-          )}
-          {!session.open && <span className="closed-tag">closed</span>}
-        </div>
-      </div>
-
+    <div className="session-view">
       <div className={split ? "session-body split" : "session-body"}>
         {split ? (
           <>
             <Transcript view={transcript} />
-            <Diff text={diff} />
+            <div className="changes">
+              <Landing session={session} refreshKey={`${turns}:${session.status}`} onError={onError} onNotice={onNotice} />
+              <Diff text={diff} />
+            </div>
           </>
-        ) : tab === "transcript" ? (
+        ) : view === "transcript" ? (
           <Transcript view={transcript} />
         ) : (
-          <Diff text={diff} />
+          <div className="changes">
+            <Landing session={session} refreshKey={`${turns}:${session.status}`} onError={onError} onNotice={onNotice} />
+            <Diff text={diff} />
+          </div>
         )}
       </div>
 
@@ -231,16 +162,6 @@ export function SessionPane({
 
       {live ? (
         <div className="composer">
-          {running && (
-            <div className="working">
-              <span className="dot running" />
-              working
-              <button className="act" disabled={busy !== null} onClick={() => void stop()}>
-                <IconStop size={12} />
-                Stop
-              </button>
-            </div>
-          )}
           <textarea
             value={prompt}
             rows={2}
@@ -257,14 +178,29 @@ export function SessionPane({
               }
             }}
           />
-          <button
-            className="act primary"
-            disabled={busy !== null || prompt.trim() === ""}
-            onClick={() => void send()}
-            aria-label="Send"
-          >
-            <IconSend size={14} />
-          </button>
+          {/* One slot, two states: stop what is running, or send what is
+              typed. Two buttons side by side would leave one of them always
+              disabled, which is furniture. */}
+          {running ? (
+            <button
+              className="act stop"
+              disabled={busy !== null}
+              onClick={() => void stop()}
+              aria-label="Stop the running turn"
+              title="Stop the running turn"
+            >
+              <IconStop size={14} />
+            </button>
+          ) : (
+            <button
+              className="act primary"
+              disabled={busy !== null || prompt.trim() === ""}
+              onClick={() => void send()}
+              aria-label="Send"
+            >
+              <IconSend size={14} />
+            </button>
+          )}
         </div>
       ) : (
         <div className="composer-note">

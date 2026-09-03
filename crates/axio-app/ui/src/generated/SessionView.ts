@@ -14,7 +14,15 @@ shortId: string, projectId: string, projectName: string,
 /**
  * The first prompt. `None` for a session started without one.
  */
-label: string | null, branch: string | null, workspace: string, isolation: Isolation, status: SessionStatus, 
+label: string | null, 
+/**
+ * A name a person gave it later. Shown in place of the label when set.
+ */
+title: string | null, 
+/**
+ * Sessions started together share one; see `StartGroupInput`.
+ */
+group: string | null, branch: string | null, workspace: string, isolation: Isolation, status: SessionStatus, 
 /**
  * Whether the index still counts it as open. `Closed` above means "not
  * live in this process", which a session started from the command line

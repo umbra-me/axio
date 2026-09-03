@@ -27,6 +27,7 @@
 
 pub mod hosted;
 pub mod model;
+pub mod settings;
 pub mod state;
 pub mod transcript;
 
@@ -36,11 +37,12 @@ pub mod commands;
 #[cfg(feature = "app")]
 mod shell;
 
-pub use hosted::{Hosted, HostedOutput, HostedView, StartHostedInput};
+pub use hosted::{Hosted, HostedOutput, HostedView, Place, StartHostedInput};
 pub use model::{
     AppError, ApprovalView, DecisionInput, Isolation, PreviewView, ProjectView, SessionStatus,
     SessionView, Snapshot, StartSessionInput, TranscriptEntry, TranscriptView,
 };
+pub use settings::{AppSettings, ModelDefault, Settings, SettingsView};
 pub use state::AppState;
 
 #[cfg(feature = "app")]
@@ -81,9 +83,13 @@ pub fn shell_state() -> (AppState, Option<SessionEvents>) {
             // The same store every surface writes, so a session the command
             // line ran is readable here from its file.
             AppState::new(std::sync::Arc::new(supervisor))
-                .with_store(axio::factory::LocalFactory::session_store()),
+                .with_store(axio::factory::LocalFactory::session_store())
+                .with_settings(Settings::in_home(&axio::home())),
             Some(events),
         ),
-        Err(e) => (AppState::unavailable(e.to_string()), None),
+        Err(e) => (
+            AppState::unavailable(e.to_string()).with_settings(Settings::in_home(&axio::home())),
+            None,
+        ),
     }
 }

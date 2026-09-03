@@ -13,7 +13,22 @@
 // time, so a rename shows up as a failed command rather than a build error.
 // Generating those too is what `tauri-specta` would add.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
+import { mockInvoke } from "./mock";
+
+// `VITE_MOCK=1 npm run dev` swaps the Rust side for `mock.ts`, so every state
+// the window has can be looked at without a provider. The check is a build-time
+// constant, so a build made without the variable drops the mock entirely.
+export const MOCK = import.meta.env.VITE_MOCK === "1";
+const invoke: typeof tauriInvoke = MOCK ? mockInvoke : tauriInvoke;
+
+/** Rust's events, or nothing at all under the mock — which then relies on the
+ *  fallback timers every subscriber already has. */
+export function listen<T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> {
+  if (MOCK) return Promise.resolve(() => {});
+  return tauriListen<T>(event, handler);
+}
 
 export type { AppError } from "./generated/AppError";
 export type { ApprovalView } from "./generated/ApprovalView";
@@ -30,6 +45,19 @@ export type { StartHostedInput } from "./generated/StartHostedInput";
 export type { StartSessionInput } from "./generated/StartSessionInput";
 export type { TranscriptEntry } from "./generated/TranscriptEntry";
 export type { TranscriptView } from "./generated/TranscriptView";
+export type { AppSettings } from "./generated/AppSettings";
+export type { Appearance } from "./generated/Appearance";
+export type { TerminalSettings } from "./generated/TerminalSettings";
+export type { AgentSettings } from "./generated/AgentSettings";
+export type { ModelDefault } from "./generated/ModelDefault";
+export type { SettingsView } from "./generated/SettingsView";
+export type { StartGroupInput } from "./generated/StartGroupInput";
+export type { GroupStart } from "./generated/GroupStart";
+export type { AddToGroupInput } from "./generated/AddToGroupInput";
+export type { ProviderView } from "./generated/ProviderView";
+export type { LandingView } from "./generated/LandingView";
+export type { LandAction } from "./generated/LandAction";
+export type { LandOutcome } from "./generated/LandOutcome";
 
 import type { ApprovalView } from "./generated/ApprovalView";
 import type { DecisionInput } from "./generated/DecisionInput";
@@ -40,6 +68,17 @@ import type { SessionView } from "./generated/SessionView";
 import type { Snapshot } from "./generated/Snapshot";
 import type { StartSessionInput } from "./generated/StartSessionInput";
 import type { TranscriptView } from "./generated/TranscriptView";
+import type { AppSettings } from "./generated/AppSettings";
+import type { Isolation } from "./generated/Isolation";
+import type { ModelDefault } from "./generated/ModelDefault";
+import type { SettingsView } from "./generated/SettingsView";
+import type { StartGroupInput } from "./generated/StartGroupInput";
+import type { GroupStart } from "./generated/GroupStart";
+import type { AddToGroupInput } from "./generated/AddToGroupInput";
+import type { ProviderView } from "./generated/ProviderView";
+import type { LandingView } from "./generated/LandingView";
+import type { LandAction } from "./generated/LandAction";
+import type { LandOutcome } from "./generated/LandOutcome";
 
 export const api = {
   snapshot: () => invoke<Snapshot>("snapshot"),
@@ -67,11 +106,12 @@ export const api = {
   hostedStart: (
     harness: string,
     cwd: string,
+    isolation: Isolation | null = null,
     args = "",
     size: { rows: number; cols: number } | null = null,
   ) =>
     invoke<HostedView>("hosted_start", {
-      input: { harness, cwd, args, rows: size?.rows ?? null, cols: size?.cols ?? null },
+      input: { harness, cwd, isolation, args, rows: size?.rows ?? null, cols: size?.cols ?? null },
     }),
   hostedRead: (id: string, from: number) => invoke<HostedOutput>("hosted_read", { id, from }),
   hostedWrite: (id: string, data: string, submit: boolean) =>
@@ -79,6 +119,23 @@ export const api = {
   hostedResize: (id: string, rows: number, cols: number) =>
     invoke<void>("hosted_resize", { id, rows, cols }),
   hostedKill: (id: string) => invoke<void>("hosted_kill", { id }),
+
+  // Groups, names, landing, and the machine's own facts.
+  startGroup: (input: StartGroupInput) => invoke<GroupStart>("start_group", { input }),
+  addToGroup: (input: AddToGroupInput) => invoke<GroupStart>("add_to_group", { input }),
+  renameSession: (sessionId: string, title: string | null) =>
+    invoke<void>("rename_session", { sessionId, title }),
+  renameHosted: (id: string, title: string | null) => invoke<HostedView>("rename_hosted", { id, title }),
+  hostedDiff: (id: string) => invoke<string>("hosted_diff", { id }),
+  landing: (sessionId: string) => invoke<LandingView>("landing", { sessionId }),
+  land: (sessionId: string, action: LandAction) => invoke<LandOutcome>("land", { sessionId, action }),
+  providers: () => invoke<ProviderView[]>("providers"),
+  reveal: (path: string, editor: boolean) => invoke<void>("reveal", { path, editor }),
+
+  // Settings: the window's own file, and the default model in axio's.
+  settings: () => invoke<SettingsView>("settings"),
+  saveSettings: (settings: AppSettings) => invoke<SettingsView>("save_settings", { settings }),
+  setDefaultModel: (model: ModelDefault) => invoke<SettingsView>("set_default_model", { model }),
 };
 
 // What went wrong, as words.

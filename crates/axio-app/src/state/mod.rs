@@ -15,7 +15,12 @@
 //! Nothing in this module depends on Tauri, which is what lets it be tested
 //! without a webview and driven from a terminal.
 
+mod groups;
+mod hosted;
+mod landing;
 mod sessions;
+
+pub use landing::reveal;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -30,6 +35,7 @@ use crate::model::{
     AppError, ApprovalView, DecisionInput, Isolation, ProjectView, SessionStatus, SessionView,
     Snapshot, TranscriptView,
 };
+use crate::settings::{AppSettings, ModelDefault, Settings, SettingsView};
 use crate::transcript::{Transcripts, preview_of};
 
 /// The application's state.
@@ -52,6 +58,9 @@ pub struct AppState {
     /// Absent in tests, and then a session another process ran has no
     /// transcript here — which the view says, rather than showing nothing.
     store: Option<SessionStore>,
+    /// The window's settings files. Absent in tests, and then the settings
+    /// commands answer with defaults and refuse to save.
+    settings: Option<Settings>,
     supervisor: Option<Arc<Supervisor>>,
     /// Why there is no supervisor, when there is none. Kept so the interface
     /// can say what is wrong instead of showing an empty list — "no work" and
@@ -65,6 +74,7 @@ impl AppState {
             hosted: crate::hosted::Hosted::default(),
             transcripts: Transcripts::default(),
             store: None,
+            settings: None,
             supervisor: Some(supervisor),
             unavailable: None,
         }
@@ -76,12 +86,43 @@ impl AppState {
         self
     }
 
+    /// Where the window keeps what it remembers about itself.
+    pub fn with_settings(mut self, settings: Settings) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    // --- settings ----------------------------------------------------------
+
+    fn settings(&self) -> Result<&Settings, AppError> {
+        self.settings.as_ref().ok_or_else(|| {
+            AppError::Unavailable("this window has nowhere to keep settings".to_owned())
+        })
+    }
+
+    pub fn settings_view(&self) -> Result<SettingsView, AppError> {
+        self.settings()?.view()
+    }
+
+    pub fn save_settings(&self, settings: &AppSettings) -> Result<SettingsView, AppError> {
+        let store = self.settings()?;
+        store.save(settings)?;
+        store.view()
+    }
+
+    pub fn set_default_model(&self, model: &ModelDefault) -> Result<SettingsView, AppError> {
+        let store = self.settings()?;
+        store.set_model(model)?;
+        store.view()
+    }
+
     /// A state that can still paint, for when the index could not be opened.
     pub fn unavailable(why: impl Into<String>) -> Self {
         Self {
             hosted: crate::hosted::Hosted::default(),
             transcripts: Transcripts::default(),
             store: None,
+            settings: None,
             supervisor: None,
             unavailable: Some(why.into()),
         }
@@ -133,6 +174,8 @@ impl AppState {
                     project_id: entry.project.to_string(),
                     project_name: entry.project_name.clone(),
                     label: entry.label.clone(),
+                    title: entry.title.clone(),
+                    group: entry.group.clone(),
                     branch: entry.branch.clone(),
                     workspace: entry.workspace.display().to_string(),
                     isolation: match entry.isolation {

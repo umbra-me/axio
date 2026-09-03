@@ -44,6 +44,7 @@ app = [
     # wrong. The Tauri CLI adds it during `tauri build`; we build with plain
     # cargo, so it has to be named here. `axio-quota` learned this first.
     "tauri/custom-protocol",
+    "dep:tauri-plugin-notification",
 ]
 
 [dependencies]
@@ -66,11 +67,17 @@ serde_json.workspace = true
 ts-rs = "12.0.1"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+# The window's own settings file, `app.toml`. Read and written whole, by this
+# crate alone; axio's `config.toml` is edited through `axio_core::config::edit`.
+toml.workspace = true
+# Group ids: sessions started together carry one, minted here.
+ulid.workspace = true
 tauri = { workspace = true, optional = true }
 tauri-plugin-dialog = { version = "2.7.2", optional = true }
 # One window per machine. Two of them would be two supervisors over one index
 # and one set of worktrees, each unaware of what the other is running.
 tauri-plugin-single-instance = { version = "2.4.4", optional = true }
+tauri-plugin-notification = { version = "2.4.0", optional = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

@@ -2,8 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { listen } from "@tauri-apps/api/event";
-import { api, type HostedView } from "./bridge";
+import { api, type HostedView, type TerminalSettings, listen } from "./bridge";
 
 // A hosted agent's own interface, unmodified.
 //
@@ -33,11 +32,23 @@ function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-/** The font the terminal renders in. One string, so a measurement cannot use a
- *  different face from the thing being measured. */
-const TERM_FONT = '"JetBrainsMono NFM", "JetBrains Mono", "Cascadia Mono", Consolas, monospace';
-const TERM_SIZE = 13;
-const TERM_LINE_HEIGHT = 1.0;
+/** The font the terminal renders in, from the settings or the stylesheet's
+ *  mono stack. One function, so a measurement cannot use a different face from
+ *  the thing being measured. */
+function face(settings: TerminalSettings | null): { font: string; size: number; lineHeight: number; scrollback: number } {
+  const font =
+    settings && settings.font.trim() !== ""
+      ? `"${settings.font.trim().replace(/^["']|["']$/g, "")}", monospace`
+      : token("--mono-font") || "monospace";
+  return {
+    font,
+    size: settings?.fontSize ?? 13,
+    // 1.0 by default: block-drawing glyphs in a Nerd Font stop being
+    // contiguous at anything else, and provider TUIs are full of them.
+    lineHeight: settings?.lineHeight ?? 1.0,
+    scrollback: settings?.scrollback ?? 10000,
+  };
+}
 
 /**
  * How big a terminal would be if it opened in `el` right now.
@@ -51,11 +62,12 @@ const TERM_LINE_HEIGHT = 1.0;
  * a wide-ish glyph: a proportional fallback would make every column wrong, and
  * this is the same measurement xterm's fit addon makes.
  */
-export function paneSize(el: Element): { rows: number; cols: number } | null {
+export function paneSize(el: Element, settings: TerminalSettings | null): { rows: number; cols: number } | null {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
-  ctx.font = `${TERM_SIZE}px ${TERM_FONT}`;
+  const { font, size, lineHeight } = face(settings);
+  ctx.font = `${size}px ${font}`;
   const cell = ctx.measureText("W").width;
   if (!(cell > 0)) return null;
 
@@ -66,27 +78,42 @@ export function paneSize(el: Element): { rows: number; cols: number } | null {
   const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
   const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
   const cols = Math.max(20, Math.floor((box.width - padX) / cell));
-  const rows = Math.max(6, Math.floor((box.height - padY) / (TERM_SIZE * TERM_LINE_HEIGHT)));
+  const rows = Math.max(6, Math.floor((box.height - padY) / (size * lineHeight)));
   return { rows, cols };
 }
 
-export function HostedTerminal({ session }: { session: HostedView }) {
+export function HostedTerminal({
+  session,
+  terminal,
+  compact = false,
+}: {
+  session: HostedView;
+  terminal: TerminalSettings | null;
+  /** A card-sized view of the same terminal: smaller type, same bytes. */
+  compact?: boolean;
+}) {
   const host = useRef<HTMLDivElement>(null);
+
+  // Read once, when the terminal opens. A change in settings reaches the
+  // terminals opened after it; re-creating a live emulator would lose its
+  // scrollback for the sake of a font.
+  const settings = useRef(terminal);
 
   useEffect(() => {
     if (!host.current) return;
+    const chosen = face(settings.current);
+    const { font, lineHeight, scrollback } = chosen;
+    const size = compact ? Math.max(9, Math.round(chosen.size * 0.8)) : chosen.size;
 
     const term = new Terminal({
       allowProposedApi: false,
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "bar",
-      fontFamily: TERM_FONT,
-      fontSize: TERM_SIZE,
-      // 1.0 on purpose: block-drawing glyphs in a Nerd Font stop being
-      // contiguous at anything else, and provider TUIs are full of them.
-      lineHeight: TERM_LINE_HEIGHT,
-      scrollback: 10000,
+      fontFamily: font,
+      fontSize: size,
+      lineHeight,
+      scrollback,
       theme: {
         background: token("--term-bg"),
         foreground: token("--term-fg"),
@@ -196,10 +223,10 @@ export function HostedTerminal({ session }: { session: HostedView }) {
       typed.dispose();
       term.dispose();
     };
-  }, [session.id]);
+  }, [session.id, compact]);
 
   // Padding goes on xterm's own measured element rather than this host: the fit
   // addon measures the host, so padding here makes it overstate the row count
   // and clip a provider's interface at the bottom.
-  return <div className="terminal-host" ref={host} />;
+  return <div className={compact ? "terminal-host compact" : "terminal-host"} ref={host} />;
 }

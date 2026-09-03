@@ -1007,6 +1007,52 @@ sessions finished while unwatched is likewise the window's knowledge — kept in
 the webview and cleared on view, because it is about attention rather than
 about work, and it is the one such thing the webview is allowed to hold.
 
+**A group is an index field.** `IndexEntry.group` is set when several sessions
+and terminals start on one prompt and read by the rail and the compare view;
+the supervisor records it and does nothing else with it. Closing, approving and
+landing stay per member — a group is a way of starting and looking.
+
+**Landing lives in the window.** Merge, push and pull request run through the
+supervisor's public `git` runner and `gh`, committing uncommitted work first
+under the session's title. The supervisor keeps its rule of stopping at the
+branch; the surface makes the workflow choice and says which it made.
+
+**Names are records.** A session's title is an index record applied on load; a
+terminal's lives with the terminal. The webview shows `title ?? label`.
+
+**`trafficLightPosition` never applied.** tao sets the inset from the content
+view's `drawRect`, which a webview covering the view does not trigger, so the
+lights stayed where macOS puts them for a 22pt overlay title bar while the CSS
+drew a 40px one around them. The macOS title bar is 22px now and the setting is
+gone; the lights are aligned because the bar matches them, not the reverse.
+
+**Two settings files, two owners.** `~/.axio/app.toml` is the window's and is
+written whole; `~/.axio/config.toml` is shared with the command line and is
+edited two keys at a time through `axio_core::config::edit`. The webview holds
+a draft while the dialog is open and nothing after it closes.
+
+**A harness is located before it is offered.** A desktop application launched
+from a dock has the login shell's `PATH`, not the terminal's, so `axio` in
+`~/.cargo/bin` was offered and then failed with a page of directories.
+`Harness::locate` looks beside the running binary for axio's own CLI and along
+`PATH` for the rest — with `.exe`, `.cmd` and `.bat` on Windows — the picker
+lists only what it finds, and the spawn uses the path it found.
+
+**The tab strip is the pane's only toolbar, and it is not drawn when nothing is
+open.** The front tab's controls — transcript or changes, close, discard, stop —
+arrive as its `tail`, and the branch, model and cost of the session in front go
+to the status bar. A second bar under the strip repeated the project name a
+third time; the title bar and the tab already carry it.
+
+**`.session` is the rail row; the pane is `.session-view`.** The pane's
+container was also called `.session` and inherited the row's three-column grid,
+which laid the session bar, the transcript and the composer out side by side —
+on every session, in the shipped build. Only the empty state had been looked at,
+because every other state needed a provider and a repository to reach. That is
+what `VITE_MOCK=1` is for: `ui/src/mock.ts` answers every command from memory,
+and `VITE_MOCK_VIEW` picks the state to land on. The check is a build-time
+constant, so a build without the variable carries none of it.
+
 **Chords are named in one table, and the palette reads it.** The key handler
 matches against the same entries the palette prints as labels, so a binding and
 its menu entry cannot disagree. The modifier is the platform's own.

@@ -21,6 +21,7 @@ curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.
 cargo build --release -p axio-app --features app                # the desktop surface
 npm --prefix crates/axio-app/ui run build                       # frontend, before that
 npm --prefix crates/axio-app/ui run typecheck                   # the only step that checks TS types
+VITE_MOCK=1 VITE_MOCK_VIEW=session npm --prefix crates/axio-app/ui run build  # the window over mock.ts, no provider
 cargo test -p axio-app && git diff --exit-code crates/axio-app/ui/src/generated  # boundary drift
 axio session start|list|diff|close                              # supervised worktree sessions
 cargo build --release -p axio-quota --features app              # tray + flyout + window
@@ -306,6 +307,71 @@ Three invariants everything else follows from:
   Which sessions finished while unwatched is likewise the window's knowledge,
   kept in the webview and cleared on view — it is about attention, not about
   work, and is the one such thing the webview is allowed to hold.
+- **The tab strip is the pane's only toolbar, and it is not drawn when
+  nothing is open.** The front tab's controls — transcript or changes, close,
+  discard, stop — arrive as its `tail`; the branch, model and cost of the
+  session in front go to the status bar. There is no second bar under the
+  strip, so `.main` sizes its first row `auto` rather than `var(--toolbar)`.
+- **`.session` is the rail row; the pane is `.session-view`.** One stylesheet,
+  one namespace. The pane's container was also called `.session` and inherited
+  the row's three-column grid, which laid the session bar, the transcript and
+  the composer out side by side — on every session, in the shipped build. A
+  class shared between two components is two components with one layout.
+- **`trafficLightPosition` does nothing here.** tao applies the inset from the
+  content view's `drawRect`, and a webview covering that view never triggers
+  it, so the lights stay where macOS puts them for a 22pt overlay title bar.
+  `.window.mac` sets `--titlebar: 22px` to match; do not add the setting back
+  expecting a 40px bar to line up.
+- **Two settings files, two owners.** `~/.axio/app.toml` is the window's —
+  fonts, sizes, density, per-agent arguments — written whole by
+  `settings.rs`, read by nothing else. The default model is shared with the
+  command line and goes to `~/.axio/config.toml` through
+  `axio_core::config::edit::set_model`, which touches two keys and leaves the
+  rest of the file alone. The webview never persists a byte: it edits a copy
+  and sends the whole value back.
+- **A hosted terminal is placed by the state, not by `Hosted`.** `AppState::
+  start_hosted` cuts a worktree through `Supervisor::checkout` — the same code
+  a session uses — and hands `Hosted::start_at` a `Place`; `Hosted::start`
+  (direct, for tests) is the only path that does not. Terminals are numbered
+  per harness among the live ones, lowest free number first.
+- **A group is an index field, not a supervisor concept.** `IndexEntry.group`
+  is set by `AppState::start_group` when several sessions and terminals start
+  on one prompt; the supervisor records it and does nothing with it. The rail
+  groups rows by it and the group tab lays members' diffs side by side.
+  Nothing is pooled beyond the id, deliberately: closing, approving and
+  landing stay per member. The group pane has three modes — Overview (summary
+  cards with an inline follow-up), Live (each member whole: a session's
+  transcript, a hosted agent's real terminal at card size) and Changes — and
+  card sizes (presets, or exact pixels from dragging a corner) are the
+  window's to hold, like the tabs.
+- **Landing lives in the window, by decision, not in the supervisor.**
+  `state/landing.rs` merges, pushes or opens a pull request through
+  `axio_supervisor::git` (now `pub`) and `gh`, committing uncommitted work
+  first under the session's title. The supervisor's own rule — landing is a
+  workflow, and it will not pick one — stands; the surface picks and says so.
+  A session started `Direct` has no branch and is refused.
+- **Names are records.** A session's title is `IndexRecord::Renamed`, applied
+  on load like a close; the label stays the first prompt. A hosted terminal's
+  title lives in `Held` and dies with the process. Both surface as
+  `title`/`name` and the webview shows `title ?? label`.
+- **Notifications go through `tauri-plugin-notification` from Rust**, in
+  `shell.rs`'s relay, on `ApprovalRequested` always and `TurnEnded` only while
+  the window is unfocused; the dock badge is the pending-approval count. No
+  capability is granted to the webview for it — Rust-side calls bypass the
+  permission layer, which is the gotcha above working in our favour.
+- **Harnesses are located before they are offered.** `Harness::locate` looks
+  beside the running binary for `axio` and along `PATH` for everything, with
+  Windows' `.exe`/`.cmd`/`.bat` names; `hosted::available` filters on it and
+  `command_for` spawns the found path. A desktop application launched from a
+  dock has the login shell's `PATH`, not the terminal's, and a launcher that
+  fails with a page of directories is worse than one that is absent.
+- **`VITE_MOCK=1` swaps the Rust side for `ui/src/mock.ts`.** Every state the
+  window has — streaming, waiting on an approval, finished unwatched, closed,
+  a hosted terminal — otherwise needs a provider, a repository and money to
+  reach, and the layout bug above shipped because only the empty state had
+  been looked at. `VITE_MOCK_VIEW=opening|firstrun|session|changes|group|needs|bare|menu|settings` picks the view, `VITE_MOCK_THEME=light` the palette
+  to land on. The check is a build-time constant, so a build without the
+  variable carries none of it — `grep -c mockInvoke ui/dist/assets/*.js` is 0.
 - **Chords live in `shortcuts.ts` and nowhere else.** The palette reads its
   labels from the same table the key handler matches against, so a binding
   and its menu entry cannot disagree. `Cmd` on macOS, `Ctrl` elsewhere.

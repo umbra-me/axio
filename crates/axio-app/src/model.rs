@@ -45,6 +45,10 @@ pub struct SessionView {
     pub project_name: String,
     /// The first prompt. `None` for a session started without one.
     pub label: Option<String>,
+    /// A name a person gave it later. Shown in place of the label when set.
+    pub title: Option<String>,
+    /// Sessions started together share one; see `StartGroupInput`.
+    pub group: Option<String>,
     pub branch: Option<String>,
     pub workspace: String,
     pub isolation: Isolation,
@@ -178,6 +182,107 @@ pub struct StartSessionInput {
     /// `None` means whatever `[worktree]` resolved to — which is isolated
     /// unless the user turned it off. Never inferred from anything else.
     pub isolation: Option<Isolation>,
+    /// Membership of a group started together. Set by `start_group`, not by a
+    /// person: a group is a fact about how sessions began.
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+/// One prompt, several agents.
+///
+/// `count` axio sessions and one hosted terminal per name in `agents`, all on
+/// the same repository, each in a worktree of its own, all tagged with one
+/// group id so the rail can show them together and a compare view can lay
+/// their diffs side by side. Nothing else is shared: each member has its own
+/// approvals, transcript and branch, and is closed on its own.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct StartGroupInput {
+    pub path: String,
+    pub prompt: String,
+    /// How many axio sessions. Zero is allowed when `agents` is not empty.
+    pub count: u32,
+    /// Harness names — `claude`, `codex`, `pi`, `axio` — one terminal each.
+    #[serde(default)]
+    pub agents: Vec<String>,
+}
+
+/// One more member for a group that already exists.
+///
+/// `harness` names a hosted agent; `None` means an axio session. The prompt
+/// is the group's — the interface has it from any session member — and is
+/// what the newcomer is asked, so it joins the same work rather than an
+/// empty terminal.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct AddToGroupInput {
+    pub group: String,
+    pub path: String,
+    pub prompt: Option<String>,
+    pub harness: Option<String>,
+}
+
+/// What `start_group` returns: the id every member carries, and the members.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct GroupStart {
+    pub group: String,
+    pub sessions: Vec<SessionView>,
+    pub terminals: Vec<crate::hosted::HostedView>,
+}
+
+/// A provider axio knows, and whether a credential for it is on this machine.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct ProviderView {
+    pub name: String,
+    pub ready: bool,
+}
+
+/// Where a session's work stands relative to the repository it came from.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct LandingView {
+    pub branch: Option<String>,
+    /// The branch the repository itself is on — what a merge lands into.
+    pub base: String,
+    /// `git status --porcelain` in the worktree, one line per path.
+    pub changed: Vec<String>,
+    /// Commits on the branch the base does not have.
+    pub ahead: u32,
+    /// `origin`, when the repository has one.
+    pub remote: Option<String>,
+    /// Whether `gh` is on this machine, so a pull request can be opened.
+    pub can_pr: bool,
+}
+
+/// The three ways this window lands work. A workflow choice the supervisor
+/// deliberately leaves to the surface; here they are, spelled out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub enum LandAction {
+    /// Commit what is uncommitted, then merge the branch into the repository's
+    /// current branch with a merge commit.
+    Merge,
+    /// Commit what is uncommitted, then push the branch to `origin`.
+    Push,
+    /// Push, then open a pull request with `gh`.
+    PullRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct LandOutcome {
+    pub message: String,
+    /// A pull request's address, when one was opened.
+    pub url: Option<String>,
 }
 
 /// One row of a session's transcript, in the shape a reader needs.
@@ -323,6 +428,8 @@ mod tests {
             project_id: "p".into(),
             project_name: "n".into(),
             label: None,
+            title: None,
+            group: None,
             branch: None,
             workspace: "w".into(),
             isolation: Isolation::Worktree,

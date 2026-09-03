@@ -70,6 +70,37 @@ body {
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
+/* The rail toggle sits by the wordmark, on the same side as the thing it
+   hides. It is chrome about chrome, so it never takes an agent's colour. */
+.rail-toggle {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin-left: var(--s-1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  cursor: default;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.rail-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.rail-toggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.rail-toggle.on {
+  color: var(--text-2);
+}
+
 .title {
   display: flex;
   align-items: center;
@@ -130,6 +161,16 @@ body {
   display: grid;
   min-height: 0;
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
+}
+
+/* Hidden rather than narrowed: a 40px column of dots is a third state to
+   design and test, and the tab strip already carries the dots. */
+.window.rail-hidden .body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.window.rail-hidden .rail {
+  display: none;
 }
 
 /* Flex rather than fixed grid rows: the composer disappears entirely when no
@@ -225,7 +266,7 @@ body {
 .session {
   position: relative;
   display: grid;
-  min-height: 34px;
+  min-height: var(--rail-row);
   grid-template-columns: 7px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--s-2);
@@ -351,60 +392,14 @@ body {
   color: var(--muted);
 }
 
-.rail-foot {
-  padding: var(--s-3) var(--s-4);
-  border-top: 1px solid var(--line-soft);
-  font-size: var(--t-micro);
-  color: var(--faint);
-}
-
 /* --- main --------------------------------------------------------------- */
 
 .main {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: var(--toolbar) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--content);
-}
-
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: 0 var(--s-5);
-  border-bottom: 1px solid var(--line);
-  background: var(--glass-bar);
-  font-size: var(--t-small);
-}
-
-.crumbs .sep {
-  color: var(--muted);
-}
-
-.crumbs .repo {
-  color: var(--text-2);
-}
-
-.crumbs .here {
-  overflow: hidden;
-  color: var(--text);
-  font-weight: var(--w-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.crumbs .branch {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  padding: 3px var(--s-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-1);
-  color: color-mix(in srgb, var(--accent) 72%, var(--text));
-  font-family: var(--mono-font);
-  font-size: var(--t-micro);
 }
 
 .pane {
@@ -444,19 +439,11 @@ body {
 .opening h1 {
   margin: 0;
   font-size: var(--t-lg);
+  color: var(--text-2);
   font-weight: var(--w-semi);
   letter-spacing: var(--track-display);
   line-height: var(--lh-tight);
   text-wrap: balance;
-  color: var(--text);
-}
-
-.opening p {
-  max-width: 64ch;
-  margin: 0;
-  font-size: var(--t-body);
-  line-height: var(--lh);
-  color: var(--text-2);
 }
 
 /* The composer: where, what, go. One bordered surface, one focus ring. */
@@ -479,15 +466,9 @@ body {
   border-style: dashed;
 }
 
-.start-where {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-.start-where select {
-  flex: 1;
-  min-height: 32px;
+.start-go select {
+  max-width: 220px;
+  min-height: 28px;
   padding: 0 var(--s-6) 0 var(--s-3);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-2);
@@ -504,14 +485,14 @@ body {
   cursor: default;
 }
 
-.start-where select option {
+.start-go select option {
   background: #14161c;
   color: var(--text);
 }
 
 .start textarea {
   width: 100%;
-  min-height: 96px;
+  min-height: 72px;
   padding: var(--s-2) var(--s-3);
   border: 0;
   background: transparent;
@@ -535,8 +516,10 @@ body {
 }
 
 .start-go .hint {
+  flex: 1;
   font-size: var(--t-micro);
   color: var(--faint);
+  text-align: right;
 }
 
 .start-go .act {
@@ -549,34 +532,16 @@ body {
   opacity: 0.5;
 }
 
-/* The other ways in, as quiet rows under the composer. */
-.opening ul {
-  display: grid;
-  gap: 0;
+/* The other ways in, as one quiet line under the composer. */
+.opening-more {
   margin: 0;
-  padding: 0;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-2);
-  list-style: none;
-  overflow: hidden;
-}
-
-.opening li {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-2) var(--s-4);
   font-size: var(--t-small);
-  color: var(--muted);
-}
-
-.opening li + li {
-  border-top: 1px solid var(--line-soft);
-}
-
-.opening li svg {
-  flex: none;
+  line-height: var(--lh-loose);
   color: var(--faint);
+}
+
+.opening-more kbd {
+  margin-right: 2px;
 }
 
 .opening code {
@@ -714,7 +679,7 @@ button.act:hover {
 button.act.primary {
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: color-mix(in srgb, var(--accent) 32%, #fff);
+  color: var(--on-tint-accent);
 }
 
 button.act.primary:hover {
@@ -725,7 +690,7 @@ button.act.primary:hover {
 button.act.danger {
   border-color: color-mix(in srgb, var(--danger) 48%, transparent);
   background: color-mix(in srgb, var(--danger) 15%, transparent);
-  color: color-mix(in srgb, var(--danger) 30%, #fff);
+  color: var(--on-tint-danger);
 }
 
 button.act.danger:hover {
@@ -751,6 +716,30 @@ button.act:focus-visible {
 
 /* The count is the fact; the noun beside it is the caption. Reading order
    should follow that, and it did not when both were the same grey. */
+.statusbar-here {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.statusbar-here .branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  font-family: var(--mono-font);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.statusbar-here .mono {
+  font-family: var(--mono-font);
+  color: var(--faint);
+}
+
 .statusbar b {
   font-weight: var(--w-medium);
   color: var(--text);
@@ -799,11 +788,23 @@ button.act:focus-visible {
 
 /* --- new session: the way to the composer ------------------------------- */
 
+.rail-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+  margin: var(--s-3) var(--s-3) 0;
+}
+
+.new-menu {
+  position: relative;
+  display: grid;
+}
+
 .rail-new {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--s-2);
-  margin: var(--s-3) var(--s-3) 0;
   min-height: 32px;
   padding: 0 var(--s-3);
   border: 1px solid var(--line);
@@ -823,10 +824,84 @@ button.act:focus-visible {
   color: var(--text);
 }
 
-.rail-new.on {
+.rail-new.primary {
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--on-tint-accent);
+}
+
+.rail-new.primary:hover,
+.rail-new.primary.on {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text);
+}
+
+/* The dropped list floats over the rail, in the overlay material. */
+.menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--s-1));
+  left: 0;
+  min-width: 240px;
+  margin: 0;
+  padding: var(--s-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2);
+  background: var(--overlay);
+  box-shadow: var(--shadow-2);
+  list-style: none;
+  backdrop-filter: blur(18px) saturate(115%);
+}
+
+.menu li button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--s-2);
+  min-height: 34px;
+  padding: var(--s-1) var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-small);
+  text-align: left;
+  cursor: default;
+}
+
+.menu li button svg {
+  color: var(--agent-accent, var(--accent));
+}
+
+.menu li button:hover,
+.menu li button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+  color: var(--text);
+}
+
+.menu .menu-title {
+  font-weight: var(--w-medium);
+}
+
+.menu .menu-detail {
+  grid-column: 2;
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.menu-rule {
+  height: 1px;
+  margin: var(--s-1) var(--s-2);
+  background: var(--line-soft);
+}
+
+.rail-empty b {
+  color: var(--text-2);
+  font-weight: var(--w-medium);
 }
 
 .rail-new:focus-visible {
@@ -840,39 +915,6 @@ button.act:focus-visible {
   display: grid;
   padding: 0 var(--s-2) var(--s-2);
   border-top: 1px solid var(--line-soft);
-}
-
-.hosted-launch {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-1);
-  padding: 0 var(--s-2) var(--s-2);
-}
-
-.hosted-launch button {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px var(--s-2);
-  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent)) 30%, transparent);
-  border-radius: var(--r-1);
-  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 10%, transparent);
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 40%, var(--text));
-  font: inherit;
-  font-size: var(--t-micro);
-  font-weight: var(--w-medium);
-  cursor: default;
-  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
-}
-
-.hosted-launch button:hover {
-  border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 62%, transparent);
-  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 18%, transparent);
-}
-
-.hosted-launch button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .hosted-row {
@@ -938,8 +980,33 @@ button.act:focus-visible {
 /* The traffic lights are placed by `tauri.macos.conf.json` at x=14, and three
    of them at their native spacing end around 70px. The wordmark starts after
    that; the drawn controls are not rendered at all on this platform. */
+/* macOS keeps its own title bar height for an overlay title bar with the title
+   hidden: 22pt, with the lights centred in it. `trafficLightPosition` in the
+   Tauri config does nothing here — tao applies it from the content view's
+   `drawRect`, which a webview covering the view never triggers — so rather
+   than draw a 40px bar beside 22pt lights, the bar is 22px and the wordmark
+   row is sized to it. The three lights end at about 70pt. */
+.window.mac {
+  --titlebar: 22px;
+}
+
 .window.mac .wordmark {
-  padding-left: 84px;
+  padding-left: 74px;
+  font-size: var(--t-body);
+}
+
+.window.mac .wordmark i {
+  width: 8px;
+  height: 8px;
+}
+
+.window.mac .rail-toggle {
+  width: 22px;
+  height: 20px;
+}
+
+.window.mac .title {
+  font-size: var(--t-micro);
 }
 
 /* --- notices that stay ---------------------------------------------------- */
@@ -1044,81 +1111,11 @@ button.link {
   margin: var(--s-4) var(--s-5) 0;
 }
 
-.session {
+.session-view {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-}
-
-.session-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-  padding: var(--s-2) var(--s-5);
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.tabs {
-  display: flex;
-  gap: var(--s-1);
-}
-
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 var(--s-3);
-  border: 0;
-  border-radius: var(--r-2);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--t-small);
-  font-weight: var(--w-medium);
-  cursor: default;
-  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
-}
-
-.tab:hover {
-  color: var(--text);
-}
-
-.tab.on {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--text);
-}
-
-.tab:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
-}
-
-.session-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-.session-actions .act {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-}
-
-.session-actions .cost,
-.session-actions .closed-tag {
-  font-family: var(--mono-font);
-  font-size: var(--t-micro);
-  color: var(--faint);
-}
-
-.session-actions .confirm {
-  font-size: var(--t-small);
-  color: color-mix(in srgb, var(--danger) 30%, #fff);
+  grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
 .session-body {
@@ -1186,6 +1183,17 @@ button.link {
   opacity: 0.45;
 }
 
+/* Stop, where Send was: the running turn is what the slot is about. */
+.composer .act.stop {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--on-tint-danger);
+}
+
+.composer .act.stop:hover {
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
+}
+
 .composer-note {
   padding: var(--s-3) var(--s-5);
   border-top: 1px solid var(--line-soft);
@@ -1251,7 +1259,9 @@ button.link {
 
 /* The streaming caret: the one moving thing in a transcript, so it is small
    and it is the accent — the same signal the running dot gives in the rail. */
-.caret {
+.row.agent.streaming .md > :last-child::after,
+.row.agent.streaming .md:empty::after {
+  content: "";
   display: inline-block;
   width: 2px;
   height: 1em;
@@ -1262,7 +1272,8 @@ button.link {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .caret {
+  .row.agent.streaming .md > :last-child::after,
+  .row.agent.streaming .md:empty::after {
     animation: none;
   }
 }
@@ -1373,7 +1384,7 @@ button.link {
 .tool-message {
   margin: 0;
   font-size: var(--t-small);
-  color: color-mix(in srgb, var(--danger) 30%, #fff);
+  color: var(--on-tint-danger);
   white-space: pre-wrap;
 }
 
@@ -1558,24 +1569,101 @@ button.link {
 
 /* Replaces the crumb bar: what is open, across the top of the pane. Chrome,
    so it is glass; the tabs themselves are quiet until one is in front. */
+.topbar {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: var(--toolbar);
+  border-bottom: 1px solid var(--line);
+  background: var(--glass-bar);
+}
+
 .tabs-strip {
   display: flex;
+  flex: 1;
   align-items: stretch;
   min-width: 0;
   overflow-x: auto;
   padding: 0 var(--s-2);
-  border-bottom: 1px solid var(--line);
-  background: var(--glass-bar);
   scrollbar-width: none;
+}
+
+.topbar-tail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-3);
+  border-left: 1px solid var(--line-soft);
+}
+
+.topbar-tail .act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+}
+
+.topbar-tail .closed-tag {
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.topbar-tail .confirm {
+  font-size: var(--t-small);
+  color: var(--on-tint-danger);
+}
+
+/* Transcript or changes: a segmented pair, not two more tabs. */
+.views {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  cursor: default;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.view:hover {
+  color: var(--text);
+}
+
+.view.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+}
+
+.view:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .tab-item {
   position: relative;
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: var(--s-2);
   max-width: 240px;
-  min-width: 0;
+  min-width: 110px;
   padding: 0 var(--s-2) 0 var(--s-3);
   border-right: 1px solid var(--line-soft);
   color: var(--muted);
@@ -1658,22 +1746,6 @@ button.link {
   color: var(--text);
 }
 
-.tab-new {
-  display: grid;
-  flex: none;
-  width: 32px;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  place-items: center;
-  font: inherit;
-  cursor: default;
-}
-
-.tab-new:hover {
-  color: var(--text);
-}
-
 /* Attention: a question is waiting. The dot goes warm and does not breathe —
    breathing is "working"; this is "stopped, and needs you". */
 .dot.needs {
@@ -1694,11 +1766,6 @@ button.link {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.session .chip.working {
-  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 60%, #fff);
-  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
-}
-
 .session .chip.needs-you {
   color: color-mix(in srgb, var(--warn) 70%, #fff);
   background: color-mix(in srgb, var(--warn) 18%, transparent);
@@ -1714,26 +1781,6 @@ button.link {
   font-weight: var(--w-medium);
 }
 
-/* --- the session bar carries the crumbs now ------------------------------- */
-
-.session-bar .crumbs {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.session-bar .crumbs .branch {
-  margin-left: 0;
-}
-
-.session-bar .crumbs .model,
-.session-bar .crumbs .cost {
-  font-family: var(--mono-font);
-  font-size: var(--t-micro);
-  color: var(--faint);
-}
-
 /* --- split: transcript beside changes ------------------------------------- */
 
 .session-body.split {
@@ -1745,41 +1792,12 @@ button.link {
 }
 
 /* This session's own questions sit above the composer, edge to edge. */
-.session > .approvals {
-  max-height: 45%;
+.session-view > .approvals {
+  max-height: 50vh;
   margin: 0;
   overflow-y: auto;
   padding: var(--s-3) var(--s-5);
   border-top: 1px solid var(--line-soft);
-}
-
-.session {
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-}
-
-/* --- composer: working ---------------------------------------------------- */
-
-.composer .working {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  grid-column: 1 / -1;
-  font-size: var(--t-micro);
-  text-transform: uppercase;
-  letter-spacing: var(--track-label);
-  color: var(--muted);
-}
-
-.composer .working .act {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  width: auto;
-  min-height: 24px;
-  margin-left: auto;
-  padding: 0 var(--s-2);
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 /* --- markdown ------------------------------------------------------------- */
@@ -1901,6 +1919,949 @@ kbd {
   font-family: var(--ui-font);
   font-size: 10px;
   color: var(--text-2);
+}
+
+/* --- settings -------------------------------------------------------------- */
+
+.settings {
+  display: grid;
+  width: min(820px, calc(100vw - 2 * var(--s-5)));
+  height: min(560px, calc(100vh - 2 * var(--s-5)));
+  grid-template-columns: 180px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  background: var(--overlay);
+  box-shadow: var(--shadow-3);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-4) var(--s-2);
+  border-right: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.settings-nav h1 {
+  margin: 0 var(--s-2) var(--s-3);
+  font-size: var(--t-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: var(--muted);
+}
+
+.settings-nav button {
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-body);
+  text-align: left;
+  cursor: default;
+}
+
+.settings-nav button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.settings-nav button.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+}
+
+.settings-body {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.settings-body > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-4) var(--s-5) var(--s-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-body h2 {
+  margin: 0;
+  font-size: var(--t-mid);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-display);
+  color: var(--text);
+}
+
+.settings-close {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  cursor: default;
+}
+
+.settings-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.settings-page {
+  display: grid;
+  align-content: start;
+  gap: var(--s-4);
+  overflow-y: auto;
+  padding: var(--s-4) var(--s-5);
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.settings-lead {
+  margin: 0;
+  max-width: 64ch;
+  font-size: var(--t-small);
+  line-height: var(--lh);
+  color: var(--muted);
+}
+
+.settings-lead code {
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--text-2);
+}
+
+.settings-body > footer {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-5);
+  border-top: 1px solid var(--line-soft);
+}
+
+.settings-path {
+  flex: 1;
+  overflow: hidden;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A field: label over control over hint. One shape for every setting. */
+.field {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.field-label .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.field-control {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.field-control input:not([type="range"]),
+.field-control select {
+  width: min(420px, 100%);
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-body);
+  outline: none;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.field-control select {
+  appearance: none;
+  padding-right: var(--s-6);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%238f939d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 6.5L8 10l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--s-2) center;
+}
+
+.field-control select option {
+  background: #14161c;
+}
+
+.field-control input[type="number"] {
+  width: 120px;
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+}
+
+.field-control input:focus,
+.field-control select:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.field-control input[type="range"] {
+  width: min(320px, 100%);
+  accent-color: var(--accent);
+}
+
+.field-hint {
+  font-size: var(--t-micro);
+  line-height: var(--lh);
+  color: var(--faint);
+}
+
+.settings-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 34px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-1);
+  font-size: var(--t-body);
+  color: var(--text-2);
+}
+
+.settings-list li:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-list li svg {
+  color: var(--faint);
+}
+
+.settings-list .title {
+  color: var(--text);
+}
+
+.settings-list .detail {
+  flex: 1;
+  overflow: hidden;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings-list .count {
+  margin-left: auto;
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.settings-list kbd {
+  margin-left: auto;
+}
+
+/* --- rows with a menu ------------------------------------------------------ */
+
+.row-host {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.row-more {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  font: inherit;
+  opacity: 0;
+  cursor: default;
+  transition: opacity var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+
+.row-host:hover .row-more,
+.row-host:focus-within .row-more,
+.row-more:focus-visible {
+  opacity: 1;
+}
+
+.row-more:hover {
+  background: rgba(127, 127, 127, 0.15);
+  color: var(--text);
+}
+
+.menu.row-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 200px;
+}
+
+.menu li button.danger {
+  color: color-mix(in srgb, var(--danger) 45%, var(--text));
+}
+
+.menu li button.danger:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.menu .rename {
+  width: 240px;
+  min-height: 30px;
+  margin: var(--s-1);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-small);
+  outline: none;
+}
+
+.menu .rename:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+.menu.row-menu > .menu-detail {
+  display: block;
+  padding: 0 var(--s-2) var(--s-1);
+}
+
+/* --- groups in the rail ---------------------------------------------------- */
+
+.group {
+  display: grid;
+  gap: 1px;
+}
+
+.group-row .chip {
+  color: var(--muted);
+}
+
+.group-members {
+  display: grid;
+  gap: 1px;
+  margin-left: var(--s-3);
+  padding-left: var(--s-2);
+  border-left: 1px solid var(--line-soft);
+}
+
+/* --- the group pane -------------------------------------------------------- */
+
+.group-pane {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.group-add {
+  margin-left: auto;
+}
+
+.group-add .act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  font-size: var(--t-micro);
+}
+
+.group-add .menu {
+  left: auto;
+  right: 0;
+}
+
+.group-prompt {
+  overflow: hidden;
+  font-size: var(--t-body);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.group-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: var(--s-3);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+}
+
+/* A card's size: a preset by flex basis, or exact pixels set inline when the
+   corner was dragged. Rows wrap around whatever mixture results. */
+.group-card {
+  position: relative;
+  display: grid;
+  flex: 1 1 300px;
+  max-width: 100%;
+  height: 420px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--content-deep);
+}
+
+.group-grid.dense .group-card {
+  height: 240px;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.group-grid.dense .group-card-facts {
+  display: none;
+}
+
+.group-card.size-wide {
+  flex-basis: 640px;
+}
+
+.group-card.size-large {
+  flex-basis: 640px;
+  height: 520px;
+}
+
+.group-grid.dense .group-card.size-large {
+  height: 500px;
+}
+
+.group-card.size-full {
+  flex-basis: 100%;
+  height: 520px;
+}
+
+.group-card.size-custom {
+  flex: none;
+}
+
+/* The grip: a corner that resizes. Faint until the card is hovered, so a wall
+   of cards is not a wall of handles. */
+.card-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  opacity: 0;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--line-strong) 50%, var(--line-strong) 60%, transparent 60%, transparent 75%, var(--line-strong) 75%, var(--line-strong) 85%, transparent 85%);
+  transition: opacity var(--fast) var(--ease);
+}
+
+.group-card:hover .card-grip {
+  opacity: 1;
+}
+
+body.resizing,
+body.resizing * {
+  cursor: nwse-resize !important;
+  user-select: none;
+}
+
+.card-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--s-1);
+}
+
+.group-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 34px;
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 8%, transparent);
+  color: var(--text);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  user-select: none;
+}
+
+.group-card-head .row-more {
+  opacity: 0.6;
+}
+
+.group-card:hover .group-card-head .row-more,
+.group-card-head .row-more:focus-visible {
+  opacity: 1;
+}
+
+.group-card-head .name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.group-card-head .state {
+  font-size: var(--t-micro);
+  font-weight: var(--w-normal);
+  color: var(--muted);
+}
+
+.group-card-facts {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.group-card-facts .branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono-font);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+}
+
+.summary {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3) var(--s-3);
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--text-2);
+}
+
+.summary-state {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.summary-state .quiet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A question on a card: the same component, tighter. */
+.summary-ask-approval {
+  min-height: 0;
+  overflow: auto;
+}
+
+.summary-ask-approval .approvals {
+  margin: 0;
+}
+
+.summary-ask-approval .approval {
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  font-family: var(--ui-font);
+}
+
+.summary-ask-approval .approval pre {
+  max-height: 80px;
+}
+
+.summary-ask-approval .approval .actions {
+  flex-wrap: wrap;
+}
+
+.summary-ask-approval .approval .feedback {
+  min-width: 120px;
+}
+
+.summary-state b {
+  font-weight: var(--w-semi);
+  color: var(--text);
+}
+
+.summary .quiet {
+  color: var(--faint);
+}
+
+.summary-said {
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--ui-font);
+  font-size: var(--t-small);
+  line-height: var(--lh);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+}
+
+.summary-ask {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+}
+
+.summary-ask .prompt-mark {
+  color: var(--agent-accent, var(--accent));
+}
+
+.summary-ask input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  outline: none;
+}
+
+.summary-ask input::placeholder {
+  color: var(--muted);
+}
+
+.summary-ask:focus-within {
+  border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, transparent);
+}
+
+.summary-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  color: var(--faint);
+}
+
+.summary-foot .branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 60%, var(--text-2));
+}
+
+.group-card-live {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+}
+
+.group-card-live .transcript {
+  padding: var(--s-2) var(--s-3);
+  gap: var(--s-2);
+  font-size: var(--t-small);
+}
+
+.group-card-live .row .text {
+  font-size: var(--t-small);
+}
+
+.group-card-term {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-host.compact .xterm {
+  padding: var(--s-1) var(--s-2);
+}
+
+.group-card-diff {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--s-2) var(--s-2);
+  scrollbar-color: rgba(127, 127, 127, 0.3) transparent;
+  scrollbar-width: thin;
+}
+
+.group-card-diff .diff-files {
+  padding: var(--s-2);
+}
+
+/* --- changes: landing bar over the diff ----------------------------------- */
+
+.changes {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.changes > .diff-files,
+.changes > .empty {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--s-4) var(--s-5);
+}
+
+.landing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  padding: var(--s-2) var(--s-5);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--glass-bar);
+}
+
+.landing-facts {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.landing-facts .branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono-font);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  cursor: default;
+}
+
+.landing-facts .branch:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.landing-facts .arrow {
+  color: var(--faint);
+}
+
+.landing-facts .base {
+  font-family: var(--mono-font);
+}
+
+.landing-facts .quiet,
+.group-head .quiet,
+.group-card-facts .quiet {
+  color: var(--faint);
+  font-size: var(--t-micro);
+}
+
+.landing-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.landing-acts .act {
+  min-height: 26px;
+  font-size: var(--t-micro);
+}
+
+/* --- the composer starts groups ------------------------------------------ */
+
+.start-many {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: var(--s-2);
+}
+
+.stepper {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-2);
+  place-items: center;
+  font: inherit;
+  cursor: default;
+}
+
+.stepper:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.12);
+  color: var(--text);
+}
+
+.stepper:disabled {
+  opacity: 0.4;
+}
+
+.stepper-count {
+  min-width: 56px;
+  text-align: center;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+  color: var(--text-2);
+}
+
+.agent-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  cursor: default;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.agent-pick:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.agent-pick.on {
+  border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, transparent);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 45%, var(--text));
+}
+
+.start-go .hint {
+  display: none;
+}
+
+/* --- first run ------------------------------------------------------------ */
+
+.firstrun {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.firstrun section {
+  display: grid;
+  align-content: start;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-3);
+  background: var(--glass-field);
+}
+
+.firstrun h2 {
+  margin: 0;
+  font-size: var(--t-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: var(--muted);
+}
+
+.firstrun ul {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.firstrun li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.firstrun li .quiet {
+  margin-left: auto;
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+.firstrun li code {
+  font-family: var(--mono-font);
+}
+
+.firstrun p {
+  margin: 0;
+  font-size: var(--t-small);
+  line-height: var(--lh);
+  color: var(--muted);
+}
+
+.firstrun .act {
+  justify-self: start;
+}
+
+.firstrun .quiet {
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
+/* --- polish: focus, hover, truncation -------------------------------------- */
+
+/* One focus treatment for every interactive thing that lacks its own. */
+button:focus-visible,
+[role="tab"]:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.tab-item .tab-sub {
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu {
+  min-width: 260px;
+}
+
+.transcript .row.tool pre {
+  max-height: 240px;
+  overflow: auto;
 }
 
 /* --- the palette ---------------------------------------------------------- */

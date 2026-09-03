@@ -135,3 +135,43 @@ export const IconHistory = (p: IconProps) => (
     <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6M8 5v3.2l2.2 1.3" />
   </Icon>
 );
+
+/** A corner with a diagonal: the card's size. */
+export const IconResize = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 13L13 3M13 8v5H8M3 8V3h5" />
+  </Icon>
+);
+
+/** Two arrows out of a corner: expand into its own tab. */
+export const IconExpand = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9.5 3h3.5v3.5M13 3l-4 4M6.5 13H3V9.5M3 13l4-4" />
+  </Icon>
+);
+
+/** Three dots: the row's menu. */
+export const IconMore = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="4" cy="8" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="8" r="1.1" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
+/** Settings: a slider pair rather than a cog, on this grid a cog is mud. */
+export const IconSettings = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 5h11M2.5 11h11" />
+    <circle cx="6" cy="5" r="1.75" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="11" r="1.75" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
+/** A window with its left column: the rail toggle. */
+export const IconRail = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
+    <path d="M6.5 3.5v9" />
+  </Icon>
+);

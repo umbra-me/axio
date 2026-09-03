@@ -21,9 +21,11 @@ use tauri::{Emitter, Manager, State};
 
 use crate::hosted::{HostedOutput, HostedView, StartHostedInput};
 use crate::model::{
-    AppError, ApprovalView, DecisionInput, ProjectView, SessionView, Snapshot, StartSessionInput,
-    TranscriptView,
+    AddToGroupInput, AppError, ApprovalView, DecisionInput, GroupStart, LandAction, LandOutcome,
+    LandingView, ProjectView, ProviderView, SessionView, Snapshot, StartGroupInput,
+    StartSessionInput, TranscriptView,
 };
+use crate::settings::{AppSettings, ModelDefault, SettingsView};
 use crate::state::AppState;
 
 type Shared<'a> = State<'a, AppState>;
@@ -153,9 +155,124 @@ pub async fn hosted_start(
     state: Shared<'_>,
     input: StartHostedInput,
 ) -> Result<HostedView, AppError> {
-    state.hosted.start_with_signal(input, move |id| {
-        let _ = app.emit("axio://hosted-activity", id);
-    })
+    state
+        .start_hosted(input, move |id| {
+            let _ = app.emit("axio://hosted-activity", id);
+        })
+        .await
+}
+
+/// Several agents on one prompt, each in a worktree of its own.
+#[tauri::command]
+pub async fn start_group(
+    app: tauri::AppHandle,
+    state: Shared<'_>,
+    input: StartGroupInput,
+) -> Result<GroupStart, AppError> {
+    state
+        .start_group(input, move |id| {
+            let _ = app.emit("axio://hosted-activity", id);
+        })
+        .await
+}
+
+/// One more member for a group.
+#[tauri::command]
+pub async fn add_to_group(
+    app: tauri::AppHandle,
+    state: Shared<'_>,
+    input: AddToGroupInput,
+) -> Result<GroupStart, AppError> {
+    state
+        .add_to_group(input, move |id| {
+            let _ = app.emit("axio://hosted-activity", id);
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn rename_session(
+    state: Shared<'_>,
+    session_id: String,
+    title: Option<String>,
+) -> Result<(), AppError> {
+    state.rename_session(&session_id, title)
+}
+
+#[tauri::command]
+pub async fn rename_hosted(
+    state: Shared<'_>,
+    id: String,
+    title: Option<String>,
+) -> Result<HostedView, AppError> {
+    state.hosted.rename(&id, title)
+}
+
+#[tauri::command]
+pub async fn hosted_diff(state: Shared<'_>, id: String) -> Result<String, AppError> {
+    state.hosted.diff(&id).await
+}
+
+/// Where a session's branch stands, and what can be done with it.
+#[tauri::command]
+pub async fn landing(state: Shared<'_>, session_id: String) -> Result<LandingView, AppError> {
+    state.landing(&session_id).await
+}
+
+#[tauri::command]
+pub async fn land(
+    state: Shared<'_>,
+    session_id: String,
+    action: LandAction,
+) -> Result<LandOutcome, AppError> {
+    state.land(&session_id, action).await
+}
+
+/// Every provider, and whether this machine can use it.
+#[tauri::command]
+pub async fn providers(state: Shared<'_>) -> Result<Vec<ProviderView>, AppError> {
+    Ok(state.providers(&axio::home()))
+}
+
+/// Show a path in the file manager, or open it in the configured editor.
+#[tauri::command]
+pub async fn reveal(state: Shared<'_>, path: String, editor: bool) -> Result<(), AppError> {
+    let command = if editor {
+        state
+            .settings_view()
+            .ok()
+            .map(|v| v.settings.editor)
+            .filter(|e| !e.trim().is_empty())
+            .or_else(|| Some("code".to_owned()))
+    } else {
+        None
+    };
+    crate::state::reveal(&path, command.as_deref())
+}
+
+// --- settings --------------------------------------------------------------
+
+#[tauri::command]
+pub async fn settings(state: Shared<'_>) -> Result<SettingsView, AppError> {
+    state.settings_view()
+}
+
+/// Save the window's settings, whole, and return what is now on disk.
+#[tauri::command]
+pub async fn save_settings(
+    state: Shared<'_>,
+    settings: AppSettings,
+) -> Result<SettingsView, AppError> {
+    state.save_settings(&settings)
+}
+
+/// Set the default model in axio's own configuration file.
+#[tauri::command]
+pub async fn set_default_model(
+    state: Shared<'_>,
+    model: ModelDefault,
+) -> Result<SettingsView, AppError> {
+    state.set_default_model(&model)
 }
 
 #[tauri::command]

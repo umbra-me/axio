@@ -3,7 +3,25 @@
 /**
  * A hosted agent, as a list row sees it.
  */
-export type HostedView = { id: string, harness: string, label: string, 
+export type HostedView = { id: string, harness: string, 
+/**
+ * What the harness is called — `Claude Code`. The same for every one.
+ */
+label: string, 
+/**
+ * What *this* one is called — `Claude Code 2` while a first is live. Two
+ * terminals with one name are two things a person cannot tell apart from
+ * the rail, which is the whole reason a rail lists them.
+ */
+name: string, 
+/**
+ * The branch its worktree is on, when it has one of its own.
+ */
+branch: string | null, 
+/**
+ * Started together with others; see `StartGroupInput`.
+ */
+group: string | null, 
 /**
  * The CSS custom property this harness is coloured with. Decided in Rust
  * beside the harness list, so a colour and the thing it identifies cannot

@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import type { HostedView, SessionView } from "./bridge";
-import { IconClose, IconPlus } from "./icons";
+import { IconClose } from "./icons";
 
 // What is open, across the top of the pane.
 //
@@ -7,7 +8,17 @@ import { IconClose, IconPlus } from "./icons";
 // it and stops nothing. Sessions and hosted terminals share the strip because
 // they share the pane, and a person switching between an agent's terminal and
 // their own session's diff should not have to remember which list it is in.
-export type Tab = { kind: "session"; id: string } | { kind: "terminal"; id: string };
+//
+// The strip is also the pane's toolbar. Whatever the front tab can be told to
+// do — show its changes, close its worktree, stop its terminal — arrives as
+// `tail` and sits at the right end of the same row, so a session costs one bar
+// of chrome rather than two saying the same name. With nothing open there is
+// nothing to look at and the strip is not drawn; the rail is how a tab opens.
+export type Tab =
+  | { kind: "session"; id: string }
+  | { kind: "terminal"; id: string }
+  /** Several members side by side; `id` is the group id they share. */
+  | { kind: "group"; id: string };
 
 export function tabKey(tab: Tab): string {
   return `${tab.kind}:${tab.id}`;
@@ -26,7 +37,7 @@ export function Tabs({
   unread,
   onActivate,
   onClose,
-  onNew,
+  tail,
 }: {
   tabs: Tab[];
   active: Tab | null;
@@ -38,67 +49,78 @@ export function Tabs({
   unread: Set<string>;
   onActivate: (tab: Tab) => void;
   onClose: (tab: Tab) => void;
-  onNew: () => void;
+  /** The front tab's controls, at the right end of the strip. */
+  tail?: ReactNode;
 }) {
+  if (tabs.length === 0) return null;
   return (
-    <div className="tabs-strip" role="tablist">
-      {tabs.map((tab, n) => {
-        const on = sameTab(tab, active);
-        let title = "";
-        let sub = "";
-        let dot = "closed";
-        let accent = "var(--accent)";
-        if (tab.kind === "session") {
-          const s = sessions.find((x) => x.id === tab.id);
-          title = s?.label ?? s?.shortId ?? tab.id;
-          sub = s?.projectName ?? "";
-          dot = s ? (s.open ? s.status : "closed") : "closed";
-          accent = s?.isolation === "direct" ? "var(--agent-pi)" : "var(--agent-axio)";
-        } else {
-          const h = hosted.find((x) => x.id === tab.id);
-          title = h?.label ?? tab.id;
-          sub = h?.cwd.split(/[\\/]/).filter(Boolean).pop() ?? "";
-          dot = h?.status === "running" ? "running" : "closed";
-          accent = h ? `var(${h.accentVar})` : accent;
-        }
-        const needs = tab.kind === "session" && attention.has(tab.id);
-        const fresh = tab.kind === "session" && unread.has(tab.id) && !on;
-        return (
-          <div
-            key={tabKey(tab)}
-            role="tab"
-            aria-selected={on}
-            tabIndex={0}
-            className={`tab-item${on ? " on" : ""}${needs ? " needs" : ""}${fresh ? " fresh" : ""}`}
-            style={{ ["--agent-accent" as string]: accent }}
-            title={`${title}${sub ? ` — ${sub}` : ""}  (${n < 9 ? `⌘${n + 1}` : ""})`}
-            onClick={() => onActivate(tab)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") onActivate(tab);
-            }}
-            onAuxClick={(e) => {
-              if (e.button === 1) onClose(tab);
-            }}
-          >
-            <span className={`dot ${needs ? "needs" : dot}`} />
-            <span className="tab-title">{title}</span>
-            {sub && <span className="tab-sub">{sub}</span>}
-            <button
-              className="tab-close"
-              aria-label={`Close tab ${title}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose(tab);
+    <div className="topbar">
+      <div className="tabs-strip" role="tablist">
+        {tabs.map((tab, n) => {
+          const on = sameTab(tab, active);
+          let title = "";
+          let sub = "";
+          let dot = "closed";
+          let accent = "var(--accent)";
+          if (tab.kind === "session") {
+            const s = sessions.find((x) => x.id === tab.id);
+            title = s?.title ?? s?.label ?? s?.shortId ?? tab.id;
+            sub = s?.projectName ?? "";
+            dot = s ? (s.open ? s.status : "closed") : "closed";
+            accent = s?.isolation === "direct" ? "var(--agent-pi)" : "var(--agent-axio)";
+          } else if (tab.kind === "group") {
+            const members = [
+              ...sessions.filter((s) => s.group === tab.id),
+              ...hosted.filter((h) => h.group === tab.id),
+            ];
+            const first = sessions.find((s) => s.group === tab.id);
+            title = first?.title ?? first?.label ?? "group";
+            sub = `${members.length} agent${members.length === 1 ? "" : "s"}`;
+            dot = members.some((m) => m.status === "running") ? "running" : "idle";
+          } else {
+            const h = hosted.find((x) => x.id === tab.id);
+            title = h?.name ?? tab.id;
+            sub = h?.branch ?? h?.cwd.split(/[\\/]/).filter(Boolean).pop() ?? "";
+            dot = h?.status === "running" ? "running" : "closed";
+            accent = h ? `var(${h.accentVar})` : accent;
+          }
+          const needs = tab.kind === "session" && attention.has(tab.id);
+          const fresh = tab.kind === "session" && unread.has(tab.id) && !on;
+          return (
+            <div
+              key={tabKey(tab)}
+              role="tab"
+              aria-selected={on}
+              tabIndex={0}
+              className={`tab-item${on ? " on" : ""}${needs ? " needs" : ""}${fresh ? " fresh" : ""}`}
+              style={{ ["--agent-accent" as string]: accent }}
+              title={`${title}${sub ? ` — ${sub}` : ""}${n < 9 ? `  (⌘${n + 1})` : ""}`}
+              onClick={() => onActivate(tab)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") onActivate(tab);
+              }}
+              onAuxClick={(e) => {
+                if (e.button === 1) onClose(tab);
               }}
             >
-              <IconClose size={11} />
-            </button>
-          </div>
-        );
-      })}
-      <button className="tab-new" onClick={onNew} title="New session" aria-label="New session">
-        <IconPlus size={13} />
-      </button>
+              <span className={`dot ${needs ? "needs" : dot}`} />
+              <span className="tab-title">{title}</span>
+              {sub && <span className="tab-sub">{sub}</span>}
+              <button
+                className="tab-close"
+                aria-label={`Close tab ${title}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(tab);
+                }}
+              >
+                <IconClose size={11} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {tail && <div className="topbar-tail">{tail}</div>}
     </div>
   );
 }

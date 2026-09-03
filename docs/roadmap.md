@@ -384,5 +384,5 @@ tripwire is the point: a deferral without one is just a backlog item.
 | A database for sessions | Measured `--list` latency above 200ms on a real machine. A sidecar index comes first |
 | Per-hunk edit approval | Three occasions of wanting to accept part of a diff |
 | Checkpoints and undo | Working outside a git repository becomes routine, or one bad turn destroys uncommitted work |
-| Subagents and multi-agent | Nothing in this horizon |
+| Subagents and multi-agent | A **group** now exists — several sessions and hosted agents started on one prompt, each in its own worktree, compared side by side — but it is a way of starting and looking, not orchestration. Agents talking to agents stays out until something needs it |
 | A local pre-push gate | A regression that plain CI would have caught reaches a release |
