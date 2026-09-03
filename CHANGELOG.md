@@ -9,6 +9,14 @@ a minor bump may break things.
 
 ### Changed
 
+- **The desktop window and the quota tray wear the family's colours.**
+  `axio-app` now ships the standard icon set — a geometric single-storey `a`
+  in the accent on the family's slate tile, generated from
+  `crates/axio-app/icons/source.svg` — where it had only a Windows `.ico`,
+  and `tauri.conf.json` lists the five files. The quota tray's ring gauge
+  stays a gauge and moves from amber to the accent the website and the
+  other products use.
+
 - **axio.sh now wears the desktop application's design system rather than the
   house one.** The site was built in the Umbra language with amber as its
   per-product hue, which was the right answer when the only surface was a

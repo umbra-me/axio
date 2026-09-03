@@ -4,9 +4,11 @@
 // regenerate. `node icons/make-icon.mjs` from the crate root.
 //
 // The mark is a ring: a quota is a gauge, and a ring reads as one at 16px where anything
-// with interior detail turns to mush. Amber is axio's accent (--accent #f59e0b in
-// the axio.sh website), and the ring is left open at the top-right so it does not read as a full
-// circle — a full ring at 100% would say the opposite of what the app is for.
+// with interior detail turns to mush. Periwinkle is axio's accent (--accent #7ba0ff on
+// the axio.sh website and in the family's brand marks), and the ring is left open at the
+// top-right so it does not read as a full circle — a full ring at 100% would say the
+// opposite of what the app is for. This is the one Axio surface that does not wear the
+// tile-and-glyph mark: a tray gauge has to be a gauge.
 
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -15,7 +17,7 @@ import { fileURLToPath } from "node:url";
 const SIZE = 32;
 const OUT = fileURLToPath(new URL("./icon.ico", import.meta.url));
 
-const ACCENT = { r: 0xf5, g: 0x9e, b: 0x0b };
+const ACCENT = { r: 0x7b, g: 0xa0, b: 0xff };
 const OUTER = SIZE / 2 - 1.5;
 const INNER = OUTER - 5;
 

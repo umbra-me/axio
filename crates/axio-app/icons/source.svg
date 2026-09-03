@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- The Axio mark. Source of truth: tools/brand/marks in the Axio workspace. -->
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141925"/>
+      <stop offset="1" stop-color="#0a0d13"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.32" cy="0.22" r="0.75">
+      <stop offset="0" stop-color="#7ba0ff" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#7ba0ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#ground)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#glow)"/>
+  <rect x="68" y="68" width="888" height="888" rx="196" fill="none" stroke="url(#lit)" stroke-width="8"/>
+  <svg x="248" y="248" width="528" height="528" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="11.6" cy="13" r="5.2" stroke="#7ba0ff" stroke-width="3"/>
+    <path d="M16.8 7.8v10.4" stroke="#7ba0ff" stroke-width="3"/>
+  </svg>
+</svg>
