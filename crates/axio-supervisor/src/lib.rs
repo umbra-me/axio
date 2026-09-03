@@ -52,6 +52,11 @@ pub mod worktree;
 pub use approval::{ApprovalQueue, PendingApproval, QueueApprover};
 pub use error::{Result, SupervisorError};
 pub use factory::{AgentFactory, AgentRequest};
+/// Run git the way the supervisor does — credentials stripped, no prompt — for
+/// a surface that lands work its own way. Landing itself stays out of this
+/// crate: merge, pull request and cherry-pick are workflows, and the surface
+/// that offers them owns the choice.
+pub use git::run as git;
 pub use index::{IndexEntry, SessionIndex};
 pub use project::{Project, ProjectId, Projects};
 pub use session::{SessionHandle, SessionStatus};

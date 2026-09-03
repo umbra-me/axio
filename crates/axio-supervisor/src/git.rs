@@ -50,7 +50,7 @@ fn is_stripped(key: &str) -> bool {
 /// A non-zero exit is an error carrying git's own stderr. Guessing at what a
 /// git failure meant is how a wrong diagnosis reaches the user; git already
 /// wrote a better one.
-pub(crate) async fn run(cwd: &Path, args: &[&str]) -> Result<String> {
+pub async fn run(cwd: &Path, args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("git");
     cmd.args(args)
         .current_dir(cwd)

@@ -53,6 +53,8 @@ pub struct StartOptions {
     pub resume: Option<SessionId>,
     /// The first prompt, for the session header's label.
     pub label: Option<String>,
+    /// Sessions started together. Recorded in the index and nowhere else.
+    pub group: Option<String>,
     /// Replayed onto this session's event stream after `SessionStarted`.
     pub notices: Vec<Notice>,
 }
@@ -110,27 +112,7 @@ impl Supervisor {
     /// someone actually makes.
     pub async fn start(&self, path: &Path, options: StartOptions) -> Result<SessionHandle> {
         let project = self.open_project(path).await?;
-
-        let isolation = options
-            .isolation
-            .unwrap_or(if self.config.worktree.enabled {
-                Isolation::Worktree
-            } else {
-                Isolation::Direct
-            });
-
-        let checkout = match isolation {
-            Isolation::Direct => Checkout::direct(&project),
-            Isolation::Worktree => {
-                Checkout::worktree(
-                    &project,
-                    &self.config.state_root.join("worktrees"),
-                    Ulid::generate(),
-                    &self.config.worktree.branch_prefix,
-                )
-                .await?
-            }
-        };
+        let checkout = self.checkout(&project, options.isolation).await?;
 
         match self.build(&project, checkout.clone(), &options).await {
             Ok(handle) => Ok(handle),
@@ -139,6 +121,39 @@ impl Supervisor {
                 // the branch would collide with nothing but still be there.
                 let _ = checkout.close(Disposition::Discard).await;
                 Err(e)
+            }
+        }
+    }
+
+    /// Somewhere to work in `project`: a fresh worktree on a fresh branch, or
+    /// the checkout as it sits when `Direct` is asked for.
+    ///
+    /// Public on its own because a session is not the only thing that wants
+    /// one. A hosted agent — another tool in a terminal this process owns —
+    /// wants the same isolation for the same reason, and cutting its worktree
+    /// here means the branch naming, the state root and the "no commits yet"
+    /// refusal are one implementation rather than two that drift. `None`
+    /// takes `[worktree]`'s default, exactly as a session does.
+    pub async fn checkout(
+        &self,
+        project: &Project,
+        isolation: Option<Isolation>,
+    ) -> Result<Checkout> {
+        let isolation = isolation.unwrap_or(if self.config.worktree.enabled {
+            Isolation::Worktree
+        } else {
+            Isolation::Direct
+        });
+        match isolation {
+            Isolation::Direct => Ok(Checkout::direct(project)),
+            Isolation::Worktree => {
+                Checkout::worktree(
+                    project,
+                    &self.config.state_root.join("worktrees"),
+                    Ulid::generate(),
+                    &self.config.worktree.branch_prefix,
+                )
+                .await
             }
         }
     }
@@ -185,6 +200,8 @@ impl Supervisor {
             branch: checkout.branch.clone(),
             isolation: checkout.isolation,
             label: options.label.clone(),
+            title: None,
+            group: options.group.clone(),
             started_ms: crate::approval::now_ms(),
             closed_ms: None,
             discarded: false,
@@ -259,6 +276,12 @@ impl Supervisor {
         self.lock_index()
             .record_closed(session, disposition == Disposition::Discard)?;
         Ok(())
+    }
+
+    /// Name a session, or un-name it. The first prompt stays as the label.
+    pub fn rename(&self, session: SessionId, title: Option<String>) -> Result<()> {
+        let title = title.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+        self.lock_index().record_renamed(session, title)
     }
 
     /// Interrupt whatever every session is doing, without closing any of them.

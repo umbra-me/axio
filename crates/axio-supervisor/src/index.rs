@@ -35,6 +35,15 @@ pub struct IndexEntry {
     pub branch: Option<String>,
     pub isolation: Isolation,
     pub label: Option<String>,
+    /// A name given later, by a person. Shown in place of the label when set;
+    /// the label stays what it was, because it records what was asked.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Sessions started together share one. A group is a fact about how they
+    /// began — one prompt, several agents — and nothing else: each member is a
+    /// whole session with its own worktree, approvals and transcript.
+    #[serde(default)]
+    pub group: Option<String>,
     pub started_ms: u64,
     /// Set when the session was closed. An open session is one with no closing
     /// record, which is also how a crashed one looks — correctly, since its
@@ -80,6 +89,10 @@ enum IndexRecord {
         session: SessionId,
         at_ms: u64,
         discarded: bool,
+    },
+    Renamed {
+        session: SessionId,
+        title: Option<String>,
     },
     /// Written by a later axio. Skipped, never fatal — the same forward
     /// compatibility the session format has.
@@ -132,6 +145,9 @@ impl SessionIndex {
                             at_ms,
                             discarded,
                         }) => index.mark_closed(session, at_ms, discarded),
+                        Ok(IndexRecord::Renamed { session, title }) => {
+                            index.mark_renamed(session, title)
+                        }
                         Ok(IndexRecord::Unknown) => {}
                         Err(e) => tracing::warn!("skipping a damaged index line: {e}"),
                     }
@@ -167,6 +183,14 @@ impl SessionIndex {
         {
             entry.closed_ms = Some(at_ms);
             entry.discarded = discarded;
+        }
+    }
+
+    fn mark_renamed(&mut self, session: SessionId, title: Option<String>) {
+        if let Some(&position) = self.at.get(&session)
+            && let Some(entry) = self.entries.get_mut(position)
+        {
+            entry.title = title;
         }
     }
 
@@ -208,6 +232,19 @@ impl SessionIndex {
             discarded,
         })?;
         self.mark_closed(session, at_ms, discarded);
+        Ok(())
+    }
+
+    /// Give a session a name, or take one away with `None`.
+    pub fn record_renamed(&mut self, session: SessionId, title: Option<String>) -> Result<()> {
+        if !self.at.contains_key(&session) {
+            return Err(SupervisorError::NoSuchSession(session));
+        }
+        self.append(&IndexRecord::Renamed {
+            session,
+            title: title.clone(),
+        })?;
+        self.mark_renamed(session, title);
         Ok(())
     }
 
@@ -258,6 +295,8 @@ mod tests {
             workspace: project.root.join("wt"),
             branch: Some("axio/x".into()),
             isolation: Isolation::Worktree,
+            title: None,
+            group: None,
             label: Some(label.to_owned()),
             started_ms: 1,
             closed_ms: None,
@@ -371,5 +410,35 @@ mod tests {
         let path = dir.path().join("index.jsonl");
         std::fs::write(&path, "{\"rec\":\"invented_later\",\"x\":1}\n").unwrap();
         assert!(SessionIndex::open(path).unwrap().all().is_empty());
+    }
+
+    /// A name is a record like any other: appended, applied, and read back.
+    #[test]
+    fn a_rename_is_recorded_and_survives_a_reload() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("index.jsonl");
+        let project = project("p");
+        let e = entry(&project, "first prompt");
+        {
+            let mut index = SessionIndex::open(path.clone()).expect("opened");
+            index.record_started(e.clone()).expect("recorded");
+            index
+                .record_renamed(e.session, Some("the auth refactor".into()))
+                .expect("renamed");
+            assert!(
+                index
+                    .record_renamed(SessionId::generate(), Some("x".into()))
+                    .is_err(),
+                "an unknown session cannot be named"
+            );
+        }
+        let index = SessionIndex::open(path).expect("reopened");
+        let got = index.get(e.session).expect("still there");
+        assert_eq!(got.title.as_deref(), Some("the auth refactor"));
+        assert_eq!(
+            got.label.as_deref(),
+            Some("first prompt"),
+            "the label is untouched"
+        );
     }
 }
