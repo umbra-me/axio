@@ -137,6 +137,15 @@ impl From<&str> for Redacted {
 mod tests {
     use super::*;
 
+    /// The registry is process-global, and two tests that `clear_secrets()`
+    /// around a registration race each other under the parallel runner —
+    /// one in three runs beside the rest of the workspace lost. Tests that
+    /// touch it take this first.
+    static REGISTRY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn registry() -> std::sync::MutexGuard<'static, ()> {
+        REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn scrubs_key_shape_in_display_debug_and_serde() {
         let r = Redacted::new("failed with key sk-ant-api03-AbCdEf123456_x-y and more");
@@ -158,6 +167,7 @@ mod tests {
 
     #[test]
     fn scrubs_a_registered_credential_by_value() {
+        let _hold = registry();
         clear_secrets();
         register_secret("hunter2-not-a-key-shape-at-all");
         let r = Redacted::new("Authorization: Bearer hunter2-not-a-key-shape-at-all");
@@ -167,6 +177,7 @@ mod tests {
 
     #[test]
     fn ignores_a_secret_too_short_to_register() {
+        let _hold = registry();
         clear_secrets();
         register_secret("abc");
         assert_eq!(scrub("abc def"), "abc def");
