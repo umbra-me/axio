@@ -11,6 +11,13 @@ pub(crate) const VERSION: &str =
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Open the desktop surface.
+    ///
+    /// Starts `axio-app` — the window binary built from this repository with
+    /// `cargo build --release -p axio-app --features app` — and returns. The
+    /// binary is looked for beside this one, then on PATH. A second launch
+    /// brings the already-open window forward rather than opening another.
+    App,
     /// Manage stored credentials.
     Auth {
         #[command(subcommand)]

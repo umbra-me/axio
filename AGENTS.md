@@ -20,6 +20,7 @@ axio cost --calendar | --wide | --cached            # shape; derived columns; sk
 curl -fsSL https://models.dev/api.json -o p.json && axio cost --import-prices p.json
 cargo build --release -p axio-app --features app                # the desktop surface
 npm --prefix crates/axio-app/ui run build                       # frontend, before that
+axio app                                                        # open it: beside the axio binary, then PATH
 npm --prefix crates/axio-app/ui run typecheck                   # the only step that checks TS types
 VITE_MOCK=1 VITE_MOCK_VIEW=session npm --prefix crates/axio-app/ui run build  # the window over mock.ts, no provider
 cargo test -p axio-app && git diff --exit-code crates/axio-app/ui/src/generated  # boundary drift

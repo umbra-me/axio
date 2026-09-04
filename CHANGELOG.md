@@ -7,6 +7,17 @@ a minor bump may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **`axio app` opens the desktop surface from the command line.** The window
+  used to be reachable only by starting its binary by hand; the command now
+  finds `axio-app` beside the running `axio` (then on `PATH`), starts it and
+  returns, so a turn in the terminal and the window are the same invocation
+  apart. The desktop build itself is unchanged: still the frontend under
+  `crates/axio-app/ui`, then `cargo build --release -p axio-app --features
+  app`. When the binary is not there, the command says so and names the two
+  lines that put it there.
+
 ### Changed
 
 - **The window has less chrome, and the chrome it has says one thing.** A

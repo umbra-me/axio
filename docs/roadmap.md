@@ -243,7 +243,10 @@ because a `beforeunload` listener does not fire for Alt+F4 or a taskbar close.
 And a real CSP is set rather than disabled.
 
 Tauri stays behind an `app` feature and is verified absent: `cargo tree -p axio`
-names neither `axio-app` nor `tauri`, so `cargo install axio` is untouched. The
+names neither `axio-app` nor `tauri`, so `cargo install axio` is untouched.
+`axio app` still opens the window from the command line: it finds the
+`axio-app` binary beside its own, then on `PATH`, starts it and returns, with
+the single-instance plugin turning a second launch into a focus. The
 state and boundary types sit *outside* that feature, which is what lets the
 whole surface behind the glass be unit-tested with no webview — and what stops
 state quietly migrating into the frontend.

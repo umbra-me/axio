@@ -34,6 +34,7 @@ pub fn home() -> PathBuf {
 mod input;
 mod surfaces;
 
+mod app_cmd;
 mod cli;
 mod credentials;
 // Only the interactive surface can switch provider mid-session, so only it
@@ -145,6 +146,9 @@ async fn run(cli: Cli, sandbox_notice: Option<Notice>) -> u8 {
         resolved.push_notice(notice);
     }
 
+    if let Some(Command::App) = &cli.command {
+        return app_cmd::app_command();
+    }
     if let Some(Command::Auth { action }) = &cli.command {
         return auth_command(action);
     }

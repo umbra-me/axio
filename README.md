@@ -98,6 +98,7 @@ axio --doctor                       # what axio can currently see, offline
 axio --probe                        # ask the model whether it accepts tools
 
 axio                                # interactive, if stdin is a terminal
+axio app                            # the desktop window, once it is built
                                     #   `/` opens the command menu
                                     #   `/status` what this session is set to do
                                     #   `/model NAME` change model mid-session
@@ -155,14 +156,16 @@ config or for one session at a time. Sections axio does not use are ignored — 
 touch, a file that belongs to something else.
 
 Supervised sessions are driven with `axio session start|list|diff|close`, or
-from the desktop window (`cargo build --release -p axio-app --features app`),
-which opens the same sessions as tabs beside terminals hosting other agents'
-tools — each in a worktree of its own, numbered when there are several — and
-answers their questions from one queue. One prompt can start a group of them,
-compared side by side; a session's branch is merged, pushed or turned into a
-pull request from above its diff. Neither surface can do something the
-other cannot; the window merely has a screen, and a settings dialog (`⌘,`) for
-its fonts, sizes and per-agent arguments, kept in `~/.axio/app.toml`.
+from the desktop window — `axio app` opens it once built, which takes
+`cargo build --release -p axio-app --features app` after the frontend under
+`crates/axio-app/ui`. It opens the same sessions as tabs beside terminals
+hosting other agents' tools — each in a worktree of its own, numbered when
+there are several — and answers their questions from one queue. One prompt can
+start a group of them, compared side by side; a session's branch is merged,
+pushed or turned into a pull request from above its diff. Neither surface can
+do something the other cannot; the window merely has a screen, and a settings
+dialog (`⌘,`) for its fonts, sizes and per-agent arguments, kept in
+`~/.axio/app.toml`.
 
 If the workspace root has an `AGENTS.md` — or a `CLAUDE.md`, when there is no
 `AGENTS.md` — axio reads it and tells the model those instructions describe this
