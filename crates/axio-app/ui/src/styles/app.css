@@ -237,10 +237,87 @@ body {
   flex: none;
 }
 
+/* The fold and the name are two controls in one heading: the chevron folds
+   the repository's threads away, the name opens everything running there
+   side by side. */
+.project > h2 .fold {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  margin-left: calc(var(--s-2) * -1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--faint);
+  place-items: center;
+  cursor: default;
+}
+
+.project > h2 .fold svg {
+  transition: transform var(--fast) var(--ease);
+  transform: rotate(90deg);
+}
+
+.project.folded > h2 .fold svg {
+  transform: rotate(0deg);
+}
+
+.project > h2 .fold:hover {
+  color: var(--text);
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.project > h2 .project-open {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  flex: 1;
+  padding: 3px var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.project > h2 .project-open:hover {
+  color: var(--text);
+  background: rgba(127, 127, 127, 0.1);
+}
+
+.project > h2 .project-open.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.project.folded > .sessions {
+  display: none;
+}
+
+.rail-empty.quiet-row {
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--t-micro);
+  color: var(--faint);
+}
+
 .project > h2 .name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The heading anchors the menu, not the `+`: a 240px list hung from a
+   button at the rail's right edge would run off its left. */
+.project > h2 {
+  position: relative;
+}
+
+.project > h2 .new-menu {
+  position: static;
+  flex: none;
 }
 
 .project > h2 .count {
@@ -403,6 +480,11 @@ body {
 }
 
 .pane {
+  /* Always the second row. The tab strip above it renders nothing when there
+     are no tabs, and without this the pane moved up into the strip's `auto`
+     row, was sized to its content, and the composer's `margin: auto` had no
+     free space to centre in. */
+  grid-row: 2;
   min-height: 0;
   overflow-y: auto;
   padding: var(--s-5);
@@ -411,7 +493,14 @@ body {
 }
 
 .pane.flush {
+  display: flex;
+  flex-direction: column;
   padding: 0;
+}
+
+.pane.flush .terminal-host {
+  flex: 1;
+  min-height: 0;
 }
 
 /* --- the first thing anyone sees ---------------------------------------- */
@@ -788,13 +877,6 @@ button.act:focus-visible {
 
 /* --- new session: the way to the composer ------------------------------- */
 
-.rail-add {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s-2);
-  margin: var(--s-3) var(--s-3) 0;
-}
-
 .new-menu {
   position: relative;
   display: grid;
@@ -835,6 +917,13 @@ button.act:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 70%, transparent);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text);
+}
+
+/* A menu dropped from a control at the right edge opens leftwards, so it
+   stays inside the rail. */
+.menu.right {
+  left: auto;
+  right: 0;
 }
 
 /* The dropped list floats over the rail, in the overlay material. */
@@ -970,6 +1059,27 @@ button.act:focus-visible {
   background: var(--content-deep);
 }
 
+/* An ended terminal's pane: what it was, and the two things to do about it,
+   above the last screen it painted. */
+.notice.terminal-ended {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  border-radius: 0;
+}
+
+.notice.terminal-ended span {
+  flex: 1;
+}
+
+.notice.terminal-ended .act {
+  flex: none;
+  min-height: 24px;
+  white-space: nowrap;
+  font-size: var(--t-micro);
+}
+
 .terminal-host .xterm {
   height: 100%;
   padding: var(--s-3) var(--s-3) var(--s-2);
@@ -977,17 +1087,15 @@ button.act:focus-visible {
 
 /* --- macOS: native controls at the left ----------------------------------- */
 
-/* The traffic lights are placed by `tauri.macos.conf.json` at x=14, and three
-   of them at their native spacing end around 70px. The wordmark starts after
-   that; the drawn controls are not rendered at all on this platform. */
-/* macOS keeps its own title bar height for an overlay title bar with the title
-   hidden: 22pt, with the lights centred in it. `trafficLightPosition` in the
-   Tauri config does nothing here — tao applies it from the content view's
-   `drawRect`, which a webview covering the view never triggers — so rather
-   than draw a 40px bar beside 22pt lights, the bar is 22px and the wordmark
-   row is sized to it. The three lights end at about 70pt. */
+/* The traffic lights are macOS's own, at macOS's own position: an overlay
+   title bar with the title hidden puts them centred about 15pt down and ending
+   about 60pt in. `trafficLightPosition` in the Tauri config does nothing here —
+   tao applies it from the content view's `drawRect`, which a webview covering
+   the view never triggers — so the bar is sized to the lights rather than the
+   lights moved to the bar: 30px, with the wordmark row centred in it and
+   starting after them. The drawn controls are not rendered on this platform. */
 .window.mac {
-  --titlebar: 22px;
+  --titlebar: 30px;
 }
 
 .window.mac .wordmark {
@@ -1023,7 +1131,7 @@ button.act:focus-visible {
   word-break: break-word;
 }
 
-.notice.dismissable button {
+.notice.dismissable button:not(.act) {
   display: grid;
   width: 22px;
   height: 22px;
@@ -1037,7 +1145,7 @@ button.act:focus-visible {
   opacity: 0.7;
 }
 
-.notice.dismissable button:hover {
+.notice.dismissable button:not(.act):hover {
   background: rgba(255, 255, 255, 0.1);
   opacity: 1;
 }
@@ -2281,7 +2389,9 @@ kbd {
 .group-pane {
   display: grid;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* Header, the cards, and the master box at the foot. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 
@@ -2374,6 +2484,356 @@ kbd {
 
 .group-card.size-custom {
   flex: none;
+}
+
+/* One terminal as the whole pane: the group's card, unsized and unrounded,
+   its body taking every row the pane has. */
+.group-card.solo {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.group-card.solo .group-card-term {
+  min-height: 0;
+  height: 100%;
+}
+
+.group-card.solo .group-card-facts .quiet {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.group-card.solo .hosted-chat {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Which changes the diff shows: all of them, or one turn's. */
+.turn-pick {
+  align-self: flex-start;
+  min-height: 26px;
+  margin: var(--s-2) var(--s-3) 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-micro);
+}
+
+.hosted-asks {
+  margin: var(--s-2) var(--s-3) 0;
+}
+
+.hosted-asks .approval-head code {
+  font-family: var(--mono-font);
+}
+
+.hosted-asks .approval-acts {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.terminal-plain {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The slash menu: the agent's own commands, above the box that types them.
+   Anchored to the box, opening upwards, since the box sits at the card's foot. */
+.summary-ask {
+  position: relative;
+}
+
+.slash-menu {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  bottom: calc(100% + var(--s-1));
+  left: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: var(--s-1);
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2);
+  background: var(--glass-raised);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.slash-menu li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  padding: 4px var(--s-2);
+  border-radius: var(--r-1);
+  font-size: var(--t-small);
+  cursor: default;
+}
+
+.slash-menu li code {
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+  color: var(--text);
+}
+
+.slash-menu li .quiet {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.slash-menu li.on,
+.slash-menu li:hover {
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+}
+
+/* The box in relay: a pill where the prompt mark was, saying where keys go. */
+.relay-pill {
+  flex: none;
+  padding: 2px var(--s-2);
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, transparent);
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 16%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-micro);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.summary-ask input.relaying {
+  caret-color: transparent;
+}
+
+/* --- split panes ---------------------------------------------------------- */
+
+/* The tree of splits fills the pane; each leaf is a card at the size its
+   split gives it, and the grid's fixed card sizes do not apply. */
+.group-split {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--s-2) var(--s-3) var(--s-3);
+}
+
+.lay-split {
+  display: flex;
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lay-split.lay-row {
+  flex-direction: row;
+}
+
+.lay-split.lay-col {
+  flex-direction: column;
+}
+
+.lay-side {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lay-divider {
+  flex: none;
+  background: transparent;
+  transition: background var(--fast) var(--ease);
+}
+
+.lay-split.lay-row > .lay-divider {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.lay-split.lay-col > .lay-divider {
+  height: 6px;
+  cursor: row-resize;
+}
+
+.lay-divider:hover {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+body.resizing-x,
+body.resizing-x * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+body.resizing-y,
+body.resizing-y * {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
+.lay-leaf {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lay-leaf > .group-card {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.lay-leaf .group-card-head[draggable="true"] {
+  cursor: grab;
+}
+
+/* Where a dragged card would land: the edge it would take, or the whole
+   card for a swap. */
+.drop-hint {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: var(--r-3);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.drop-hint.left {
+  right: 50%;
+}
+
+.drop-hint.right {
+  left: 50%;
+}
+
+.drop-hint.top {
+  bottom: 50%;
+}
+
+.drop-hint.bottom {
+  top: 50%;
+}
+
+/* The master box: one line to every listening member, at the pane's foot. */
+.master-ask {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+
+.master-ask input {
+  flex: 1;
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono-font);
+  font-size: var(--t-small);
+}
+
+.group-card-head .row-more.on {
+  opacity: 1;
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 60%, var(--text));
+}
+
+/* --- the plan under the composer ----------------------------------------- */
+
+.plan {
+  display: grid;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) var(--s-3);
+}
+
+.plan-toggle {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-micro);
+  cursor: default;
+}
+
+.plan-toggle:hover {
+  color: var(--text);
+}
+
+.plan-body {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.plan-spec {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.plan-spec input,
+.plan-row input,
+.plan-row select {
+  min-height: 26px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--glass-field);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono-font);
+  font-size: var(--t-micro);
+}
+
+.plan-spec input {
+  flex: 1;
+}
+
+.plan-spec .act {
+  min-height: 26px;
+  font-size: var(--t-micro);
+}
+
+.plan-error {
+  margin: 0;
+  font-size: var(--t-micro);
+  color: var(--danger);
+}
+
+.plan-rows {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.plan-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.2fr 0.7fr 0.8fr 1.4fr 52px 24px;
+  gap: var(--s-1);
+  align-items: center;
+}
+
+.plan-row input[type="number"] {
+  text-align: center;
 }
 
 /* The grip: a corner that resizes. Faint until the card is hovered, so a wall
@@ -2520,6 +2980,15 @@ body.resizing * {
 
 .summary .quiet {
   color: var(--faint);
+}
+
+/* The terminal inside a card, above the box that types into it. */
+.summary-term {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
 }
 
 .summary-said {
@@ -2734,6 +3203,34 @@ body.resizing * {
   font-family: var(--mono-font);
   font-size: var(--t-micro);
   color: var(--text-2);
+}
+
+/* A count of one agent: its stepper wears the agent's colour, so "2× Claude
+   Code" and "1× axio" read as two things rather than one number twice. */
+.agent-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--r-1);
+}
+
+.agent-count .stepper-count {
+  min-width: 0;
+  padding: 0 var(--s-1);
+  white-space: nowrap;
+}
+
+.agent-count.on {
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent)) 55%, transparent);
+  background: color-mix(in srgb, var(--agent-accent, var(--accent)) 12%, transparent);
+}
+
+.agent-count.on .stepper {
+  border-color: transparent;
+}
+
+.agent-count.on .stepper-count {
+  color: color-mix(in srgb, var(--agent-accent, var(--accent)) 45%, var(--text));
 }
 
 .agent-pick {

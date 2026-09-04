@@ -7,12 +7,12 @@ use std::sync::{Arc, Mutex};
 use axio_core::config::WorktreeSection;
 use axio_core::protocol::{ApprovalId, Decision, Event, Notice, SessionId};
 use tokio::sync::mpsc;
-use ulid::Ulid;
 
 use crate::approval::{ApprovalQueue, PendingApproval, QueueApprover, SessionSlot};
 use crate::error::{Result, SupervisorError};
 use crate::factory::{AgentFactory, AgentRequest};
 use crate::index::{IndexEntry, SessionIndex};
+use crate::names;
 use crate::project::{Project, ProjectId, Projects};
 use crate::session::{self, SessionHandle};
 use crate::worktree::{Checkout, Disposition, Isolation};
@@ -147,13 +147,35 @@ impl Supervisor {
         match isolation {
             Isolation::Direct => Ok(Checkout::direct(project)),
             Isolation::Worktree => {
-                Checkout::worktree(
-                    project,
-                    &self.config.state_root.join("worktrees"),
-                    Ulid::generate(),
-                    &self.config.worktree.branch_prefix,
-                )
-                .await
+                let root = self.config.state_root.join("worktrees");
+                let prefix = &self.config.worktree.branch_prefix;
+                // The repository's own setup wins over the user's default:
+                // a project knows what it needs better than a global does.
+                let setup = Checkout::project_setup(project)
+                    .or_else(|| Some(self.config.worktree.setup.clone()))
+                    .filter(|s| !s.trim().is_empty());
+                // Picked against what the repository has, then cut. Two
+                // sessions started in the same instant can pick the same
+                // name — the pick is not the cut — so a refusal from git is
+                // answered by picking again, not by failing the start.
+                let mut last = None;
+                for _ in 0..3 {
+                    let name =
+                        names::fresh(&project.root, &root.join(project.id.as_str()), prefix).await;
+                    match Checkout::worktree(project, &root, &name, prefix, setup.as_deref()).await
+                    {
+                        Err(SupervisorError::Git { message, .. })
+                            if message.contains("already exists") =>
+                        {
+                            last = Some(message);
+                        }
+                        other => return other,
+                    }
+                }
+                Err(SupervisorError::Git {
+                    args: "worktree add".to_owned(),
+                    message: last.unwrap_or_default(),
+                })
             }
         }
     }
@@ -282,6 +304,16 @@ impl Supervisor {
     pub fn rename(&self, session: SessionId, title: Option<String>) -> Result<()> {
         let title = title.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
         self.lock_index().record_renamed(session, title)
+    }
+
+    /// The first prompt of a session that started without one, as its label.
+    /// Nothing happens for a session that already has a label.
+    pub fn label(&self, session: SessionId, label: &str) -> Result<()> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Ok(());
+        }
+        self.lock_index().record_labelled(session, label.to_owned())
     }
 
     /// Interrupt whatever every session is doing, without closing any of them.
@@ -425,6 +457,14 @@ mod tests {
         let branch = handle.checkout.branch.clone().expect("a branch");
         assert!(branch.starts_with("axio/"));
         assert!(repo.has_branch(&branch).await);
+        // Named, not numbered: one of the 2,500 readable names, and the
+        // directory is called the same thing.
+        let name = branch.strip_prefix("axio/").unwrap();
+        assert!(
+            (0..names::COUNT).any(|i| names::name(i) == name),
+            "`{name}` is not one of the readable names"
+        );
+        assert_eq!(workspace.file_name().unwrap().to_str().unwrap(), name);
         // And the factory was handed that path, not the repository's.
         assert_eq!(factory.workspaces(), vec![workspace.clone()]);
     }

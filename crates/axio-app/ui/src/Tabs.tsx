@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { HostedView, SessionView } from "./bridge";
+import type { HostedView, SessionView, Snapshot } from "./bridge";
 import { IconClose } from "./icons";
 
 // What is open, across the top of the pane.
@@ -18,7 +18,9 @@ export type Tab =
   | { kind: "session"; id: string }
   | { kind: "terminal"; id: string }
   /** Several members side by side; `id` is the group id they share. */
-  | { kind: "group"; id: string };
+  | { kind: "group"; id: string }
+  /** Everything running in one repository, side by side; `id` is the project id. */
+  | { kind: "project"; id: string };
 
 export function tabKey(tab: Tab): string {
   return `${tab.kind}:${tab.id}`;
@@ -33,6 +35,7 @@ export function Tabs({
   active,
   sessions,
   hosted,
+  projects,
   attention,
   unread,
   onActivate,
@@ -43,6 +46,7 @@ export function Tabs({
   active: Tab | null;
   sessions: SessionView[];
   hosted: HostedView[];
+  projects: Snapshot["projects"];
   /** Session ids with a question waiting. */
   attention: Set<string>;
   /** Session ids that finished a turn while not being looked at. */
@@ -68,6 +72,15 @@ export function Tabs({
             sub = s?.projectName ?? "";
             dot = s ? (s.open ? s.status : "closed") : "closed";
             accent = s?.isolation === "direct" ? "var(--agent-pi)" : "var(--agent-axio)";
+          } else if (tab.kind === "project") {
+            const p = projects.find((x) => x.id === tab.id);
+            const members = [
+              ...sessions.filter((s) => s.projectId === tab.id && s.open),
+              ...hosted.filter((h) => p !== undefined && h.repo === p.root),
+            ];
+            title = p?.name ?? tab.id;
+            sub = `${members.length} agent${members.length === 1 ? "" : "s"}`;
+            dot = members.some((m) => m.status === "running") ? "running" : "idle";
           } else if (tab.kind === "group") {
             const members = [
               ...sessions.filter((s) => s.group === tab.id),
@@ -84,8 +97,8 @@ export function Tabs({
             dot = h?.status === "running" ? "running" : "closed";
             accent = h ? `var(${h.accentVar})` : accent;
           }
-          const needs = tab.kind === "session" && attention.has(tab.id);
-          const fresh = tab.kind === "session" && unread.has(tab.id) && !on;
+          const needs = (tab.kind === "session" || tab.kind === "terminal") && attention.has(tab.id);
+          const fresh = (tab.kind === "session" || tab.kind === "terminal") && unread.has(tab.id) && !on;
           return (
             <div
               key={tabKey(tab)}

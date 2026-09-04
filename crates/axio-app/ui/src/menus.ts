@@ -12,7 +12,11 @@ export type MenuHooks = {
   onChanged: () => void;
   onError: (message: string) => void;
   onCloseSession: (id: string, discard: boolean) => void;
+  /** Stop the process; the row stays, ended, and can be resumed. */
   onStopTerminal: (id: string) => void;
+  onResumeTerminal: (id: string) => void;
+  /** Stop if needed, and take the row out of the list. The worktree stays. */
+  onRemoveTerminal: (id: string) => void;
 };
 
 export function sessionMenu(s: SessionView, hooks: MenuHooks, lead: MenuItem[] = []): MenuItem[] {
@@ -58,7 +62,10 @@ export function hostedMenu(h: HostedView, hooks: MenuHooks, lead: MenuItem[] = [
     { kind: "action", title: "Copy path", run: () => copy(h.cwd) },
     ...(h.branch ? [{ kind: "action" as const, title: "Copy branch", run: () => copy(h.branch ?? "") }] : []),
     { kind: "rule" },
-    { kind: "action", title: `Stop ${h.name}`, danger: true, run: () => hooks.onStopTerminal(h.id) },
+    ...(h.status === "running"
+      ? [{ kind: "action" as const, title: `Stop ${h.name}`, run: () => hooks.onStopTerminal(h.id) }]
+      : [{ kind: "action" as const, title: `Resume ${h.name}`, run: () => hooks.onResumeTerminal(h.id) }]),
+    { kind: "action", title: "Remove from list", danger: true, run: () => hooks.onRemoveTerminal(h.id) },
   ];
 }
 

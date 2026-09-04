@@ -93,18 +93,43 @@ export function SessionPane({
   // ends, not per token: `git diff` on every delta would be the wrong kind of
   // live.
   const turns = transcript?.entries.filter((e) => e.kind === "turn").length ?? 0;
+  // Which changes: everything since the worktree was cut, or one turn's,
+  // between the checkpoints taken either side of it.
+  const [turnList, setTurnList] = useState<number[]>([]);
+  const [pickedTurn, setPickedTurn] = useState<number | null>(null);
   useEffect(() => {
     if (view !== "changes" && !split) return;
     let cancelled = false;
     setDiff(null);
     void api
-      .sessionDiff(session.id)
+      .sessionTurns(session.id)
+      .then((list) => !cancelled && setTurnList(list))
+      .catch(() => {});
+    const read = pickedTurn === null ? api.sessionDiff(session.id) : api.sessionTurnDiff(session.id, pickedTurn);
+    void read
       .then((text) => !cancelled && setDiff(text))
       .catch((e) => !cancelled && setDiff(`could not read that worktree\n\n${describe(e)}`));
     return () => {
       cancelled = true;
     };
-  }, [session.id, view, split, turns, session.status]);
+  }, [session.id, view, split, turns, session.status, pickedTurn]);
+  const turnPicker =
+    turnList.length > 0 ? (
+      <select
+        className="turn-pick"
+        value={pickedTurn ?? ""}
+        aria-label="Which changes to show"
+        title="All changes since the worktree was cut, or one turn's"
+        onChange={(e) => setPickedTurn(e.target.value === "" ? null : Number(e.target.value))}
+      >
+        <option value="">All changes</option>
+        {turnList.map((t) => (
+          <option key={t} value={t}>
+            Turn {t}
+          </option>
+        ))}
+      </select>
+    ) : null;
 
   const live = session.status !== "closed";
   const running = session.status === "running";
@@ -144,6 +169,7 @@ export function SessionPane({
             <Transcript view={transcript} />
             <div className="changes">
               <Landing session={session} refreshKey={`${turns}:${session.status}`} onError={onError} onNotice={onNotice} />
+              {turnPicker}
               <Diff text={diff} />
             </div>
           </>
@@ -152,6 +178,7 @@ export function SessionPane({
         ) : (
           <div className="changes">
             <Landing session={session} refreshKey={`${turns}:${session.status}`} onError={onError} onNotice={onNotice} />
+            {turnPicker}
             <Diff text={diff} />
           </div>
         )}

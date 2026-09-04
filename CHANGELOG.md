@@ -9,6 +9,181 @@ a minor bump may break things.
 
 ### Added
 
+- **Hosted agents report their own state, by their hooks.** Claude Code and
+  Codex are launched with hooks on their command line — `--settings` for
+  Claude Code, `-c notify=…` for Codex — that report to a loopback listener
+  the window runs, through one script under `~/.axio/hooks`. Nothing is
+  written into the person's own configuration and a session the window did
+  not start runs no hook. The rail, tabs and cards now say *needs you* when
+  an agent is blocked on a permission, *done* when its turn ended, and the
+  dock badge counts blocked agents with the questions waiting. Any other
+  tool can print `ESC ] 9999 ; {"status": …} BEL` and be understood the
+  same way. The quiet-timer mark stays as the fallback for tools with none.
+- **Resume is exact.** The hooks carry the tool's own session id, kept in
+  the journal; a resume passes `--resume <id>` to Claude Code and
+  `resume <id>` to Codex instead of "the most recent one in this directory".
+  Codex's notify names a thread that is not its session, so its id is read
+  from the rollout it writes under `~/.codex/sessions`, found by the
+  worktree it ran in — which also gives its chat view a transcript. A Codex
+  with no session known starts fresh in its worktree rather than resuming
+  "the last session anywhere", which `resume --last` means.
+- **A resumed process shows in the terminal that was already open.** An
+  emulator whose cursor is past the new process's output resets and reads
+  from the start, rather than showing the old screen forever.
+- **A terminal's chat view.** Once an agent has named its transcript, the
+  terminal's header menu offers *Its transcript, as a chat*: the agent's own
+  JSONL folded into the same rows a session shows, kept current as it writes.
+  Claude Code's transcript and Codex's rollout are both read.
+- **Codex through its own protocol.** *Codex, structured* in the plan (or
+  `codex-app` in the plan line) drives Codex through `codex app-server`
+  instead of a terminal: rows stream into the card as it works, and its
+  questions — run this command, make this edit — are answered from the
+  card with *Allow once*, *Allow this session* or *Deny*. Model, effort and
+  permission mode go as protocol fields. It resumes by thread id. The
+  terminal stays the way in for every other tool.
+- **A first prompt goes on the command line** for Claude Code and Codex,
+  which take one there and still open their interface; nothing is typed
+  into them after a quiet timer any more. Pi is still typed at.
+- **Permission mode in the plan.** A fifth column: *ask*, *edits*, *auto* or
+  *full*, mapped to each tool's own flags (`--permission-mode` and
+  `--dangerously-skip-permissions` for Claude Code, `-a`/`-s` and
+  `--full-auto` for Codex) and dropped where a tool has none.
+- **The window remembers how it was looking at things.** Layouts, card
+  sizes, each terminal's view and the open tabs are kept in
+  `~/.axio/window.json`, read field by field so one bad record costs only
+  itself, and restored once the first snapshot says what still exists.
+- **A setup command per repository.** `[worktree] setup = "pnpm install"` in
+  a repository's `.axio/config.toml` (or the user's, as a default) runs in
+  every fresh worktree before its agent starts; a failure fails the start
+  with the last lines it printed.
+- **Every turn has a checkpoint either side**, as hidden refs under
+  `refs/axio/checkpoints/<session>/<turn>/`, taken from a throwaway index
+  so the agent's own index is untouched and untracked files count. The
+  Changes view gains a picker: all changes, or one turn's.
+- **Reattach is clean.** A terminal read from the start — a fresh emulator
+  catching up — is stripped of the queries the program asked on its way up
+  (device attributes, cursor position, mode and colour queries), so the
+  emulator does not answer them all over again into the program's stdin.
+- **Notifications do not burst.** One within two seconds of another is
+  dropped.
+- **A terminal you stopped stays stopped.** Stopping one is a decision and
+  is remembered as one, so the next window lists it and waits to be asked;
+  only a terminal the window itself interrupted — by closing — comes back
+  running. The rail says *stopped* rather than *ended*, and its pane says it
+  will stay that way until you resume it.
+- **Remembered terminals come back running.** A new window resumes every
+  terminal the last one had, each in its own worktree with its tool asked
+  to continue, rather than listing them ended to be clicked one by one.
+  *On launch* in Settings › Terminal (`[terminal] resume_on_launch`) turns
+  that off. One whose directory is gone stays ended and says so.
+- **Hosted terminals survive the window.** What each terminal was — its
+  harness, worktree, branch, name, group and arguments — is journaled to
+  `~/.axio/terminals.json` as it changes, and the next window lists every one
+  of them, ended, where it was. **Resume** starts the tool again in the same
+  worktree and asks it to continue its own conversation (`claude --continue`,
+  `codex resume --last`, `pi --continue`; axio starts fresh there, since its
+  `--resume` wants an id). A process cannot outlive its owner; the work is a
+  directory and a branch, and those can. **Stop** now keeps the row — it is
+  the thing a resume needs — and **Remove from list** is the one that forgets.
+  The pane of an ended terminal says so above its last screen, with both.
+- **Every agent on the composer gets a count, and none is required.** The
+  start bar used to hold axio at one and offer the other agents as on-or-off
+  chips, so "two Claude Codes and no axio" could not be asked for; it could
+  only be reached by ticking Claude Code first and then stepping axio down,
+  which nobody found. Each agent now has its own stepper, axio included, from
+  zero to eight; Start counts the total.
+- **A terminal is a thread under its repository, and a repository opens side
+  by side.** Hosted terminals used to sit in a pile of their own at the bottom
+  of the rail, and only axio sessions were listed under the repository they
+  worked in. Every terminal now carries the repository its directory belongs
+  to, and the rail lists it there — with the sessions, inside its group when
+  it was started in one — each repository folding away on its chevron. The
+  repository's name folds and unfolds it; *Open side by side* on its menu,
+  or the palette, opens it as a tab — the same view a group gets, over
+  everything running in that repository whether it was started together or
+  not, with **Add** starting one more session or terminal there. Terminals
+  started somewhere no listed repository owns appear under *Elsewhere*,
+  which is drawn only when there are any.
+- **Terminals get the "done" mark too.** A hosted terminal that wrote while
+  it was not on screen is marked *new output* in the rail and its tab, the
+  way a session that finished a turn is marked *done*. The mark is set once
+  the output has been quiet for a moment, and clears when the terminal — or
+  the group or repository pane showing it — is in front.
+- **A session started without a prompt is labelled by its first.** It was
+  "(no prompt)" forever, whatever it was asked later. The first prompt sent
+  to it now becomes its label, written to the index as its own record so it
+  survives a restart; a session that had a label keeps it.
+- **A launch is a plan: models, effort, arguments, columns.** Under the
+  composer's steppers, *Plan* opens a row per member — agent, model,
+  reasoning effort, extra arguments, and the column it sits in — and one
+  line that writes the rows: `2x claude --model opus | codex -m gpt-5.4
+  --effort high, pi` is two Claude Codes stacked on the left and a Codex
+  over a Pi on the right. Models go to each tool as its own flag; effort
+  goes where a tool takes one on its command line (Codex) and is dropped,
+  not passed, elsewhere. The columns become the pane's layout.
+- **Split panes.** A group or repository pane can be laid out as a tree of
+  splits instead of a grid: *Split* in its header, then drag a card's
+  header onto another's edge to split it there, onto its middle to swap,
+  and drag the dividers. *Grid* goes back. The layout is the window's, per
+  pane, and follows members as they come and go.
+- **A master box, and cards that listen.** Every group and repository pane
+  has one box at its foot that types into every member at once — a session
+  gets it as a prompt, a terminal as a line — and every card has a listen
+  toggle in its header to take itself out.
+- **The card's box drives the agent's menus.** Sending a slash command puts
+  the box into relay: every key — arrows, Enter, Esc, letters to filter —
+  goes straight to the agent, so Pi's `/model` picker is filtered and chosen
+  from the box that opened it. A pill says so; Enter or Esc end relay (and
+  reach the agent), clicking the pill ends it silently. An empty box always
+  hands the steering keys through — arrows, Enter, Esc, Tab, Ctrl-letters —
+  while letters keep typing into it.
+- **A terminal's card is the terminal.** The card overview used to describe
+  the agent — "its own interface, typed below goes to its prompt" — and show
+  nothing of it. It now holds the agent's real interface, live, with every
+  menu and selection it draws: `/model` in Pi lists the models and the
+  arrows pick one, as in its own terminal. Our follow-up box sits under it,
+  and the two are the same prompt seen twice.
+- **The card's follow-up box knows the agent's slash commands.** Typing `/`
+  into it lists what that agent's own interface answers to — the built-in
+  set per harness, plus for Claude Code every `.claude/commands/*.md` and
+  `.claude/skills/*/SKILL.md` in the home directory and the repository —
+  filtered as you type, chosen with the arrows, Tab or Enter. What is sent is
+  typed into the agent's prompt and then, after a pause, submitted, so
+  `/model` opens the agent's own menu on the command and the Enter chooses
+  it; sent in one burst it was a paste, and a paste is not submitted.
+- **A terminal in its own tab is a card, or a terminal, or both.** It opens
+  as the card a group shows — state, a typed follow-up, the branch and
+  directory — filling the pane. Its header menu offers three views:
+  *Card overview*, *Terminal, with this header* (the real terminal for the
+  card's body), and *Plain terminal* (edge to edge, no chrome, as the tab
+  was before; right-click the terminal to get the menu back). The choice is
+  the terminal's own for as long as it is listed, and a new terminal opens
+  in the view `[terminal] view` names in `~/.axio/app.toml` — *Opens as* in
+  Settings › Terminal, `card` by default. Inside a group each terminal card
+  offers the first two, overriding the pane's Overview / Live switch for that
+  card alone.
+- **Adding goes where the thing is added.** The *New* and *Repository*
+  buttons above the list are gone. A repository is added from the `+` on the
+  *Repositories* heading, beside the closed-sessions toggle; work is started
+  from the `+` on the repository it is for, which drops the same menu *New*
+  had — a session or group in the composer, or an agent in a terminal — and
+  starts it in that repository rather than in whichever the composer last
+  had selected.
+- **Worktrees and branches have names you can read.** A session's branch was
+  its ULID — `axio/01k4grpc2q8…` — unique and unsayable, and a rail of them
+  was a rail of look-alikes. Each worktree is now `axio/<quality>-<thing>`
+  from two lists of fifty in the supervisor's `names` module: 2,500 names on
+  the umbra and iconoclast themes, `umbral-heretic`, `waning-comet`,
+  `unbowed-penumbra`. The name is picked, from a random start, among those no
+  branch of the repository already carries, and a collision between two
+  sessions started in the same instant is picked again rather than failed.
+  The ULID comes back only as a suffix once every name is in use.
+- **A start needs no prompt.** The composer used to refuse to start anything
+  until something was typed, which made "open two Claude Codes and work in
+  them" impossible from the window. Start is now enabled whenever there is
+  something to start: a session without a prompt starts and waits for its
+  first turn, a terminal opens with the tool at its own prompt, and one
+  terminal on its own opens as itself rather than as a group of one.
 - **`axio app` opens the desktop surface from the command line.** The window
   used to be reachable only by starting its binary by hand; the command now
   finds `axio-app` beside the running `axio` (then on `PATH`), starts it and
@@ -17,6 +192,25 @@ a minor bump may break things.
   `crates/axio-app/ui`, then `cargo build --release -p axio-app --features
   app`. When the binary is not there, the command says so and names the two
   lines that put it there.
+
+### Fixed
+
+- **The glass was not real on macOS.** A transparent window there sits behind
+  Tauri's `macOSPrivateApi` flag, and without it `transparent: true` is
+  ignored: the window under the stylesheet's glass tints was opaque, so the
+  surface came out flat black, and the vibrancy material the macOS overlay
+  named had nothing to show through. The flag is set and the matching cargo
+  feature is on the `tauri` dependency line, where `tauri-build` looks for it.
+- **The composer sat at the top of an empty pane.** The tab strip above it
+  renders nothing when there are no tabs, so the pane moved up into the
+  strip's `auto` grid row, was sized to its content, and the centring rule had
+  no room to work in. The pane is pinned to its own row; the composer is in
+  the middle of the page, as the stylesheet had said all along.
+- **The macOS traffic lights hung below the title bar.** The bar was 22px,
+  built on the belief that macOS centres the lights in a 22pt overlay bar; it
+  centres them about 15pt down, so they sat against the bar's bottom edge and
+  below the wordmark. The bar is 30px on macOS, sized to where the lights
+  actually are, since `trafficLightPosition` still does nothing there.
 
 ### Changed
 

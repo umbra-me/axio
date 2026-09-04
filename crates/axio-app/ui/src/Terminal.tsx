@@ -171,7 +171,15 @@ export function HostedTerminal({
       try {
         do {
           again = false;
-          const out = await api.hostedRead(session.id, cursor);
+          let out = await api.hostedRead(session.id, cursor);
+          // A cursor past the end means a new process is behind this row —
+          // resumed while this emulator stayed mounted. Its output starts
+          // at zero; so does this screen.
+          if (out.cursor < cursor) {
+            term.reset();
+            cursor = 0;
+            out = await api.hostedRead(session.id, 0);
+          }
           if (out.text) term.write(out.text);
           cursor = out.cursor;
         } while (again && !stopped);

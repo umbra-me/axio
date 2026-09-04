@@ -27,8 +27,38 @@ group: string | null,
  * beside the harness list, so a colour and the thing it identifies cannot
  * be two lists that disagree.
  */
-accentVar: string, cwd: string, status: string, 
+accentVar: string, cwd: string, 
+/**
+ * The repository its directory belongs to — the checkout itself when
+ * direct. What lists a terminal under its repository beside the
+ * sessions, rather than in a pile of its own.
+ */
+repo: string, status: string, 
 /**
  * Set only once it has stopped.
  */
-exitCode: number | null, };
+exitCode: number | null, 
+/**
+ * What the agent itself says it is doing, from its hooks or an in-band
+ * status sequence: `working`, `blocked` (waiting on a permission),
+ * `idle` (waiting on a prompt), `done`. `None` for a tool that has no
+ * way to say, and then a surface falls back to watching its output.
+ */
+agentStatus: string | null, 
+/**
+ * The tool's own session id, learned from its hooks, which makes a
+ * resume exact and its transcript readable.
+ */
+providerSession: string | null, 
+/**
+ * `pty` — the tool as itself in a terminal — or `app`: driven through
+ * its own structured protocol, with no terminal to draw.
+ */
+transport: string, 
+/**
+ * Stopped by a person, rather than by the window closing or the tool
+ * exiting on its own. A row that was stopped on purpose stays stopped:
+ * the next window lists it and waits to be asked, where one that was
+ * merely interrupted comes back running.
+ */
+stopped: boolean, };

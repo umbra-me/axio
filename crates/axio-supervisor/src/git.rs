@@ -51,6 +51,12 @@ fn is_stripped(key: &str) -> bool {
 /// git failure meant is how a wrong diagnosis reaches the user; git already
 /// wrote a better one.
 pub async fn run(cwd: &Path, args: &[&str]) -> Result<String> {
+    run_with(cwd, args, &[]).await
+}
+
+/// `run`, with extra environment — for a temporary index file, which is
+/// how a checkpoint is taken without touching the index the agent is using.
+pub async fn run_with(cwd: &Path, args: &[&str], extra: &[(&str, &str)]) -> Result<String> {
     let mut cmd = Command::new("git");
     cmd.args(args)
         .current_dir(cwd)
@@ -60,6 +66,9 @@ pub async fn run(cwd: &Path, args: &[&str]) -> Result<String> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     for (k, v) in env() {
+        cmd.env(k, v);
+    }
+    for (k, v) in extra {
         cmd.env(k, v);
     }
 

@@ -131,7 +131,10 @@ pub(crate) fn spawn(
 
     let task_cancel = Arc::clone(&cancel);
     let task_running = Arc::clone(&running);
+    let task_checkout = checkout.clone();
+    let session_key = session.to_string().to_lowercase();
     tokio::spawn(async move {
+        let mut turns = 0u32;
         while let Some(command) = rx.recv().await {
             match command {
                 SessionCommand::Turn { prompt, reply } => {
@@ -141,7 +144,16 @@ pub(crate) fn spawn(
                         .expect("the cancellation lock is never held across an await") =
                         token.clone();
                     task_running.store(true, Ordering::SeqCst);
+                    // A checkpoint either side, so "what did this turn
+                    // change" is a diff between two commits rather than a
+                    // guess from timestamps. Best effort: a checkpoint that
+                    // cannot be taken must not stop the turn.
+                    turns += 1;
+                    let _ = task_checkout
+                        .checkpoint(&session_key, turns, "before")
+                        .await;
                     let outcome = agent.run_turn(prompt, token).await;
+                    let _ = task_checkout.checkpoint(&session_key, turns, "after").await;
                     task_running.store(false, Ordering::SeqCst);
                     // A caller that stopped waiting is not a failure; the turn
                     // still happened and is still in the transcript.

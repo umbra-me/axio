@@ -9,7 +9,7 @@ import {
 import { RowMenu, type MenuItem } from "./RowMenu";
 import { label } from "./shortcuts";
 import { sameTab, type Tab } from "./Tabs";
-import { IconHistory, IconMore, IconPlus, IconRepo, IconStart, IconTerminal } from "./icons";
+import { IconHistory, IconMore, IconPlus, IconRepo, IconStart, IconTerminal, IconChevron } from "./icons";
 
 // The left column: what exists, grouped by repository, and the other agents.
 //
@@ -35,6 +35,8 @@ export function Rail({
   available,
   onStartTerminal,
   onStopTerminal,
+  onResumeTerminal,
+  onRemoveTerminal,
   onCloseSession,
   onChanged,
   onError,
@@ -45,12 +47,15 @@ export function Rail({
   attention: Set<string>;
   unread: Set<string>;
   onAddRepository: () => void;
-  onNew: () => void;
+  /** Go to the composer, for this repository when one is named. */
+  onNew: (root?: string) => void;
   onOpen: (tab: Tab) => void;
   hosted: HostedView[];
   available: HostedView[];
-  onStartTerminal: (harness: string, isolation: "worktree" | "direct") => void;
+  onStartTerminal: (harness: string, isolation: "worktree" | "direct", root?: string) => void;
   onStopTerminal: (id: string) => void;
+  onResumeTerminal: (id: string) => void;
+  onRemoveTerminal: (id: string) => void;
   onCloseSession: (id: string, discard: boolean) => void;
   /** Something the rail did changed the world; re-read it. */
   onChanged: () => void;
@@ -63,13 +68,23 @@ export function Rail({
   // still worth reading — but a rail that lists every session ever started
   // buries the three that are running under the forty that are not.
   const [history, setHistory] = useState(false);
+  // Folded repositories, by project id. A fold is a way of looking, kept by
+  // the window and not by anything the supervisor knows.
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const toggleFold = (id: string) =>
+    setFolded((f) => {
+      const next = new Set(f);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const sessions = (snapshot?.sessions ?? []).filter(
     (s) => history || s.open || sameTab(active, { kind: "session", id: s.id }),
   );
   const hidden = (snapshot?.sessions.length ?? 0) - sessions.length;
   const [menu, setMenu] = useState<{ items: MenuItem[]; at: { x: number; y: number } } | null>(null);
 
-  const hooks: MenuHooks = { onChanged, onError, onCloseSession, onStopTerminal };
+  const hooks: MenuHooks = { onChanged, onError, onCloseSession, onStopTerminal, onResumeTerminal, onRemoveTerminal };
   const sessionMenu = (s: SessionView) => buildSessionMenu(s, hooks);
   const hostedMenu = (h: HostedView) => buildHostedMenu(h, hooks);
   const projectMenu = (root: string) => buildProjectMenu(root, onError);
@@ -107,20 +122,30 @@ export function Rail({
 
   const hostedRow = (h: HostedView) => {
     const tab: Tab = { kind: "terminal", id: h.id };
+    const on = sameTab(active, tab);
+    const needs = attention.has(h.id);
+    const fresh = unread.has(h.id) && !on;
+    // The agent's own word first, the quiet-timer guess only for a tool
+    // that has none.
+    const chip = needs ? "needs you" : h.agentStatus === "done" && !on ? "done" : fresh ? "new output" : null;
     return (
       <div className="row-host" key={h.id} onContextMenu={(e) => openMenu(e, hostedMenu(h))}>
         <button
-          className={`session${sameTab(active, tab) ? " active" : ""}`}
+          className={`session${on ? " active" : ""}${fresh ? " fresh" : ""}${needs ? " needs" : ""}`}
           style={{ ["--agent-accent" as string]: `var(${h.accentVar})` }}
           onClick={() => onOpen(tab)}
           title={h.cwd}
         >
-          <span className={`dot ${h.status === "running" ? "running" : "closed"}`} />
+          <span className={`dot ${needs ? "needs" : h.status === "running" ? (h.agentStatus === "working" ? "running" : "idle") : "closed"}`} />
           <span className="label">
             {h.name}
             <em>{h.branch ?? h.cwd.split(/[\\/]/).filter(Boolean).pop() ?? ""}</em>
           </span>
-          {h.status !== "running" && <small>{h.status}</small>}
+          {chip ? (
+            <span className={`chip ${needs ? "needs-you" : "done"}`}>{chip}</span>
+          ) : (
+            h.status !== "running" && <small>{h.stopped ? "stopped" : h.status}</small>
+          )}
         </button>
         <button className="row-more" aria-label="More" onClick={(e) => openMenu(e, hostedMenu(h))}>
           <IconMore size={12} />
@@ -131,27 +156,15 @@ export function Rail({
 
   return (
     <nav className="rail">
-      {/* Two ways to add something, side by side: a place to work, and work.
-          "New" is a menu because the work can be an axio session or another
-          agent's tool in a terminal, and a row of launcher chips said the same
-          thing with more chrome. */}
-      <div className="rail-add">
-        <NewMenu
-          composing={active === null}
-          available={available}
-          onNew={onNew}
-          onStartTerminal={onStartTerminal}
-          defaultOpen={menuOpen}
-        />
-        <button className="rail-new" onClick={onAddRepository} title={`Add a repository  ${label("addRepository")}`}>
-          <IconPlus size={13} />
-          Repository
-        </button>
-      </div>
-
+      {/* Adding goes where the thing is added: a repository from the heading
+          of the list of them, work from the heading of the repository it is
+          for. Nothing above the list says "New" — the list is the place. */}
       <div className="rail-head">
         <span>Repositories</span>
         <span className="rail-tools">
+          <button className="rail-tool" onClick={onAddRepository} title={`Add a repository  ${label("addRepository")}`} aria-label="Add a repository">
+            <IconPlus size={13} />
+          </button>
           <button
             className={history ? "rail-tool on" : "rail-tool"}
             onClick={() => setHistory((h) => !h)}
@@ -166,20 +179,64 @@ export function Rail({
 
       <div className="rail-list">
         {projects.map((project) => {
+          // A repository holds every agent working in it, whichever kind:
+          // axio sessions, other agents' terminals, and the groups either
+          // started in. A terminal is a thread under its repository, not a
+          // pile of its own at the bottom.
           const mine = sessions.filter((s) => s.projectId === project.id);
-          const groups = [...new Set(mine.map((s) => s.group).filter((g): g is string => g !== null))];
+          const terms = hosted.filter((h) => h.repo === project.root);
+          const groups = [
+            ...new Set([...mine.map((s) => s.group), ...terms.map((h) => h.group)].filter((g): g is string => g !== null)),
+          ];
           const loose = mine.filter((s) => s.group === null);
+          const looseTerms = terms.filter((h) => h.group === null);
+          const live = project.openSessions + terms.filter((h) => h.status === "running").length;
+          const tab: Tab = { kind: "project", id: project.id };
+          const isFolded = folded.has(project.id);
           return (
-            <section className="project" key={project.id}>
-              <h2 title={project.root} onContextMenu={(e) => openMenu(e, projectMenu(project.root))}>
-                <IconRepo size={13} />
-                <span className="name">{project.name}</span>
-                <span className="count">{project.openSessions}</span>
+            <section className={`project${isFolded ? " folded" : ""}`} key={project.id}>
+              <h2
+                title={project.root}
+                onContextMenu={(e) =>
+                  openMenu(e, [
+                    { kind: "action", title: "Open side by side", run: () => onOpen(tab) },
+                    { kind: "rule" },
+                    ...projectMenu(project.root),
+                  ])
+                }
+              >
+                <button
+                  className="fold"
+                  aria-label={isFolded ? `Unfold ${project.name}` : `Fold ${project.name}`}
+                  aria-expanded={!isFolded}
+                  onClick={() => toggleFold(project.id)}
+                >
+                  <IconChevron size={11} />
+                </button>
+                {/* The name folds too: a heading that opens a pane when you
+                    meant to tidy the list is a heading that moves the view
+                    under you. Side by side is on the menu and in the palette. */}
+                <button
+                  className={`project-open${sameTab(active, tab) ? " active" : ""}`}
+                  title={project.root}
+                  onClick={() => toggleFold(project.id)}
+                >
+                  <IconRepo size={13} />
+                  <span className="name">{project.name}</span>
+                </button>
+                <span className="count">{live}</span>
+                <NewMenu
+                  root={project.root}
+                  available={available}
+                  onNew={onNew}
+                  onStartTerminal={onStartTerminal}
+                  defaultOpen={menuOpen && project === projects[0]}
+                />
               </h2>
               <div className="sessions">
                 {groups.map((g) => {
                   const members = mine.filter((s) => s.group === g);
-                  const terminals = hosted.filter((h) => h.group === g);
+                  const terminals = terms.filter((h) => h.group === g);
                   const tab: Tab = { kind: "group", id: g };
                   const on = sameTab(active, tab);
                   const needs = members.some((s) => attention.has(s.id));
@@ -205,6 +262,10 @@ export function Rail({
                   );
                 })}
                 {loose.map(sessionRow)}
+                {looseTerms.map(hostedRow)}
+                {mine.length === 0 && terms.length === 0 && (
+                  <p className="rail-empty quiet-row">Nothing here yet.</p>
+                )}
               </div>
             </section>
           );
@@ -220,23 +281,21 @@ export function Rail({
         )}
       </div>
 
-      {/* Other agents' own tools, each in a terminal axio owns. Listed apart
-          from supervised sessions on purpose: a hosted Claude Code is not an
-          axio session with a different colour — it has its own approvals,
-          its own history and its own idea of what a session is. Those in a
-          group are listed under it above, not here twice. */}
-      <div className="hosted">
-        <div className="rail-head">
-          <span>Terminals</span>
-          {hosted.length > 0 && <span className="count">{hosted.length}</span>}
-        </div>
-        {hosted.filter((h) => h.group === null).map(hostedRow)}
-        {hosted.length === 0 && (
-          <p className="rail-empty">
-            None running. <b>New</b> above starts one.
-          </p>
-        )}
-      </div>
+      {/* Terminals whose directory belongs to no repository listed above —
+          started directly somewhere else. Every other terminal is a thread
+          under its repository, with the sessions. */}
+      {(() => {
+        const elsewhere = hosted.filter((h) => !projects.some((p) => p.root === h.repo));
+        return elsewhere.length > 0 ? (
+          <div className="hosted">
+            <div className="rail-head">
+              <span>Elsewhere</span>
+              <span className="count">{elsewhere.length}</span>
+            </div>
+            {elsewhere.map(hostedRow)}
+          </div>
+        ) : null;
+      })()}
 
       {menu && <RowMenu items={menu.items} at={menu.at} onClose={() => setMenu(null)} />}
     </nav>
@@ -251,16 +310,17 @@ export function Rail({
 // executable is not on this machine is not offered, rather than offered and
 // failed.
 function NewMenu({
-  composing,
+  root,
   available,
   onNew,
   onStartTerminal,
   defaultOpen,
 }: {
-  composing: boolean;
+  /** The repository the menu starts things in. */
+  root: string;
   available: HostedView[];
-  onNew: () => void;
-  onStartTerminal: (harness: string, isolation: "worktree" | "direct") => void;
+  onNew: (root: string) => void;
+  onStartTerminal: (harness: string, isolation: "worktree" | "direct", root: string) => void;
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -286,23 +346,23 @@ function NewMenu({
   return (
     <div className="new-menu" ref={host}>
       <button
-        className={`rail-new primary${composing ? " on" : ""}`}
+        className={`rail-tool${open ? " on" : ""}`}
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`New session ${label("newSession")} · terminal ${label("newTerminal")}`}
+        aria-label="New session or terminal here"
+        title={`New here — session ${label("newSession")} · terminal ${label("newTerminal")}`}
       >
         <IconPlus size={13} />
-        New
       </button>
       {open && (
-        <ul className="menu" role="menu">
+        <ul className="menu right" role="menu">
           <li role="none">
             <button
               role="menuitem"
               onClick={() => {
                 setOpen(false);
-                onNew();
+                onNew(root);
               }}
             >
               <IconStart size={13} />
@@ -320,7 +380,7 @@ function NewMenu({
                 title={`${a.label} in a terminal, in its own worktree. Alt-click for the checkout itself.`}
                 onClick={(e) => {
                   setOpen(false);
-                  onStartTerminal(a.harness, e.altKey ? "direct" : "worktree");
+                  onStartTerminal(a.harness, e.altKey ? "direct" : "worktree", root);
                 }}
               >
                 <IconTerminal size={13} />

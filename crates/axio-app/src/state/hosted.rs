@@ -74,7 +74,25 @@ impl AppState {
                 }
             }
         };
+        if input.transport.as_deref() == Some("app") {
+            return self.hosted.start_app(input, place, on_activity).await;
+        }
         self.hosted.start_with_signal(input, place, on_activity)
+    }
+
+    /// Bring a stopped or remembered terminal back where it was. The pane
+    /// size is sent for the reason `StartHostedInput` gives: the tool paints
+    /// its opening screen at the size it is given, and that paint stays.
+    pub async fn resume_hosted(
+        &self,
+        id: &str,
+        rows: Option<u16>,
+        cols: Option<u16>,
+        on_activity: impl Fn(String) + Send + 'static,
+    ) -> Result<HostedView, AppError> {
+        self.hosted
+            .resume_with_signal(id, rows, cols, on_activity)
+            .await
     }
 
     /// Every provider axio knows, and whether this machine has a credential

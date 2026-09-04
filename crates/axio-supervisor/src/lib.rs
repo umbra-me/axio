@@ -44,6 +44,7 @@ mod factory;
 mod fixture;
 mod git;
 pub mod index;
+pub mod names;
 pub mod project;
 pub mod session;
 mod supervisor;

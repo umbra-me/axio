@@ -35,6 +35,9 @@ export type { ApprovalView } from "./generated/ApprovalView";
 export type { DecisionInput as Decision } from "./generated/DecisionInput";
 export type { HostedOutput } from "./generated/HostedOutput";
 export type { HostedView } from "./generated/HostedView";
+export type { SlashCommand } from "./generated/SlashCommand";
+export type { WindowState } from "./generated/WindowState";
+export type { HostedApproval } from "./generated/HostedApproval";
 export type { Isolation } from "./generated/Isolation";
 export type { PreviewView } from "./generated/PreviewView";
 export type { ProjectView } from "./generated/ProjectView";
@@ -63,6 +66,9 @@ import type { ApprovalView } from "./generated/ApprovalView";
 import type { DecisionInput } from "./generated/DecisionInput";
 import type { HostedOutput } from "./generated/HostedOutput";
 import type { HostedView } from "./generated/HostedView";
+import type { SlashCommand } from "./generated/SlashCommand";
+import type { WindowState } from "./generated/WindowState";
+import type { HostedApproval } from "./generated/HostedApproval";
 import type { ProjectView } from "./generated/ProjectView";
 import type { SessionView } from "./generated/SessionView";
 import type { Snapshot } from "./generated/Snapshot";
@@ -93,6 +99,9 @@ export const api = {
   // The native folder picker, opened by Rust. `null` means it was dismissed.
   addRepository: () => invoke<ProjectView | null>("add_repository"),
   cancelSession: (sessionId: string) => invoke<void>("cancel_session", { sessionId }),
+  /** Turns with a checkpoint either side, and what one of them changed. */
+  sessionTurns: (sessionId: string) => invoke<number[]>("session_turns", { sessionId }),
+  sessionTurnDiff: (sessionId: string, turn: number) => invoke<string>("session_turn_diff", { sessionId, turn }),
   closeSession: (sessionId: string, discard: boolean) =>
     invoke<void>("close_session", { sessionId, discard }),
   resolveApproval: (approvalId: string, decision: DecisionInput) =>
@@ -118,7 +127,25 @@ export const api = {
     invoke<void>("hosted_write", { id, data, submit }),
   hostedResize: (id: string, rows: number, cols: number) =>
     invoke<void>("hosted_resize", { id, rows, cols }),
+  /** How the window was looking at things when it last saved, and saving it. */
+  windowState: () => invoke<WindowState>("window_state"),
+  saveWindowState: (window: WindowState) => invoke<void>("save_window_state", { window }),
+  /** Type a line and submit it, paced so the agent treats it as typed. */
+  hostedSubmit: (id: string, text: string) => invoke<void>("hosted_submit", { id, text }),
+  /** A structured agent's questions, and answering one. */
+  hostedApprovals: (id: string) => invoke<HostedApproval[]>("hosted_approvals", { id }),
+  hostedDecide: (id: string, approval: string, decision: string) => invoke<void>("hosted_decide", { id, approval, decision }),
+  /** The agent's own transcript, from the file its hooks named. */
+  hostedTranscript: (id: string) => invoke<TranscriptView>("hosted_transcript", { id }),
+  /** The slash commands the terminal's agent answers to. */
+  hostedCommands: (id: string) => invoke<SlashCommand[]>("hosted_commands", { id }),
+  /** Stop and forget. The worktree stays. */
   hostedKill: (id: string) => invoke<void>("hosted_kill", { id }),
+  /** Stop and keep the row, ended, for a resume. */
+  hostedStop: (id: string) => invoke<void>("hosted_stop", { id }),
+  /** Start an ended or remembered terminal again in its own directory. */
+  hostedResume: (id: string, size: { rows: number; cols: number } | null = null) =>
+    invoke<HostedView>("hosted_resume", { id, rows: size?.rows ?? null, cols: size?.cols ?? null }),
 
   // Groups, names, landing, and the machine's own facts.
   startGroup: (input: StartGroupInput) => invoke<GroupStart>("start_group", { input }),

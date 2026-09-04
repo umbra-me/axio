@@ -88,6 +88,91 @@ impl Ring {
     }
 }
 
+/// `bytes` with every terminal *query* removed: the sequences a program
+/// sends to ask the terminal about itself — device attributes, cursor
+/// position, mode state, colours, the keyboard protocol, a DECRQSS. Replayed
+/// to a fresh emulator on reattach, each one would be answered again, and
+/// the answers would land on the program's stdin as keystrokes it did not
+/// ask for now. The live stream is not filtered: a live question deserves
+/// its answer.
+pub fn strip_queries(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b
+            && let Some(len) = query_len(&bytes[i..])
+        {
+            i += len;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// The length of the query sequence at the start of `s` (which begins with
+/// ESC), or `None` when it is not a query.
+fn query_len(s: &[u8]) -> Option<usize> {
+    let second = *s.get(1)?;
+    match second {
+        // CSI: parameters, then a final byte. Queries: `c` (DA1/DA2),
+        // `6n` (DSR), `?…$p` (DECRQM), `?u` (kitty keyboard query).
+        b'[' => {
+            let mut j = 2;
+            while j < s.len()
+                && (s[j].is_ascii_digit() || matches!(s[j], b';' | b'?' | b'>' | b'=' | b'$'))
+            {
+                j += 1;
+            }
+            let end = *s.get(j)?;
+            let params = &s[2..j];
+            let is_query = match end {
+                b'c' => true,
+                b'n' => params == b"6" || params == b"?6",
+                b'p' => params.starts_with(b"?") && params.ends_with(b"$"),
+                b'u' => params == b"?",
+                _ => false,
+            };
+            is_query.then_some(j + 1)
+        }
+        // OSC colour queries: `10;?`, `11;?`, `12;?`, `4;n;?`, ended by BEL or ST.
+        b']' => {
+            let body_end = s
+                .iter()
+                .position(|&b| b == 0x07)
+                .or_else(|| s.windows(2).position(|w| w == b"\x1b\\").map(|p| p + 1))?;
+            let body = &s[2..body_end];
+            let is_query = body.ends_with(b";?") && body.first().is_some_and(u8::is_ascii_digit);
+            is_query.then_some(body_end + 1)
+        }
+        // DCS `$q` (DECRQSS), ended by ST.
+        b'P' => {
+            if !s.get(2..4).is_some_and(|x| x == b"$q") {
+                return None;
+            }
+            let st = s.windows(2).position(|w| w == b"\x1b\\")?;
+            Some(st + 2)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::strip_queries;
+
+    #[test]
+    fn queries_go_and_everything_else_stays() {
+        let live = b"hello\x1b[31mred\x1b[0m \x1b[2J\x1b[H";
+        assert_eq!(strip_queries(live), live.to_vec());
+        let asked = b"a\x1b[cb\x1b[>0cc\x1b[6nd\x1b[?2026$pe\x1b[?uf\x1b]11;?\x07g\x1bP$qm\x1b\\h";
+        assert_eq!(strip_queries(asked), b"abcdefgh".to_vec());
+        // An unterminated sequence at the very end is kept as it is.
+        assert_eq!(strip_queries(b"x\x1b["), b"x\x1b[".to_vec());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

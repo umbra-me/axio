@@ -1,7 +1,8 @@
 //! Typing at a hosted agent on a person's behalf.
 //!
-//! Only one thing does this — a group handing its prompt to each member — and
-//! it is here rather than in `mod.rs` because the timing is the whole of it.
+//! Two things do this — a group handing its prompt to each member, and the
+//! card's follow-up box — and it is here rather than in `mod.rs` because the
+//! timing is the whole of it.
 
 use super::Hosted;
 use crate::model::AppError;
@@ -39,6 +40,26 @@ impl Hosted {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             let _ = session.write(text.as_bytes());
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            let _ = session.write(b"\r");
+        });
+        Ok(())
+    }
+
+    /// Type `text` and submit it, now, with the same pause before Enter.
+    ///
+    /// What the follow-up box does. The pause is what lets a slash command
+    /// work from outside the agent's interface: `/model` typed opens the
+    /// agent's own menu on the command, and the Enter that follows chooses
+    /// it — sent in the same burst, the text is a paste and the Enter is
+    /// lost, or lands before the menu has anything selected.
+    pub fn submit(&self, id: &str, text: String) -> Result<(), AppError> {
+        let session = self.get(id)?;
+        self.set_agent_status(id, "working");
+        session
+            .write(text.as_bytes())
+            .map_err(|e| AppError::Supervisor(e.to_string()))?;
+        tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(350)).await;
             let _ = session.write(b"\r");
         });

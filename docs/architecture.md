@@ -119,6 +119,18 @@ starting fails — falling back to the live checkout would hand an agent write
 access to the files someone is using, silently, at the moment isolation was most
 clearly wanted. `Isolation::Direct` exists and is chosen.
 
+A worktree is named, not numbered: two lists of fifty words make 2,500
+readable names, and one no branch of the repository carries is taken from a
+random start, so a rail of five agents reads as five things rather than five
+ULIDs. A repository may name a command to run in every fresh worktree before
+its agent starts — a dependency install, usually — and a failure there fails
+the start rather than handing an agent a half-made checkout.
+
+Every turn is bracketed by a checkpoint: a commit under a hidden ref, taken
+from a throwaway index so the agent's own index and working tree are
+untouched, which makes "what did this turn change" a diff between two commits
+rather than an inference from timestamps.
+
 Landing work is deliberately absent. Merging, pull requests and cherry-picking
 are workflows, and picking one would be wrong for the other two; the branch
 name, `status()` and `diff()` are what a caller needs to land it its own way.
@@ -245,17 +257,48 @@ supervisor's event stream, and every control on it (follow up, stop, close,
 answer a question, refuse with a note) is a command `axio session` already
 has. What the command line cannot offer is a terminal it does not already
 have, so the window also runs other agents' tools in pseudo-terminals it owns,
-listed beside its own sessions and never parsed — each in a worktree of its
-own, cut by the same supervisor code a session's is. Sessions and terminals
-open as tabs; a command palette and one table of chords reach everything; the
+each in a worktree of its own, cut by the same supervisor code a session's is.
+Sessions and terminals are listed under the repository they work in; both open
+as tabs; a command palette and one table of chords reach everything; the
 model's prose is rendered to elements rather than HTML.
+
+Their **output** is still never parsed — it is bytes on their way to an
+emulator — but the agents are asked to say what they are doing. Claude Code
+and Codex take hooks on their command line, per process, pointed at a loopback
+listener the window runs, so nothing is written into anyone's own
+configuration and a session the window did not start reports nothing. What
+comes back is four states — working, blocked on a permission, waiting for a
+prompt, done — plus the tool's own session id, which is what makes a resume
+exact and its transcript readable. A tool with no hooks can print the same
+thing as an in-band sequence, and one with neither falls back to the crude
+signal of having written something recently.
+
+One tool goes further: Codex can be driven through `codex app-server`, its own
+JSON-RPC, instead of a terminal. Then there is no screen to read at all —
+turns, messages, tool calls and approval requests arrive as structured events
+and fold into the same transcript rows a session uses, and its questions are
+answered from the card rather than typed into a prompt nobody is watching. The
+terminal stays the universal way in; this is the better way for the tool that
+offers one.
 
 One prompt can start a **group**: several sessions and hosted agents on one
 repository, each in its own worktree, tagged with one id the index records.
-The group's tab lays them side by side — summary cards with an inline
-follow-up, or each member whole, or every diff — and a card is resized by
-dragging its corner. The group is a way of starting and looking, not
-orchestration: closing, approving and landing stay per member.
+What starts is a plan — how many of each agent, on which model, at what
+effort, with what it may do without asking — and the plan's columns become the
+group's layout. The group's tab lays them side by side: cards with an inline
+follow-up, or each member whole, or every diff, in a grid or in a tree of
+split panes where a card is dragged onto another's edge. One box at the foot
+reaches every member that is listening. A repository has a tab of the same
+kind, over everything open in it, grouped or not. All of it is a way of
+starting and looking, not orchestration: closing, approving and landing stay
+per member.
+
+Where the window is *looking* is the window's to keep — the layouts, the card
+sizes, how each terminal is shown, the open tabs — and it keeps it in a file
+of its own, read back field by field so one unreadable record costs only
+itself. What is *running* is never restored from that file: it is read from
+the supervisor's index and from the terminal journal, because the process that
+owns the work owns the record of it.
 
 What the window adds that the command line does not have is deliberate and
 short: a settings file of its own (`~/.axio/app.toml`, fonts and sizes and

@@ -221,6 +221,22 @@ export function Settings({
                     onChange={(e) => patch("terminal", { scrollback: clamp(Number(e.target.value), 1000, 100000) })}
                   />
                 </Field>
+                <Field label="On launch" hint="Bring every remembered terminal back running, its tool asked to continue. Off, they wait for Resume.">
+                  <select
+                    value={draft.terminal.resumeOnLaunch ? "resume" : "wait"}
+                    onChange={(e) => patch("terminal", { resumeOnLaunch: e.target.value === "resume" })}
+                  >
+                    <option value="resume">Resume every terminal</option>
+                    <option value="wait">List them ended, resume by hand</option>
+                  </select>
+                </Field>
+                <Field label="Opens as" hint="How a terminal in its own tab is shown. Each terminal's header menu can change its own.">
+                  <select value={draft.terminal.view} onChange={(e) => patch("terminal", { view: e.target.value })}>
+                    <option value="card">Card overview</option>
+                    <option value="tui">Terminal, with the card's header</option>
+                    <option value="plain">Plain terminal</option>
+                  </select>
+                </Field>
               </>
             )}
 

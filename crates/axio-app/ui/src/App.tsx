@@ -4,13 +4,16 @@ import {
   api,
   describe,
   type HostedView,
+  type TerminalSettings,
   type ProviderView,
   type SessionView,
   type SettingsView,
   type Snapshot,
   listen,
 } from "./bridge";
-import { GroupPane, type CardSize } from "./GroupPane";
+import { GroupPane, type CardSize, type Scope, type TerminalView } from "./GroupPane";
+import { TerminalPane } from "./TerminalPane";
+import { EFFORTS, PERMISSIONS, formatPlan, fromColumns, memberTransport, parsePlan, type LayoutNode, type PlanMember } from "./layout";
 import { Approvals } from "./Approvals";
 import { CloseGuard, type Closing } from "./CloseGuard";
 import { Palette, type Command } from "./Palette";
@@ -19,7 +22,7 @@ import { SessionControls, type View } from "./SessionControls";
 import { SessionPane, type SessionMeta } from "./SessionPane";
 import { Settings, applyAppearance } from "./Settings";
 import { Tabs, sameTab, type Tab } from "./Tabs";
-import { HostedTerminal, paneSize } from "./Terminal";
+import { paneSize } from "./Terminal";
 import { isMac } from "./platform";
 import { actionFor, label } from "./shortcuts";
 import {
@@ -163,15 +166,32 @@ export default function App() {
   const open = useCallback((tab: Tab) => {
     setTabs((t) => (t.some((x) => sameTab(x, tab)) ? t : [...t, tab]));
     setActive(tab);
-    if (tab.kind === "session") {
-      setUnread((u) => {
-        if (!u.has(tab.id)) return u;
-        const next = new Set(u);
-        next.delete(tab.id);
-        return next;
-      });
-    }
   }, []);
+
+  // A terminal that wrote while nobody was looking is marked the way a
+  // session that finished is. Its signal fires per write, so the mark is set
+  // once the output has been quiet for a moment — the shape of a turn ending
+  // seen from outside — and only for a terminal that is not on screen.
+  const quiet = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const unlisten = listen<string>("axio://hosted-activity", (event) => {
+      const id = event.payload;
+      const pending = quiet.current.get(id);
+      if (pending !== undefined) window.clearTimeout(pending);
+      quiet.current.set(
+        id,
+        window.setTimeout(() => {
+          quiet.current.delete(id);
+          if (!onScreen.current.has(id)) setUnread((u) => (u.has(id) ? u : new Set([...u, id])));
+        }, 1500),
+      );
+    });
+    return () => {
+      void unlisten.then((off) => off());
+      for (const t of quiet.current.values()) window.clearTimeout(t);
+    };
+  }, []);
+
 
   const closeTab = useCallback(
     (tab: Tab) => {
@@ -206,9 +226,15 @@ export default function App() {
     if ((view === "session" || view === "bare") && first[0]) open({ kind: "session", id: first[0].id });
     if (view === "bare") setRailOpen(false);
     if (view === "settings") setSettingsOpen(true);
-    if (view === "group") {
+    if (view === "group" || view === "split") {
       const g = snapshot.sessions.find((s) => s.group !== null)?.group;
-      if (g) open({ kind: "group", id: g });
+      if (g) {
+        open({ kind: "group", id: g });
+        if (view === "split") {
+          const ids = [...snapshot.sessions.filter((s) => s.group === g).map((s) => s.id), ...hosted.filter((h) => h.group === g).map((h) => h.id)];
+          setLayouts({ [`group:${g}`]: fromColumns([ids.slice(0, 1), ids.slice(1)]) });
+        }
+      }
     }
     if (view === "changes" && first[1]) {
       open({ kind: "session", id: first[1].id });
@@ -232,9 +258,38 @@ export default function App() {
 
   const projects = snapshot?.projects ?? [];
   const chosen = projects.some((p) => p.root === repo) ? repo : (projects[0]?.root ?? "");
+
   const sessions = snapshot?.sessions ?? [];
   const approvals = snapshot?.approvals ?? [];
-  const attention = useMemo(() => new Set(approvals.map((a) => a.sessionId)), [approvals]);
+  // Who needs a person: a session with a question waiting, or a terminal
+  // whose agent said it is blocked on a permission.
+  const attention = useMemo(
+    () => new Set([...approvals.map((a) => a.sessionId), ...hosted.filter((h) => h.agentStatus === "blocked").map((h) => h.id)]),
+    [approvals, hosted],
+  );
+
+  // What the front tab shows: the member itself, or every member of the
+  // group or repository it lays out. Being shown is being read, so the marks
+  // on those clear as they are shown.
+  const onScreen = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const shown = new Set<string>();
+    if (active?.kind === "session" || active?.kind === "terminal") shown.add(active.id);
+    if (active?.kind === "group") {
+      for (const s of sessions) if (s.group === active.id) shown.add(s.id);
+      for (const h of hosted) if (h.group === active.id) shown.add(h.id);
+    }
+    if (active?.kind === "project") {
+      const root = projects.find((p) => p.id === active.id)?.root;
+      for (const s of sessions) if (s.projectId === active.id && s.open) shown.add(s.id);
+      for (const h of hosted) if (root !== undefined && h.repo === root) shown.add(h.id);
+    }
+    onScreen.current = shown;
+    setUnread((u) => {
+      if (![...u].some((id) => shown.has(id))) return u;
+      return new Set([...u].filter((id) => !shown.has(id)));
+    });
+  }, [active, sessions, hosted, projects]);
 
   const session = useMemo(
     () => (active?.kind === "session" ? (sessions.find((s) => s.id === active.id) ?? null) : null),
@@ -244,7 +299,14 @@ export default function App() {
     () => (active?.kind === "terminal" ? (hosted.find((h) => h.id === active.id) ?? null) : null),
     [hosted, active],
   );
-  const group = active?.kind === "group" ? active.id : null;
+  const scope = useMemo<Scope | null>(() => {
+    if (active?.kind === "group") return { kind: "group", id: active.id };
+    if (active?.kind === "project") {
+      const p = projects.find((x) => x.id === active.id);
+      return p ? { kind: "project", id: p.id, name: p.name } : null;
+    }
+    return null;
+  }, [active, projects]);
   useEffect(() => setMeta(null), [session?.id]);
 
   // --- actions ------------------------------------------------------------
@@ -262,8 +324,9 @@ export default function App() {
   }, [refresh]);
 
   const startTerminal = useCallback(
-    async (harness: string, isolation: "worktree" | "direct" = "worktree") => {
-      if (!chosen) {
+    async (harness: string, isolation: "worktree" | "direct" = "worktree", root?: string) => {
+      const where = root ?? chosen;
+      if (!where) {
         setNotice("add a repository first - a terminal needs somewhere to run");
         return;
       }
@@ -272,7 +335,7 @@ export default function App() {
         // harness paints its opening screen at the size it will actually have.
         const pane = document.querySelector(".pane");
         const size = pane ? paneSize(pane, settings?.settings.terminal ?? null) : null;
-        const h = await api.hostedStart(harness, chosen, isolation, "", size);
+        const h = await api.hostedStart(harness, where, isolation, "", size);
         await refresh();
         open({ kind: "terminal", id: h.id });
       } catch (e) {
@@ -295,7 +358,22 @@ export default function App() {
     [closeTab, refresh],
   );
 
+  // Stop keeps the row and the tab: an ended terminal is still a worktree
+  // and a branch, and the tab is where "resume" lives. Remove is the one
+  // that forgets it.
   const stopTerminal = useCallback(
+    async (id: string) => {
+      try {
+        await api.hostedStop(id);
+      } catch (e) {
+        setNotice(describe(e));
+      }
+      void refresh();
+    },
+    [refresh],
+  );
+
+  const removeTerminal = useCallback(
     async (id: string) => {
       try {
         await api.hostedKill(id);
@@ -306,6 +384,109 @@ export default function App() {
       void refresh();
     },
     [closeTab, refresh],
+  );
+
+  // Where each member of a group or repository pane sits, by scope key. A
+  // pane without one lays its cards out as a grid.
+  const [layouts, setLayouts] = useState<Record<string, LayoutNode | null>>({});
+
+
+  // Each terminal's own view — card, terminal under a header, or plain —
+  // once it has chosen one; before that, the settings' default.
+  const [termViews, setTermViews] = useState<Record<string, TerminalView>>({});
+  const viewOf = (id: string): TerminalView => {
+    const chosen = termViews[id];
+    if (chosen) return chosen;
+    const d = settings?.settings.terminal.view;
+    return d === "tui" || d === "plain" ? d : "card";
+  };
+
+  // How the window was looking at things is the window's to keep: layouts,
+  // sizes, each terminal's view, the tabs. Read once, before the first
+  // snapshot is acted on; written whole, a moment after any of it changes.
+  // Rust holds the file; the webview never keeps this in its own storage.
+  const restored = useRef(false);
+  const [restoredTabs, setRestoredTabs] = useState<{ tabs: Tab[]; active: Tab | null } | null>(null);
+  useEffect(() => {
+    if (MOCK) {
+      restored.current = true;
+      return;
+    }
+    void api
+      .windowState()
+      .then((w) => {
+        setLayouts(w.layouts as Record<string, LayoutNode | null>);
+        setCardSizes(w.cardSizes as Record<string, CardSize>);
+        setTermViews(w.terminalViews as Record<string, TerminalView>);
+        const parse = (key: string): Tab | null => {
+          const at = key.indexOf(":");
+          const kind = key.slice(0, at);
+          const id = key.slice(at + 1);
+          return kind === "session" || kind === "terminal" || kind === "group" || kind === "project" ? { kind, id } : null;
+        };
+        setRestoredTabs({
+          tabs: w.tabs.map(parse).filter((t): t is Tab => t !== null),
+          active: w.active ? parse(w.active) : null,
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        restored.current = true;
+      });
+  }, []);
+
+  // The remembered tabs come back once the first snapshot says what still
+  // exists; a tab for something gone is not restored.
+  useEffect(() => {
+    if (!restoredTabs || !snapshot) return;
+    const exists = (t: Tab) =>
+      t.kind === "session"
+        ? snapshot.sessions.some((s) => s.id === t.id)
+        : t.kind === "terminal"
+          ? hosted.some((h) => h.id === t.id)
+          : t.kind === "group"
+            ? snapshot.sessions.some((s) => s.group === t.id) || hosted.some((h) => h.group === t.id)
+            : snapshot.projects.some((p) => p.id === t.id);
+    const kept = restoredTabs.tabs.filter(exists);
+    setTabs((t) => (t.length === 0 ? kept : t));
+    if (restoredTabs.active && kept.some((k) => sameTab(k, restoredTabs.active))) setActive(restoredTabs.active);
+    setRestoredTabs(null);
+  }, [restoredTabs, snapshot, hosted]);
+
+  // Saved a moment after anything the window remembers changes.
+  useEffect(() => {
+    if (MOCK || !restored.current) return;
+    const timer = window.setTimeout(() => {
+      void api
+        .saveWindowState({
+          layouts,
+          cardSizes,
+          terminalViews: termViews,
+          tabs: tabs.map((t) => `${t.kind}:${t.id}`),
+          active: active ? `${active.kind}:${active.id}` : null,
+        })
+        .catch(() => {});
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [layouts, cardSizes, termViews, tabs, active]);
+
+  // Counted per id so the emulator remounts on a resume — a new process is a
+  // new stream — and not on an exit, where the last screen is worth reading.
+  const [resumes, setResumes] = useState<Record<string, number>>({});
+  const resumeTerminal = useCallback(
+    async (id: string) => {
+      try {
+        const pane = document.querySelector(".pane");
+        const size = pane ? paneSize(pane, settings?.settings.terminal ?? null) : null;
+        await api.hostedResume(id, size);
+        setResumes((r) => ({ ...r, [id]: (r[id] ?? 0) + 1 }));
+        await refresh();
+        open({ kind: "terminal", id });
+      } catch (e) {
+        setNotice(describe(e));
+      }
+    },
+    [open, refresh, settings],
   );
 
   // --- the keyboard -------------------------------------------------------
@@ -446,6 +627,15 @@ export default function App() {
         });
       }
     }
+    for (const p of projects) {
+      out.push({
+        id: `project:${p.id}`,
+        group: "Repositories",
+        title: `Side by side: ${p.name}`,
+        detail: "everything running there, as cards",
+        run: () => open({ kind: "project", id: p.id }),
+      });
+    }
     for (const h of hosted) {
       out.push({
         id: `hosted:${h.id}`,
@@ -454,9 +644,18 @@ export default function App() {
         detail: `${h.branch ?? h.cwd.split(/[\\/]/).filter(Boolean).pop() ?? ""} · ${h.status === "running" ? "live" : h.status}`,
         run: () => open({ kind: "terminal", id: h.id }),
       });
+      if (h.status !== "running") {
+        out.push({
+          id: `resume:${h.id}`,
+          group: "Terminals",
+          title: `Resume: ${h.name}`,
+          detail: h.branch ?? h.cwd,
+          run: () => void resumeTerminal(h.id),
+        });
+      }
     }
     return out;
-  }, [available, split, railOpen, view, session, active, sessions, hosted, attention, addRepository, startTerminal, closeTab, open, refresh]);
+  }, [available, split, railOpen, view, session, active, sessions, hosted, projects, attention, addRepository, startTerminal, resumeTerminal, closeTab, open, refresh]);
 
   const running = sessions.filter((s) => s.status === "running").length;
 
@@ -476,12 +675,17 @@ export default function App() {
           attention={attention}
           unread={unread}
           onAddRepository={() => void addRepository()}
-          onNew={() => setActive(null)}
+          onNew={(root) => {
+            if (root) setRepo(root);
+            setActive(null);
+          }}
           onOpen={open}
           hosted={hosted}
           available={available}
-          onStartTerminal={(harness, isolation) => void startTerminal(harness, isolation)}
+          onStartTerminal={(harness, isolation, root) => void startTerminal(harness, isolation, root)}
           onStopTerminal={(id) => void stopTerminal(id)}
+          onResumeTerminal={(id) => void resumeTerminal(id)}
+          onRemoveTerminal={(id) => void removeTerminal(id)}
           onCloseSession={(id, discard) => void closeSession(id, discard)}
           onChanged={() => void refresh()}
           onError={setNotice}
@@ -494,6 +698,7 @@ export default function App() {
             active={active}
             sessions={sessions}
             hosted={hosted}
+            projects={projects}
             attention={attention}
             unread={unread}
             onActivate={open}
@@ -512,7 +717,7 @@ export default function App() {
                   }}
                   onError={setNotice}
                 />
-              ) : liveTerminal ? (
+              ) : liveTerminal?.status === "running" ? (
                 <button
                   className="act danger"
                   onClick={() => void stopTerminal(liveTerminal.id)}
@@ -521,6 +726,15 @@ export default function App() {
                   <IconStop size={12} />
                   Stop
                 </button>
+              ) : liveTerminal ? (
+                <button
+                  className="act primary"
+                  onClick={() => void resumeTerminal(liveTerminal.id)}
+                  title={`Start ${liveTerminal.name} again in ${liveTerminal.cwd}`}
+                >
+                  <IconSend size={12} />
+                  Resume
+                </button>
               ) : null
             }
           />
@@ -528,7 +742,7 @@ export default function App() {
           {/* A terminal is somebody's live interface and owns the pane edge to
               edge; a session pane manages its own scrolling; the composer is a
               document and gets the reading margin. */}
-          <div className={liveTerminal ? "pane flush" : session || group ? "pane session-pane" : "pane opening-pane"}>
+          <div className={liveTerminal ? "pane flush" : session || scope ? "pane session-pane" : "pane opening-pane"}>
             {snapshot?.unavailable && (
               <p className="notice">Sessions are unavailable: {snapshot.unavailable}</p>
             )}
@@ -543,11 +757,28 @@ export default function App() {
             )}
 
             {liveTerminal ? (
-              <HostedTerminal key={liveTerminal.id} session={liveTerminal} terminal={settings?.settings.terminal ?? null} />
-            ) : group ? (
+              <TerminalPane
+                key={liveTerminal.id}
+                terminal={liveTerminal}
+                view={viewOf(liveTerminal.id)}
+                settings={settings?.settings.terminal ?? null}
+                resumeKey={resumes[liveTerminal.id] ?? 0}
+                hooks={{
+                  onChanged: () => void refresh(),
+                  onError: setNotice,
+                  onCloseSession: (id, discard) => void closeSession(id, discard),
+                  onStopTerminal: (id) => void stopTerminal(id),
+                  onResumeTerminal: (id) => void resumeTerminal(id),
+                  onRemoveTerminal: (id) => void removeTerminal(id),
+                }}
+                onView={(v) => setTermViews((t) => ({ ...t, [liveTerminal.id]: v }))}
+                onResume={() => void resumeTerminal(liveTerminal.id)}
+                onRemove={() => void removeTerminal(liveTerminal.id)}
+              />
+            ) : scope ? (
               <GroupPane
-                key={group}
-                group={group}
+                key={`${scope.kind}:${scope.id}`}
+                scope={scope}
                 sessions={sessions}
                 hosted={hosted}
                 attention={attention}
@@ -555,17 +786,27 @@ export default function App() {
                 terminal={settings?.settings.terminal ?? null}
                 available={available}
                 projectRoot={
-                  projects.find((p) => p.id === sessions.find((s) => s.group === group)?.projectId)?.root ??
-                  hosted.find((h) => h.group === group)?.cwd ??
-                  null
+                  scope.kind === "project"
+                    ? (projects.find((p) => p.id === scope.id)?.root ?? null)
+                    : (projects.find((p) => p.id === sessions.find((s) => s.group === scope.id)?.projectId)?.root ??
+                      hosted.find((h) => h.group === scope.id)?.repo ??
+                      null)
                 }
                 onOpen={open}
                 onChanged={() => void refresh()}
                 onError={setNotice}
                 onCloseSession={(id, discard) => void closeSession(id, discard)}
                 onStopTerminal={(id) => void stopTerminal(id)}
+                onResumeTerminal={(id) => void resumeTerminal(id)}
+                onRemoveTerminal={(id) => void removeTerminal(id)}
                 sizes={cardSizes}
                 onSize={(id, size) => setCardSizes((s) => ({ ...s, [id]: size }))}
+                layout={layouts[`${scope.kind}:${scope.id}`] ?? null}
+                onLayout={(node) => setLayouts((l) => ({ ...l, [`${scope.kind}:${scope.id}`]: node }))}
+                views={Object.fromEntries(
+                  Object.entries(termViews).map(([id, v]) => [id, v === "plain" ? "tui" : v]),
+                ) as Record<string, TerminalView>}
+                onView={(id, v) => setTermViews((t) => ({ ...t, [id]: v }))}
               />
             ) : session ? (
               <SessionPane
@@ -589,9 +830,11 @@ export default function App() {
                   repo={chosen}
                   providers={providers}
                   available={available}
+                  terminal={settings?.settings.terminal ?? null}
                   onRepoChange={setRepo}
                   onAddRepository={() => void addRepository()}
-                  onStarted={(tab) => {
+                  onStarted={(tab, layout) => {
+                    if (layout !== undefined) setLayouts((l) => ({ ...l, [`${tab.kind}:${tab.id}`]: layout }));
                     open(tab);
                     void refresh();
                   }}
@@ -717,6 +960,7 @@ function Opening({
   repo,
   providers,
   available,
+  terminal,
   onRepoChange,
   onAddRepository,
   onStarted,
@@ -727,31 +971,102 @@ function Opening({
   repo: string;
   providers: ProviderView[];
   available: HostedView[];
+  /** For sizing a terminal started from here before it opens. */
+  terminal: TerminalSettings | null;
   onRepoChange: (root: string) => void;
   onAddRepository: () => void;
-  onStarted: (tab: Tab) => void;
+  /** With a layout when the plan drew one — columns side by side. */
+  onStarted: (tab: Tab, layout?: LayoutNode | null) => void;
   onSignIn: () => void;
   onError: (message: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
-  const [count, setCount] = useState(1);
-  const [agents, setAgents] = useState<string[]>([]);
+  // The plan: one row per member. The steppers add and remove rows; the
+  // rows carry what a stepper cannot say — a model, an effort, arguments,
+  // and which column the member sits in. One line of text writes them all.
+  const [plan, setPlan] = useState<PlanMember[]>([{ harness: "axio", model: "", effort: "", permission: "", args: "", column: 0 }]);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [spec, setSpec] = useState("");
+  const [specError, setSpecError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const none = projects.length === 0;
   const ready = providers.some((p) => p.ready);
-  const groupMode = count > 1 || agents.length > 0;
+  const harnesses = [
+    "axio",
+    ...available.filter((a) => a.harness !== "axio").map((a) => a.harness),
+    // Codex through its protocol, when Codex is here at all.
+    ...(available.some((a) => a.harness === "codex") ? ["codex-app"] : []),
+  ];
+  const count = plan.filter((m) => m.harness === "axio").length;
+  const picks: Record<string, number> = {};
+  for (const m of plan) if (m.harness !== "axio") picks[m.harness] = (picks[m.harness] ?? 0) + 1;
+  const agents = plan.filter((m) => m.harness !== "axio").map((m) => m.harness);
+  const total = plan.length;
+  const detailed = plan.some((m) => m.model || m.effort || m.permission || m.args || m.column > 0);
+  const groupMode = total > 1 || agents.length > 0;
+  const add = (harness: string) =>
+    setPlan((p) =>
+      p.filter((m) => m.harness === harness).length >= 8 ? p : [...p, { harness, model: "", effort: "", permission: "", args: "", column: 0 }],
+    );
+  const drop = (harness: string) =>
+    setPlan((p) => {
+      const at = p.map((m) => m.harness).lastIndexOf(harness);
+      return at < 0 ? p : [...p.slice(0, at), ...p.slice(at + 1)];
+    });
+  const setCount = (f: (c: number) => number) => {
+    const next = f(count);
+    if (next > count) add("axio");
+    else if (next < count) drop("axio");
+  };
+  const pick = (harness: string, delta: number) => (delta > 0 ? add(harness) : drop(harness));
+  const editRow = (i: number, patch: Partial<PlanMember>) => setPlan((p) => p.map((m, k) => (k === i ? { ...m, ...patch } : m)));
+  const applySpec = () => {
+    const parsed = parsePlan(spec, harnesses);
+    if ("error" in parsed) {
+      setSpecError(parsed.error);
+      return;
+    }
+    setSpecError(null);
+    setPlan(parsed.members);
+    setPlanOpen(true);
+  };
 
+  // A prompt is optional. Without one a session starts and waits for its
+  // first turn, and a terminal opens with the tool at its own prompt — which
+  // is how somebody opens Claude Code to work in by hand. One terminal on its
+  // own is not a group; it is opened as itself.
   const start = async () => {
     const text = prompt.trim();
-    if (!repo || text === "") return;
+    if (!repo || total === 0) return;
     setBusy(true);
     try {
-      if (groupMode) {
-        const started = await api.startGroup({ path: repo, prompt: text, count, agents });
+      if (count === 0 && agents.length === 1 && text === "" && !detailed && agents[0] !== "codex-app") {
+        const pane = document.querySelector(".pane");
+        const size = pane ? paneSize(pane, terminal) : null;
+        const h = await api.hostedStart(agents[0] ?? "", repo, "worktree", "", size);
+        onStarted({ kind: "terminal", id: h.id });
+      } else if (groupMode || detailed) {
+        const members = plan.map((m) => ({
+          ...memberTransport(m.harness),
+          model: m.model || null,
+          effort: m.effort || null,
+          permission: m.permission || null,
+          args: m.args,
+        }));
+        const started = await api.startGroup({ path: repo, prompt: text, count: 0, agents: [], members });
         setPrompt("");
-        onStarted({ kind: "group", id: started.group });
+        // The plan's columns become the pane's layout, each column its
+        // members stacked, in the order they were started.
+        const columns: string[][] = [];
+        plan.forEach((m, i) => {
+          const id = started.order[i];
+          if (id === undefined) return;
+          (columns[m.column] ??= []).push(id);
+        });
+        const layout = plan.some((m) => m.column > 0) ? fromColumns(columns.filter((c) => c.length > 0)) : undefined;
+        onStarted({ kind: "group", id: started.group }, layout);
       } else {
-        const session = await api.startSession({ path: repo, prompt: text, isolation: null, group: null });
+        const session = await api.startSession({ path: repo, prompt: text === "" ? null : text, isolation: null, group: null });
         setPrompt("");
         onStarted({ kind: "session", id: session.id });
       }
@@ -777,8 +1092,8 @@ function Opening({
             none
               ? "Pick a repository first."
               : groupMode
-                ? "One prompt for all of them. Each works in its own worktree; compare the results side by side."
-                : "Describe the work. It runs in its own worktree, on its own branch."
+                ? "One prompt for all of them, or none. Each works in its own worktree; compare the results side by side."
+                : "Describe the work, or leave this empty and type into it once it opens. It runs in its own worktree, on its own branch."
           }
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => {
@@ -808,44 +1123,154 @@ function Opening({
               ))}
             </select>
           )}
-          <span className="start-many" title="How many axio sessions, and which other agents, on this prompt">
-            <button className="stepper" disabled={none || busy || count <= 0} onClick={() => setCount((c) => Math.max(agents.length > 0 ? 0 : 1, c - 1))} aria-label="Fewer sessions">
-              −
-            </button>
-            <span className="stepper-count">
-              {count}× axio
+          {/* One stepper per agent, axio included and none of them required:
+              zero axio and two Claude Codes is a legitimate answer. */}
+          <span className="start-many" title="How many of each agent on this prompt, each in its own worktree">
+            <span className="agent-count" style={{ ["--agent-accent" as string]: "var(--agent-axio)" }}>
+              <button className="stepper" disabled={none || busy || count <= 0} onClick={() => setCount((c) => Math.max(0, c - 1))} aria-label="Fewer axio sessions">
+                −
+              </button>
+              <span className="stepper-count">{count}× axio</span>
+              <button className="stepper" disabled={none || busy || count >= 8} onClick={() => setCount((c) => Math.min(8, c + 1))} aria-label="More axio sessions">
+                +
+              </button>
             </span>
-            <button className="stepper" disabled={none || busy || count >= 8} onClick={() => setCount((c) => Math.min(8, c + 1))} aria-label="More sessions">
-              +
-            </button>
             {available
               .filter((a) => a.harness !== "axio")
               .map((a) => {
-                const on = agents.includes(a.harness);
-                return (
+                const n = picks[a.harness] ?? 0;
+                return n === 0 ? (
                   <button
                     key={a.harness}
-                    className={`agent-pick${on ? " on" : ""}`}
+                    className="agent-pick"
                     style={{ ["--agent-accent" as string]: `var(${a.accentVar})` }}
                     disabled={none || busy}
-                    aria-pressed={on}
-                    title={`${on ? "Drop" : "Add"} ${a.label}, in its own worktree`}
-                    onClick={() => setAgents((list) => (on ? list.filter((h) => h !== a.harness) : [...list, a.harness]))}
+                    title={`Add ${a.label}, in its own worktree`}
+                    onClick={() => pick(a.harness, 1)}
                   >
                     <IconTerminal size={11} />
                     {a.label}
                   </button>
+                ) : (
+                  <span key={a.harness} className="agent-count on" style={{ ["--agent-accent" as string]: `var(${a.accentVar})` }}>
+                    <button className="stepper" disabled={none || busy} onClick={() => pick(a.harness, -1)} aria-label={`Fewer ${a.label}`}>
+                      −
+                    </button>
+                    <span className="stepper-count">
+                      {n}× {a.label}
+                    </span>
+                    <button className="stepper" disabled={none || busy || n >= 8} onClick={() => pick(a.harness, 1)} aria-label={`More ${a.label}`}>
+                      +
+                    </button>
+                  </span>
                 );
               })}
           </span>
           <button
             className="act primary"
-            disabled={none || busy || prompt.trim() === "" || (count === 0 && agents.length === 0)}
+            disabled={none || busy || total === 0}
+            title={prompt.trim() === "" ? "Start without a prompt: each waits to be typed at" : undefined}
             onClick={() => void start()}
           >
             <IconSend size={13} />
-            {groupMode ? `Start ${count + agents.length}` : "Start"}
+            {groupMode ? `Start ${total}` : "Start"}
           </button>
+        </div>
+        {/* The plan, spelled out: a row per member with what the steppers
+            cannot say, and one line that writes the rows. Folded until it
+            is wanted; the steppers are the plan for most starts. */}
+        <div className="plan">
+          <button className="plan-toggle" onClick={() => setPlanOpen((o) => !o)} aria-expanded={planOpen}>
+            {planOpen ? "Hide the plan" : detailed ? "Plan (detailed)" : "Plan: models, effort, layout…"}
+          </button>
+          {planOpen && (
+            <div className="plan-body">
+              <div className="plan-spec">
+                <input
+                  value={spec}
+                  placeholder="2x claude --model opus | codex -m gpt-5.4 --effort high, pi     ( | columns · , stacked )"
+                  aria-label="Plan as one line"
+                  onChange={(e) => setSpec(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      applySpec();
+                    }
+                  }}
+                />
+                <button className="act" onClick={applySpec} disabled={spec.trim() === ""}>
+                  Apply
+                </button>
+                <button className="act" onClick={() => setSpec(formatPlan(plan))} title="Write the rows below as a line">
+                  From rows
+                </button>
+              </div>
+              {specError && <p className="plan-error">{specError}</p>}
+              <div className="plan-rows">
+                {plan.map((m, i) => (
+                  <div className="plan-row" key={i}>
+                    <select value={m.harness} aria-label="Agent" onChange={(e) => editRow(i, { harness: e.target.value })}>
+                      {harnesses.map((h) => (
+                        <option key={h} value={h}>
+                          {h === "axio" ? "axio session" : h === "codex-app" ? "Codex, structured" : (available.find((a) => a.harness === h)?.label ?? h)}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={m.model}
+                      placeholder={m.harness === "axio" ? "model (from config)" : "model"}
+                      aria-label="Model"
+                      disabled={m.harness === "axio"}
+                      onChange={(e) => editRow(i, { model: e.target.value })}
+                    />
+                    <select
+                      value={m.effort}
+                      aria-label="Effort"
+                      disabled={m.harness !== "codex" && m.harness !== "codex-app"}
+                      title={m.harness === "codex" || m.harness === "codex-app" ? "Reasoning effort" : "Only Codex takes an effort on its command line"}
+                      onChange={(e) => editRow(i, { effort: e.target.value })}
+                    >
+                      {EFFORTS.map((e) => (
+                        <option key={e} value={e}>
+                          {e === "" ? "effort" : e}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={m.permission}
+                      aria-label="Permission mode"
+                      disabled={m.harness === "axio" || m.harness === "pi"}
+                      title={
+                        m.harness === "axio" || m.harness === "pi"
+                          ? "This tool has no permission flag on its command line"
+                          : "What it may do without asking: ask everything, edits freely, decide itself, or nothing asks"
+                      }
+                      onChange={(e) => editRow(i, { permission: e.target.value })}
+                    >
+                      {PERMISSIONS.map((p) => (
+                        <option key={p} value={p}>
+                          {p === "" ? "permission" : p}
+                        </option>
+                      ))}
+                    </select>
+                    <input value={m.args} placeholder="extra arguments" aria-label="Arguments" onChange={(e) => editRow(i, { args: e.target.value })} />
+                    <input
+                      type="number"
+                      min={1}
+                      max={6}
+                      value={m.column + 1}
+                      aria-label="Column"
+                      title="Which column it sits in, left to right; members in one column stack"
+                      onChange={(e) => editRow(i, { column: Math.max(0, Math.min(5, Number(e.target.value) - 1)) })}
+                    />
+                    <button className="row-more" aria-label="Remove this member" onClick={() => setPlan((p) => p.filter((_, k) => k !== i))}>
+                      <IconClose size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

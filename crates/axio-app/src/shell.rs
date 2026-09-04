@@ -48,6 +48,8 @@ pub fn run(
             commands::cancel_session,
             commands::close_session,
             commands::session_diff,
+            commands::session_turns,
+            commands::session_turn_diff,
             commands::session_transcript,
             commands::open_project,
             commands::add_repository,
@@ -60,6 +62,15 @@ pub fn run(
             commands::hosted_write,
             commands::hosted_resize,
             commands::hosted_kill,
+            commands::hosted_stop,
+            commands::window_state,
+            commands::save_window_state,
+            commands::hosted_submit,
+            commands::hosted_commands,
+            commands::hosted_transcript,
+            commands::hosted_approvals,
+            commands::hosted_decide,
+            commands::hosted_resume,
             commands::settings,
             commands::save_settings,
             commands::set_default_model,
@@ -85,6 +96,57 @@ pub fn run(
             }
         })
         .build(tauri::generate_context!())?;
+
+    // The terminals the last window had come back running, not as a list
+    // of things to click. Each starts again in its own worktree, with its
+    // tool asked to continue; one whose directory is gone stays ended and
+    // says so in its pane. The pane size is not known yet — the first
+    // attach resizes it.
+    // On the async runtime, not the main thread: the resume spawns the
+    // activity relay as a task, which needs a reactor to be spawned from.
+    {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            let state = handle.state::<AppState>();
+            // The hook listener first, so the terminals resumed below
+            // already carry it.
+            let sink_handle = handle.clone();
+            let sink: crate::hooks::Sink = std::sync::Arc::new(move |terminal, event, payload| {
+                let state = sink_handle.state::<AppState>();
+                state.hosted.observe_hook(&terminal, &event, &payload);
+                let _ = sink_handle.emit("axio://hosted-activity", terminal.clone());
+                if let Some(view) = state.hosted.list().into_iter().find(|v| v.id == terminal) {
+                    hosted_attention(&sink_handle, &view);
+                }
+            });
+            match crate::hooks::serve(&axio::home(), sink).await {
+                Ok(endpoint) => state.hosted.listen_at(endpoint),
+                Err(e) => eprintln!("axio-app: hooks are off, the listener could not start: {e}"),
+            }
+            if !state.resumes_on_launch() {
+                return;
+            }
+            for view in state.hosted.list() {
+                // Running already, or stopped by a person: neither is the
+                // window's to restart. A stop is a decision, and a launch
+                // that undid it would be the window arguing.
+                if view.status == "running" || view.stopped {
+                    continue;
+                }
+                let relay = handle.clone();
+                if let Err(e) = state
+                    .resume_hosted(&view.id, None, None, move |id| {
+                        let _ = relay.emit("axio://hosted-activity", id);
+                    })
+                    .await
+                {
+                    // Said, not swallowed: a row that stays ended after a
+                    // launch should be explicable from the log.
+                    eprintln!("axio-app: {} was not resumed: {e}", view.name);
+                }
+            }
+        });
+    }
 
     // Relay the supervisor's own event stream to the window.
     //
@@ -149,7 +211,10 @@ fn attention(handle: &tauri::AppHandle, kind: &EventKind) {
         }
         _ => return,
     };
-    if !focused || matches!(kind, EventKind::ApprovalRequested { .. }) {
+    // A burst of questions is one notification, not one per question: a
+    // second within two seconds of the first says nothing the first did not,
+    // and a sound per event is how a person turns notifications off.
+    if (!focused || matches!(kind, EventKind::ApprovalRequested { .. })) && not_in_a_burst() {
         let _ = handle
             .notification()
             .builder()
@@ -157,4 +222,55 @@ fn attention(handle: &tauri::AppHandle, kind: &EventKind) {
             .body(body)
             .show();
     }
+}
+
+/// A hosted agent's word that it needs a person, or that it finished, said
+/// the way a session's is: the badge counts every agent blocked on a
+/// permission, and a notification goes out when the window is not in front.
+fn hosted_attention(handle: &tauri::AppHandle, view: &crate::hosted::HostedView) {
+    let Some(window) = handle.get_webview_window("main") else {
+        return;
+    };
+    let state = handle.state::<AppState>();
+    let pending = state.approvals().len()
+        + state
+            .hosted
+            .list()
+            .iter()
+            .filter(|v| v.agent_status.as_deref() == Some("blocked"))
+            .count();
+    let _ = window.set_badge_count((pending > 0).then_some(pending as i64));
+    let focused = window.is_focused().unwrap_or(true);
+    let (title, body) = match view.agent_status.as_deref() {
+        Some("blocked") => (
+            format!("{} needs you", view.name),
+            "waiting on a permission".to_owned(),
+        ),
+        Some("done") if !focused => (
+            format!("{} finished", view.name),
+            view.branch.clone().unwrap_or_default(),
+        ),
+        _ => return,
+    };
+    if not_in_a_burst() {
+        let _ = handle
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
+    }
+}
+
+fn not_in_a_burst() -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().expect("no lock is held across an await");
+    let now = Instant::now();
+    if last.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2)) {
+        return false;
+    }
+    *last = Some(now);
+    true
 }

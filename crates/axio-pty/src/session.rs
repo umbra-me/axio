@@ -57,6 +57,8 @@ pub struct HarnessSession {
     /// at that instant lost them, which is the failure the cursor exists for.
     wrote: Arc<tokio::sync::Notify>,
     status: Arc<Mutex<HarnessStatus>>,
+    /// In-band status payloads, queued by the pump for the host to take.
+    signals: Arc<Mutex<Vec<String>>>,
     /// The direct child. On Windows this is `cmd.exe`, which is why killing it
     /// is not the same as killing what it started — see [`HarnessSession::kill`].
     pid: Option<u32>,
@@ -103,6 +105,7 @@ impl HarnessSession {
         harness: Harness,
         cwd: &std::path::Path,
         args: &[String],
+        env: &[(String, String)],
         rows: Option<u16>,
         cols: Option<u16>,
     ) -> Result<Self, PtyError> {
@@ -131,6 +134,9 @@ impl HarnessSession {
         for (key, value) in child_env() {
             command.env(key, value);
         }
+        for (key, value) in env {
+            command.env(key, value);
+        }
 
         let child = pair
             .slave
@@ -157,7 +163,13 @@ impl HarnessSession {
         let output = Arc::new(Mutex::new(Ring::new()));
         let status = Arc::new(Mutex::new(HarnessStatus::Running));
         let wrote = Arc::new(tokio::sync::Notify::new());
-        pump(reader, Arc::clone(&output), Arc::clone(&wrote));
+        let signals = Arc::new(Mutex::new(Vec::new()));
+        pump(
+            reader,
+            Arc::clone(&output),
+            Arc::clone(&wrote),
+            Arc::clone(&signals),
+        );
         watch(child, Arc::clone(&status), Arc::clone(&wrote));
 
         Ok(Self {
@@ -171,8 +183,21 @@ impl HarnessSession {
             output,
             wrote,
             status,
+            signals,
             pid,
         })
+    }
+
+    /// The in-band status payloads the program has emitted since last asked
+    /// — `ESC ] 9999 ; <json> BEL` — oldest first. A program that has no
+    /// hooks can still say what it is doing by printing one.
+    pub fn take_signals(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .signals
+                .lock()
+                .expect("the signal lock is never held across a blocking call"),
+        )
     }
 
     /// Resolves the next time this terminal writes anything, or ends.
@@ -309,7 +334,13 @@ impl HarnessSession {
         let output = Arc::new(Mutex::new(Ring::new()));
         let status = Arc::new(Mutex::new(HarnessStatus::Running));
         let wrote = Arc::new(tokio::sync::Notify::new());
-        pump(reader, Arc::clone(&output), Arc::clone(&wrote));
+        let signals = Arc::new(Mutex::new(Vec::new()));
+        pump(
+            reader,
+            Arc::clone(&output),
+            Arc::clone(&wrote),
+            Arc::clone(&signals),
+        );
         watch(child, Arc::clone(&status), Arc::clone(&wrote));
         Ok(Self {
             harness: Harness::Axio,
@@ -318,6 +349,7 @@ impl HarnessSession {
             master: Mutex::new(Some(pair.master)),
             output,
             wrote,
+            signals,
             status,
             pid,
         })
@@ -408,9 +440,11 @@ fn pump(
     mut reader: Box<dyn Read + Send>,
     output: Arc<Mutex<Ring>>,
     wrote: Arc<tokio::sync::Notify>,
+    signals: Arc<Mutex<Vec<String>>>,
 ) {
     std::thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        let mut osc = crate::osc::OscScanner::default();
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
@@ -420,6 +454,12 @@ fn pump(
                         // Bytes, not text. Decoding here would corrupt any
                         // character unlucky enough to straddle this boundary.
                         ring.push(&buffer[..n]);
+                    }
+                    let found = osc.feed(&buffer[..n]);
+                    if !found.is_empty()
+                        && let Ok(mut queue) = signals.lock()
+                    {
+                        queue.extend(found);
                     }
                     // After the lock is released: a waiter woken while this
                     // thread still held it would block on its own read.

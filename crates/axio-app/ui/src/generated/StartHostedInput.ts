@@ -37,5 +37,18 @@ args: string,
  * paint lands in scrollback permanently. Started at a guess and corrected
  * a moment later, the correction repaints the live area and leaves the
  * mis-sized opening above it forever.
+ * A first prompt, handed to the tool on its command line where it
+ * takes one (see `Harness::prompt_args`); a caller types it in
+ * otherwise. Never split: a prompt is one argument however it reads.
  */
-rows: number | null, cols: number | null, };
+prompt: string | null, 
+/**
+ * `app` to drive the tool through its structured protocol where it has
+ * one (Codex's app-server); anything else is a terminal.
+ */
+transport: string | null, 
+/**
+ * For the structured transport, which passes these as protocol fields
+ * rather than command-line flags.
+ */
+model: string | null, effort: string | null, permission: string | null, rows: number | null, cols: number | null, };

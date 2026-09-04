@@ -24,8 +24,9 @@
 
 mod buffer;
 mod harness;
+mod osc;
 mod session;
 
-pub use buffer::{MAX_BYTES, Ring};
-pub use harness::{Harness, child_env, split_args};
+pub use buffer::{MAX_BYTES, Ring, strip_queries};
+pub use harness::{Harness, child_env, split_args, stripped_names};
 pub use session::{HarnessSession, HarnessStatus, PtyError};

@@ -200,12 +200,45 @@ pub struct StartSessionInput {
 #[ts(export, export_to = "../ui/src/generated/")]
 pub struct StartGroupInput {
     pub path: String,
+    /// Empty is allowed: the members start and wait to be typed at, which is
+    /// how somebody opens two Claude Codes to work in by hand.
     pub prompt: String,
     /// How many axio sessions. Zero is allowed when `agents` is not empty.
     pub count: u32,
     /// Harness names — `claude`, `codex`, `pi`, `axio` — one terminal each.
     #[serde(default)]
     pub agents: Vec<String>,
+    /// The members spelled out one by one, each with its own model, effort
+    /// and arguments. When this is not empty it is the whole plan and
+    /// `count` and `agents` are ignored; they are the short form of it.
+    #[serde(default)]
+    pub members: Vec<GroupMember>,
+}
+
+/// One planned member of a group: an axio session when `harness` is
+/// `None`, otherwise another agent in a terminal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../ui/src/generated/")]
+pub struct GroupMember {
+    #[serde(default)]
+    pub harness: Option<String>,
+    /// Passed on the tool's command line as its own model flag. An axio
+    /// session takes the configured model and ignores this.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Passed where the tool has a flag for it; see `Harness::effort_args`.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// `ask`, `edits`, `auto` or `full`; see `Harness::permission_args`.
+    #[serde(default)]
+    pub permission: Option<String>,
+    /// `app` to drive the tool through its own protocol where it has one.
+    #[serde(default)]
+    pub transport: Option<String>,
+    /// Extra arguments, split the way a shell would.
+    #[serde(default)]
+    pub args: String,
 }
 
 /// One more member for a group that already exists.
@@ -232,6 +265,10 @@ pub struct GroupStart {
     pub group: String,
     pub sessions: Vec<SessionView>,
     pub terminals: Vec<crate::hosted::HostedView>,
+    /// Every member's id in the order the plan named them, sessions and
+    /// terminals interleaved, so a layout drawn from the plan can find them.
+    #[serde(default)]
+    pub order: Vec<String>,
 }
 
 /// A provider axio knows, and whether a credential for it is on this machine.

@@ -10,125 +10,61 @@
 //! bytes on their way to a terminal emulator; interpreting it to guess what the
 //! agent is doing would be a second, worse implementation of the thing it
 //! already does correctly on screen.
+//!
+//! The terminals outlive the window in the only sense a process can: what each
+//! one *was* — its harness, its worktree, its branch, its name, its group — is
+//! journaled to a file as it changes, and a window that opens later lists them
+//! as ended, each one resume in place. A process cannot be kept across its
+//! owner's exit; the work it was doing is a directory and a branch, and those
+//! can. The resume asks the tool to continue its own conversation where the
+//! tool has a way to be asked.
 
+mod agent;
+pub mod appserver;
+mod commands;
+mod journal;
+mod lifecycle;
+mod structured;
+mod types;
 mod typing;
 
+pub use types::{HostedOutput, HostedView, Place, StartHostedInput};
+
+pub use commands::SlashCommand;
+
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axio_pty::{Harness, HarnessSession, HarnessStatus, split_args};
-use serde::{Deserialize, Serialize};
 
-use crate::model::{AppError, Isolation};
+use crate::model::AppError;
 
-/// A hosted agent, as a list row sees it.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../ui/src/generated/")]
-pub struct HostedView {
-    pub id: String,
-    pub harness: String,
-    /// What the harness is called — `Claude Code`. The same for every one.
-    pub label: String,
-    /// What *this* one is called — `Claude Code 2` while a first is live. Two
-    /// terminals with one name are two things a person cannot tell apart from
-    /// the rail, which is the whole reason a rail lists them.
-    pub name: String,
-    /// The branch its worktree is on, when it has one of its own.
-    pub branch: Option<String>,
-    /// Started together with others; see `StartGroupInput`.
-    pub group: Option<String>,
-    /// The CSS custom property this harness is coloured with. Decided in Rust
-    /// beside the harness list, so a colour and the thing it identifies cannot
-    /// be two lists that disagree.
-    pub accent_var: String,
-    pub cwd: String,
-    pub status: String,
-    /// Set only once it has stopped.
-    pub exit_code: Option<i32>,
-}
-
-/// What starting one takes.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../ui/src/generated/")]
-pub struct StartHostedInput {
-    /// One of the allowlisted names. Never a command line.
-    pub harness: String,
-    /// The repository to work in. Where the agent actually runs depends on
-    /// `isolation`: its own worktree cut from here, or this directory itself.
-    pub cwd: String,
-    /// Its own worktree, or the checkout as it sits. `None` is the worktree —
-    /// the same default a session has, for the same reason: several agents on
-    /// one checkout is one corrupted tree.
-    #[serde(default)]
-    pub isolation: Option<Isolation>,
-    /// Membership of a group started together.
-    #[serde(default)]
-    pub group: Option<String>,
-    /// Extra arguments, split the way a shell would split them without one
-    /// running. Empty is the normal case.
-    #[serde(default)]
-    pub args: String,
-    /// The size of the pane the terminal is about to appear in.
-    ///
-    /// Sent at start rather than only on the resize that follows, because a
-    /// harness paints its opening screen from the size it is given and that
-    /// paint lands in scrollback permanently. Started at a guess and corrected
-    /// a moment later, the correction repaints the live area and leaves the
-    /// mis-sized opening above it forever.
-    #[serde(default)]
-    #[ts(type = "number | null")]
-    pub rows: Option<u16>,
-    #[serde(default)]
-    #[ts(type = "number | null")]
-    pub cols: Option<u16>,
-}
-
-/// Everything a read returns: the bytes, and where to ask from next.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../ui/src/generated/")]
-pub struct HostedOutput {
-    /// Decoded here rather than in the webview, because this side holds the
-    /// whole stream and can decode across the chunk boundaries a `read` lands
-    /// on. Lossy only at the very end, where a trailing partial character is
-    /// genuinely incomplete rather than merely split.
-    pub text: String,
-    /// `number`, not `bigint`. ts-rs maps `u64` to `bigint` by default, which
-    /// would be right for a boundary that preserved 64-bit integers — and this
-    /// one does not: Tauri's IPC is JSON, so what actually arrives is a JS
-    /// number. Declaring `bigint` would be a type that never matches the value.
-    /// Both quantities here are safe below 2^53: a millisecond timestamp until
-    /// the year 287396, and a byte cursor until nine petabytes through one
-    /// terminal.
-    #[ts(type = "number")]
-    pub cursor: u64,
-}
-
-/// Where a hosted agent runs: the directory, and the branch if the directory
-/// is a worktree cut for it. Decided by the state, which has the supervisor;
-/// this module only spawns where it is told.
-#[derive(Debug, Clone)]
-pub struct Place {
-    pub cwd: std::path::PathBuf,
-    /// The repository the directory belongs to — itself, when direct.
-    pub repo: std::path::PathBuf,
-    pub branch: Option<String>,
-}
-
-/// One live terminal and what the list knows about it that the session does
-/// not: its number among its kind, where it was placed, and any name a
-/// person gave it.
+/// One terminal and what the list knows about it that the process does not:
+/// its number among its kind, where it was placed, any name a person gave
+/// it, and the arguments it was started with — kept for a resume.
+///
+/// `live` is `None` for a terminal remembered from an earlier window, until it
+/// is resumed. Everything else about it is still true.
 struct Held {
-    session: Arc<HarnessSession>,
+    harness: Harness,
+    live: Option<Arc<HarnessSession>>,
+    /// The structured transport's process, for an `app` row; `live` is
+    /// `None` on such a row.
+    app: Option<Arc<appserver::CodexSession>>,
+    transport: String,
     number: u32,
     place: Place,
     group: Option<String>,
     title: Option<String>,
+    args: String,
+    /// Stopped by a person. See `HostedView::stopped`.
+    stopped: bool,
+    /// What the agent has said about itself. See `agent.rs`.
+    agent: agent::AgentState,
 }
 
-/// Every hosted terminal this process owns.
+/// Every hosted terminal this process owns, and the ones it remembers.
 ///
 /// Owned by Rust and only by Rust. A webview reload loses the interface, never
 /// the terminals — which is the entire reason a reload can reattach by asking
@@ -137,6 +73,13 @@ struct Held {
 pub struct Hosted {
     sessions: Mutex<BTreeMap<String, Held>>,
     next: Mutex<u64>,
+    /// Where the list is written as it changes. `None` in tests and for a
+    /// window with no home, and then nothing survives the process.
+    journal: Option<PathBuf>,
+    /// Where a hosted agent's hooks report, once the window is listening.
+    /// `None` in tests and before the listener is up, and then tools get
+    /// no hooks and status comes from their output alone.
+    hooks: Mutex<Option<crate::hooks::HookEndpoint>>,
 }
 
 impl Hosted {
@@ -146,9 +89,9 @@ impl Hosted {
         format!("h{next}")
     }
 
-    /// The lowest number no live terminal of this harness holds. Numbers are
-    /// reused so a third Claude Code opened after the first closed is "2", not
-    /// "3" — what the rail shows should count what is there.
+    /// The lowest number no listed terminal of this harness holds. Numbers are
+    /// reused so a third Claude Code opened after the first was removed is
+    /// "2", not "3" — what the rail shows should count what is there.
     fn number_for(live: impl Iterator<Item = (Harness, u32)>, harness: Harness) -> u32 {
         let taken: Vec<u32> = live
             .filter(|(h, _)| *h == harness)
@@ -157,12 +100,7 @@ impl Hosted {
         (1..).find(|n| !taken.contains(n)).unwrap_or(1)
     }
 
-    /// Start one, and relay its "something happened" signal to `on_activity`.
-    ///
-    /// The callback is given the session id and nothing else, deliberately.
-    /// What it is for is telling a surface to *ask*, not telling it what
-    /// changed — the bytes still come back through a cursor, so a listener that
-    /// missed a signal is late rather than wrong.
+    /// Start one, and relay its signal to `on_activity`.
     pub fn start_with_signal(
         &self,
         input: StartHostedInput,
@@ -170,19 +108,8 @@ impl Hosted {
         on_activity: impl Fn(String) + Send + 'static,
     ) -> Result<HostedView, AppError> {
         let view = self.start_at(input, place)?;
-        let id = view.id.clone();
-        if let Ok(session) = self.get(&id) {
-            let wrote = session.wrote();
-            tokio::spawn(async move {
-                loop {
-                    // Registered before the wait, which is the whole discipline
-                    // of `Notify`: created afterwards, output landing in the gap
-                    // would wake nobody.
-                    let waiting = wrote.notified();
-                    waiting.await;
-                    on_activity(id.clone());
-                }
-            });
+        if let Ok(session) = self.get(&view.id) {
+            Self::relay(session, view.id.clone(), on_activity);
         }
         Ok(view)
     }
@@ -191,7 +118,7 @@ impl Hosted {
     /// without a supervisor — a test, a state that could not open its index —
     /// gets; the state cuts a worktree first and calls `start_at`.
     pub fn start(&self, input: StartHostedInput) -> Result<HostedView, AppError> {
-        let cwd = std::path::PathBuf::from(&input.cwd);
+        let cwd = PathBuf::from(&input.cwd);
         let place = Place {
             repo: cwd.clone(),
             cwd,
@@ -210,7 +137,9 @@ impl Hosted {
             .get_mut(id)
             .ok_or_else(|| AppError::NoSuchSession(format!("no hosted session {id}")))?;
         entry.title = title.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
-        Ok(view_of(id, entry))
+        let view = view_of(id, entry);
+        self.record(&held);
+        Ok(view)
     }
 
     /// What a hosted agent changed in its worktree, as a unified diff — the
@@ -246,27 +175,45 @@ impl Hosted {
         let harness = Harness::parse(&input.harness).ok_or_else(|| {
             AppError::NoRepository(format!("`{}` is not an agent axio can host", input.harness))
         })?;
-        let args = split_args(&input.args).map_err(AppError::Supervisor)?;
-
-        let session = HarnessSession::spawn(harness, &place.cwd, &args, input.rows, input.cols)
-            .map_err(|e| AppError::Supervisor(e.to_string()))?;
+        let mut args = split_args(&input.args).map_err(AppError::Supervisor)?;
+        // The id first: the hooks carry it, so it must exist before spawn.
         let id = self.mint();
+        let (hook_args, env) = self.hook_launch(harness, &id);
+        args.extend(hook_args);
+        let prompted = input.prompt.as_deref().filter(|p| !p.trim().is_empty());
+        if let Some(prompt) = prompted
+            && let Some(extra) = harness.prompt_args(prompt)
+        {
+            args.extend(extra);
+        }
+
+        let session =
+            HarnessSession::spawn(harness, &place.cwd, &args, &env, input.rows, input.cols)
+                .map_err(|e| AppError::Supervisor(e.to_string()))?;
         let mut held = self
             .sessions
             .lock()
             .expect("no lock is held across an await");
+        let mut agent = agent::AgentState::default();
+        if prompted.is_some() {
+            agent.status = Some("working".to_owned());
+        }
         let entry = Held {
-            session: Arc::new(session),
-            number: Self::number_for(
-                held.values().map(|h| (h.session.harness, h.number)),
-                harness,
-            ),
+            harness,
+            live: Some(Arc::new(session)),
+            app: None,
+            transport: "pty".to_owned(),
+            number: Self::number_for(held.values().map(|h| (h.harness, h.number)), harness),
             group: input.group.clone(),
             title: None,
             place,
+            args: input.args.clone(),
+            stopped: false,
+            agent,
         };
         let view = view_of(&id, &entry);
         held.insert(id, entry);
+        self.record(&held);
         Ok(view)
     }
 
@@ -279,17 +226,53 @@ impl Hosted {
             .collect()
     }
 
-    pub(super) fn get(&self, id: &str) -> Result<Arc<HarnessSession>, AppError> {
-        self.sessions
+    /// The structured process behind a row, when it is one.
+    pub(super) fn app(&self, id: &str) -> Result<Option<Arc<appserver::CodexSession>>, AppError> {
+        let held = self
+            .sessions
             .lock()
-            .expect("no lock is held across an await")
-            .get(id)
-            .map(|h| h.session.clone())
+            .expect("no lock is held across an await");
+        held.get(id)
+            .map(|h| h.app.clone())
             .ok_or_else(|| AppError::NoSuchSession(format!("no hosted session {id}")))
     }
 
+    /// The live process behind a row. A remembered row that has not been
+    /// resumed has none, and says so rather than answering as if it had.
+    pub(super) fn get(&self, id: &str) -> Result<Arc<HarnessSession>, AppError> {
+        let held = self
+            .sessions
+            .lock()
+            .expect("no lock is held across an await");
+        let entry = held
+            .get(id)
+            .ok_or_else(|| AppError::NoSuchSession(format!("no hosted session {id}")))?;
+        if entry.app.is_some() {
+            return Err(AppError::Supervisor(format!(
+                "{} is driven through its protocol, not a terminal",
+                view_of(id, entry).name
+            )));
+        }
+        entry.live.clone().ok_or_else(|| {
+            AppError::Supervisor(format!(
+                "{} is not running; resume it first",
+                view_of(id, entry).name
+            ))
+        })
+    }
+
+    /// Everything after `from`. A read from the very start is a reattach —
+    /// a fresh emulator catching up — and is stripped of the terminal
+    /// queries the program asked on its way up, so the emulator does not
+    /// answer them all over again into the program's stdin.
     pub fn read(&self, id: &str, from: u64) -> Result<HostedOutput, AppError> {
+        self.observe_signals(id);
         let (bytes, cursor) = self.get(id)?.read_from(from);
+        let bytes = if from == 0 {
+            axio_pty::strip_queries(&bytes)
+        } else {
+            bytes
+        };
         Ok(HostedOutput {
             text: String::from_utf8_lossy(&bytes).into_owned(),
             cursor,
@@ -321,50 +304,30 @@ impl Hosted {
             .map_err(|e| AppError::Supervisor(e.to_string()))
     }
 
-    /// Stop one, and forget it.
-    ///
-    /// Removed from the map whatever the kill reports: a terminal somebody
-    /// asked to close must not stay in the list because stopping it was untidy.
-    pub async fn kill(&self, id: &str) -> Result<(), AppError> {
-        let session = self.get(id)?;
-        let outcome = session.kill().await;
-        self.sessions
-            .lock()
-            .expect("no lock is held across an await")
-            .remove(id);
-        outcome.map_err(|e| AppError::Supervisor(e.to_string()))
-    }
-
-    /// Stop everything, for a window that is closing.
-    pub async fn kill_all(&self) {
-        let ids: Vec<String> = self
-            .sessions
-            .lock()
-            .expect("no lock is held across an await")
-            .keys()
-            .cloned()
-            .collect();
-        for id in ids {
-            let _ = self.kill(&id).await;
-        }
-    }
-
     pub fn running(&self) -> usize {
         self.list().iter().filter(|v| v.status == "running").count()
     }
 }
 
 fn view_of(id: &str, held: &Held) -> HostedView {
-    let session = &held.session;
-    let (status, exit_code) = match session.status() {
-        HarnessStatus::Running => ("running", None),
-        HarnessStatus::Exited(code) => ("exited", Some(code)),
-        HarnessStatus::Ended => ("ended", None),
+    let (status, exit_code) = match (&held.app, held.live.as_ref().map(|s| s.status())) {
+        (Some(app), _) => (if app.alive() { "running" } else { "ended" }, None),
+        (None, Some(HarnessStatus::Running)) => ("running", None),
+        (None, Some(HarnessStatus::Exited(code))) => ("exited", Some(code)),
+        (None, Some(HarnessStatus::Ended) | None) => ("ended", None),
     };
-    let label = session.harness.label();
+    // A structured row's word is the protocol's; a terminal's is its hooks'.
+    let (agent_status, provider_session) = match &held.app {
+        Some(app) => (
+            Some(app.status()),
+            app.thread().or_else(|| held.agent.session.clone()),
+        ),
+        None => (held.agent.status.clone(), held.agent.session.clone()),
+    };
+    let label = held.harness.label();
     HostedView {
         id: id.to_owned(),
-        harness: session.harness.executable().to_owned(),
+        harness: held.harness.executable().to_owned(),
         label: label.to_owned(),
         name: match &held.title {
             Some(title) => title.clone(),
@@ -373,10 +336,15 @@ fn view_of(id: &str, held: &Held) -> HostedView {
         },
         branch: held.place.branch.clone(),
         group: held.group.clone(),
-        accent_var: session.harness.accent_var().to_owned(),
-        cwd: session.cwd.display().to_string(),
+        accent_var: held.harness.accent_var().to_owned(),
+        cwd: held.place.cwd.display().to_string(),
+        repo: held.place.repo.display().to_string(),
         status: status.to_owned(),
         exit_code,
+        agent_status,
+        provider_session,
+        transport: held.transport.clone(),
+        stopped: held.stopped,
     }
 }
 
@@ -397,8 +365,13 @@ pub fn available() -> Vec<HostedView> {
             group: None,
             accent_var: harness.accent_var().to_owned(),
             cwd: String::new(),
+            repo: String::new(),
             status: "available".to_owned(),
             exit_code: None,
+            agent_status: None,
+            provider_session: None,
+            transport: "pty".to_owned(),
+            stopped: false,
         })
         .collect()
 }
@@ -434,6 +407,11 @@ mod tests {
                 isolation: None,
                 group: None,
                 args: String::new(),
+                prompt: None,
+                transport: None,
+                model: None,
+                effort: None,
+                permission: None,
                 rows: None,
                 cols: None,
             })
@@ -453,6 +431,11 @@ mod tests {
                     isolation: None,
                     group: None,
                     args: "--unbalanced \"quote".into(),
+                    prompt: None,
+                    transport: None,
+                    model: None,
+                    effort: None,
+                    permission: None,
                     rows: None,
                     cols: None,
                 })
@@ -461,21 +444,11 @@ mod tests {
         assert!(hosted.list().is_empty());
     }
 
-    #[tokio::test]
-    async fn acting_on_a_session_that_does_not_exist_is_an_error_not_a_panic() {
-        let hosted = Hosted::default();
-        assert!(hosted.read("nope", 0).is_err());
-        assert!(hosted.write("nope", "hi", true).is_err());
-        assert!(hosted.resize("nope", 24, 80).is_err());
-        assert!(hosted.kill("nope").await.is_err());
-        assert_eq!(hosted.running(), 0);
-    }
-
-    /// Numbers count what is live, per harness, and fill the lowest gap.
+    /// Numbers count what is listed, per harness, and fill the lowest gap.
     #[test]
     fn a_second_of_the_same_harness_is_numbered_and_a_gap_is_reused() {
         assert_eq!(Hosted::number_for(std::iter::empty(), Harness::Claude), 1);
-        // Two live Claude Codes numbered 1 and 3, and a Codex numbered 1: the
+        // Two Claude Codes numbered 1 and 3, and a Codex numbered 1: the
         // next Claude Code is 2, and Codex's numbering is its own.
         let live = [
             (Harness::Claude, 1),

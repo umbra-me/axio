@@ -142,7 +142,8 @@ write = ["/home/me/.cache/go-build"]
 
 [worktree]         # supervised sessions; on by default
 enabled = false    # user config only — see below
-branch_prefix = "axio/"
+branch_prefix = "axio/"   # then a name: axio/umbral-heretic, axio/waning-comet
+setup = "pnpm install"    # run in every fresh worktree before its agent starts
 ```
 
 A project's own `.axio/config.toml` may only add restrictions, never remove
@@ -158,14 +159,31 @@ touch, a file that belongs to something else.
 Supervised sessions are driven with `axio session start|list|diff|close`, or
 from the desktop window — `axio app` opens it once built, which takes
 `cargo build --release -p axio-app --features app` after the frontend under
-`crates/axio-app/ui`. It opens the same sessions as tabs beside terminals
-hosting other agents' tools — each in a worktree of its own, numbered when
-there are several — and answers their questions from one queue. One prompt can
-start a group of them, compared side by side; a session's branch is merged,
-pushed or turned into a pull request from above its diff. Neither surface can
-do something the other cannot; the window merely has a screen, and a settings
-dialog (`⌘,`) for its fonts, sizes and per-agent arguments, kept in
-`~/.axio/app.toml`.
+`crates/axio-app/ui`.
+
+The window lists every agent working in a repository under that repository:
+axio's own sessions, and other agents' tools in terminals it owns, each in a
+worktree of its own on a branch named after it (`axio/umbral-heretic`). One
+prompt can start several at once — a plan says how many of each, on which
+model, at what effort, with what it may do without asking, and in which column
+— and the group opens as cards side by side, as a tree of split panes, or one
+at a time; a box at the foot types into all of them. A repository opens the
+same way over everything running in it.
+
+Each hosted agent reports its own state through hooks the window hands it on
+its command line, so the rail says which one needs a person and which has
+finished; anything without hooks can print a status sequence instead. Codex
+can be driven through its own protocol rather than a terminal, and then its
+questions are answered from its card. Terminals are remembered across windows
+in `~/.axio/terminals.json` and come back running, resumed on the tool's own
+session id — unless you stopped one, which is remembered as the decision it
+was. A session's branch is merged, pushed or turned into a pull request from
+above its diff, and every turn is bracketed by a checkpoint, so the diff can
+be the whole worktree or one turn's work.
+
+Neither surface can do something the other cannot; the window merely has a
+screen, and a settings dialog (`⌘,`) for its fonts, sizes, per-agent
+arguments and how a terminal opens, kept in `~/.axio/app.toml`.
 
 If the workspace root has an `AGENTS.md` — or a `CLAUDE.md`, when there is no
 `AGENTS.md` — axio reads it and tells the model those instructions describe this

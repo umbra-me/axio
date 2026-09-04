@@ -17,6 +17,7 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 # `process` for git, which is spawned by this crate and never by a tool. There is
 # deliberately no libgit2: it compiles C, and `cargo install axio` is promised to
 # need no C toolchain — the same reason `deny.toml` refuses aws-lc-sys.

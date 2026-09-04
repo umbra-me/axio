@@ -257,6 +257,101 @@ Three invariants everything else follows from:
   paint stays in scrollback. Measure the pane before the terminal exists, and
   measure it after `document.fonts.ready` — the fit addon sizes a cell by
   measuring one, and the fallback face puts every column at the wrong x.
+- **A transparent window on macOS needs `macOSPrivateApi`, and the feature
+  goes on the `tauri` dependency line.** Without the config flag,
+  `transparent: true` is ignored and every glass tint paints over an opaque
+  window — flat black, nothing wrong in the stylesheet. `tauri-build` checks
+  the flag against the `features` of the `tauri` dependency itself; a feature
+  forwarded through `app = ["tauri/macos-private-api"]` fails the build with
+  "does not match the allowlist".
+- **The rail is a tree by repository, and the side-by-side pane has a scope.**
+  `HostedView.repo` is what places a terminal under its repository; a
+  terminal whose repository is not listed lands under *Elsewhere*. `GroupPane`
+  takes a `Scope` — a group id, or a project — and a project scope lists every
+  open session and every terminal of that repository; its Add starts one more
+  there rather than joining a group. The `project` tab kind is that pane; the
+  repository heading folds on click and opens the pane only from its menu or
+  the palette. `NewMenu` is per repository — the `+` on its heading — and
+  hands the repository root to `onNew` and `onStartTerminal`.
+- **`IndexRecord::Labelled` is the one way a label changes after the start.**
+  `record_labelled` writes it only for an entry whose label is `None`; the
+  app's `send` calls `Supervisor::label` before every turn and lets it
+  no-op. The unread mark for terminals is window state: `App` listens to
+  `hosted-activity`, waits 1.5s of quiet, and marks ids not in `onScreen`.
+- **Layout is a tree in `layout.ts`, held by the window per pane.** `LayoutNode`
+  is leaf or split; `place`, `without`, `reconcile` and `withRatio` are pure;
+  `GroupPane` renders it with `SplitView` and falls back to the grid when the
+  layout is `null`. The composer's plan (`PlanMember`, `parsePlan`,
+  `formatPlan`) is TypeScript only; the backend sees `GroupMember` rows and
+  answers with `GroupStart.order`, which is what maps columns to ids.
+- **The card's box relays keys, it does not model the menu.** `keyBytes` in
+  `GroupPane.tsx` encodes a browser key as the terminal's bytes (CSI arrows,
+  `\r`, `\x1b`, Ctrl-letter as the control byte) and `hosted_write` sends it;
+  relay starts after a slash command and ends on Enter, Esc or the pill. An
+  empty box passes steering keys through at any time. Nothing reads the
+  agent's screen to decide whether a menu is open.
+- **`TerminalSummary` embeds the terminal.** A terminal card's body is a
+  `HostedTerminal` (compact in a group, full in a tab) over the follow-up box;
+  there is no summarised state for a hosted agent because nothing parses its
+  output. The emulator's key carries the resume count in a tab and the live
+  state in a group, so a resume remounts it for the new process.
+- **Slash commands for a hosted agent are listed, not parsed.**
+  `Harness::slash_commands` is the built-in set per harness; `hosted/commands.rs`
+  adds Claude Code's commands and skills found on disk. The card's box sends
+  through `hosted_submit`, which writes the text, waits 350ms, then the
+  carriage return — the same pacing `submit_when_ready` uses — because the
+  agents treat text and Enter in one burst as a paste. Nothing here
+  interprets a command; the agent's interface does, as it would if typed.
+- **A terminal's view is the window's, not the terminal's.** `TerminalView`
+  (`card` / `tui` / `plain`) lives in `App` beside the card sizes, keyed by
+  terminal id, with `TerminalSettings.view` as the default for a terminal that
+  has not chosen; `TerminalPane` is the single-tab presentation and reuses the
+  group card's markup (`.group-card.solo`) and `TerminalSummary`. Inside a
+  group `plain` reads as `tui`, since a card always has a header.
+- **Hooks are per process, never written into the person's files.**
+  `Harness::hook_args` puts them on the command line (`--settings` JSON for
+  Claude Code, `-c notify=[…]` for Codex); `crate::hooks` is the loopback
+  listener and the script under `~/.axio/hooks/report.sh`; `hosted/agent.rs`
+  maps events to `working | blocked | idle | done` and keeps the session id
+  and transcript path. `axio_pty::osc` reads `OSC 9999` off the output for
+  tools with no hooks. The user's Codex `notify` in `config.toml` is theirs;
+  ours is a `-c` override on the hosted process only. Codex's notify
+  `thread-id` is **not** the session id `codex resume` takes; `codex_rollout_for`
+  reads the newest `session_meta` under `~/.codex/sessions` whose `cwd` is the
+  terminal's, and `fold_codex` reads that rollout for the chat view.
+- **`hosted/appserver.rs` is Codex's structured transport.** JSONL JSON-RPC
+  over stdio; `initialize` then `initialized`; `thread/start` (or
+  `thread/resume` with the journaled thread id); `turn/start` with
+  `input: [{type: "text"}]`; server requests `item/*/requestApproval` are
+  answered with `{decision}`. Verified against the real binary by the test
+  gated on `AXIO_LIVE_CODEX=1`. Rows of that kind carry `transport: "app"`,
+  have no pty, and `Hosted::get` refuses them; `say`, `approvals`, `decide`
+  and `any_transcript` route by transport.
+- **Checkpoints are refs, taken from a throwaway index.** `Checkout::checkpoint`
+  sets `GIT_INDEX_FILE` to a temp path, `add -A`, `write-tree`,
+  `commit-tree -p HEAD`, `update-ref refs/axio/checkpoints/<session>/<turn>/<phase>`;
+  the session task takes one before and after every turn, best effort. Direct
+  checkouts get none, on purpose.
+- **Window state is `~/.axio/window.json`**, read by `window_state::salvage`
+  field by field; the webview saves it 800ms after a change and restores tabs
+  only once the first snapshot says what exists.
+- **Stopping is a decision; a window closing is not.** `Hosted::stop` halts
+  the process *and* sets `stopped` on the row, journaled; `stop_all` and
+  `kill` call the private `halt`, which only stops. Resume on launch skips
+  rows with `stopped`, and a resume clears it. Nothing calls `stop_all`
+  today — a closing window's processes die with it — which is why the flag
+  and not the absence of a process is what a launch reads.
+- **Resume on launch happens in `shell::run`, after `build`.** It needs the app
+  handle for the activity relay, which `shell_state` does not have; it walks
+  `hosted.list()` and resumes every non-running row unless
+  `TerminalSettings::resume_on_launch` is off. Failures are silent by design:
+  the row stays ended and its pane explains.
+- **Hosted terminals are journaled, not kept.** `~/.axio/terminals.json` holds
+  what each terminal was (`hosted/journal.rs`); the next window lists them
+  ended and `hosted_resume` (`hosted/lifecycle.rs`) spawns the harness again in
+  the same directory with `Harness::resume_args`.
+  Stop keeps the row, kill removes it. The `Hosted` registry in tests has no
+  journal and remembers nothing.
 - **The TypeScript boundary is generated, and `cargo test -p axio-app` is what
   generates it.** ts-rs writes `ui/src/generated/` during the test run, so a
   Rust change with no regeneration shows up as a dirty tree — `git diff
@@ -389,8 +484,11 @@ Three invariants everything else follows from:
 - **A ULID orders by time only across milliseconds.** Its first ten characters
   are the timestamp and the rest is random, so two sessions started in the same
   millisecond sort arbitrarily — which a queue of agents does routinely. The
-  session index therefore keeps **file order**, not id order, and a worktree
-  branch is named with the *whole* ULID rather than a readable prefix.
+  session index therefore keeps **file order**, not id order. A worktree
+  branch is not named by its ULID at all: `names.rs` holds fifty qualities and
+  fifty things — 2,500 readable two-word names on the umbra and iconoclast
+  themes — and the supervisor picks one no branch of the repository carries,
+  from a random start; the ULID returns only as a suffix once all are taken.
 - **A worktree path is recorded exactly as git was given it, never
   canonicalised.** git registers a worktree under the string it was handed, and
   on Windows `canonicalize` returns the `\\?\` extended-length form — a

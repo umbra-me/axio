@@ -25,11 +25,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod hooks;
 pub mod hosted;
 pub mod model;
 pub mod settings;
 pub mod state;
 pub mod transcript;
+pub mod window_state;
 
 #[cfg(feature = "app")]
 pub mod commands;

@@ -166,10 +166,10 @@ const approvals: ApprovalView[] = [
 ];
 
 const hostedAvailable: HostedView[] = [
-  { id: "", harness: "axio", label: "axio", name: "axio", branch: null, group: null, accentVar: "--agent-axio", cwd: "", status: "available", exitCode: null },
-  { id: "", harness: "claude", label: "Claude Code", name: "Claude Code", branch: null, group: null, accentVar: "--agent-claude", cwd: "", status: "available", exitCode: null },
-  { id: "", harness: "codex", label: "Codex", name: "Codex", branch: null, group: null, accentVar: "--agent-codex", cwd: "", status: "available", exitCode: null },
-  { id: "", harness: "pi", label: "Pi", name: "Pi", branch: null, group: null, accentVar: "--agent-pi", cwd: "", status: "available", exitCode: null },
+  { id: "", harness: "axio", label: "axio", name: "axio", branch: null, group: null, accentVar: "--agent-axio", cwd: "", repo: "", status: "available", exitCode: null, agentStatus: null, providerSession: null, transport: "pty", stopped: false },
+  { id: "", harness: "claude", label: "Claude Code", name: "Claude Code", branch: null, group: null, accentVar: "--agent-claude", cwd: "", repo: "", status: "available", exitCode: null, agentStatus: null, providerSession: null, transport: "pty", stopped: false },
+  { id: "", harness: "codex", label: "Codex", name: "Codex", branch: null, group: null, accentVar: "--agent-codex", cwd: "", repo: "", status: "available", exitCode: null, agentStatus: null, providerSession: null, transport: "pty", stopped: false },
+  { id: "", harness: "pi", label: "Pi", name: "Pi", branch: null, group: null, accentVar: "--agent-pi", cwd: "", repo: "", status: "available", exitCode: null, agentStatus: null, providerSession: null, transport: "pty", stopped: false },
 ];
 
 const hosted: HostedView[] = [
@@ -182,8 +182,13 @@ const hosted: HostedView[] = [
     group: null,
     accentVar: "--agent-claude",
     cwd: "/Users/me/.axio/supervisor/worktrees/p-umbra/01K4HOSTED1",
+    repo: "/Users/me/src/umbra",
     status: "running",
     exitCode: null,
+    agentStatus: null,
+    providerSession: null,
+    transport: "pty",
+    stopped: false,
   },
   {
     id: "h-2",
@@ -194,8 +199,13 @@ const hosted: HostedView[] = [
     group: null,
     accentVar: "--agent-claude",
     cwd: "/Users/me/src/axio",
+    repo: "/Users/me/src/axio",
     status: "running",
     exitCode: null,
+    agentStatus: null,
+    providerSession: null,
+    transport: "pty",
+    stopped: false,
   },
   {
     id: "h-3",
@@ -206,14 +216,19 @@ const hosted: HostedView[] = [
     group: "g-01k4grp",
     accentVar: "--agent-codex",
     cwd: "/Users/me/src/umbra/.axio/worktrees/01k4grpc",
+    repo: "/Users/me/src/umbra",
     status: "running",
     exitCode: null,
+    agentStatus: null,
+    providerSession: null,
+    transport: "pty",
+    stopped: false,
   },
 ];
 
 let settings: AppSettings = {
   appearance: { uiFont: "", uiScale: 1, density: "comfortable", theme: import.meta.env.VITE_MOCK_THEME ?? "dark" },
-  terminal: { font: "", fontSize: 13, lineHeight: 1, scrollback: 10000 },
+  terminal: { font: "", fontSize: 13, lineHeight: 1, scrollback: 10000, view: "card", resumeOnLaunch: true },
   editor: "code",
   agents: { claude: { args: "--verbose" } },
 };
@@ -400,22 +415,32 @@ export async function mockInvoke<T>(cmd: string, rawArgs?: unknown): Promise<T> 
     case "start_group": {
       const input = args.input as StartGroupInput;
       const group = `g-${Math.random().toString(16).slice(2, 8)}`;
+      const members =
+        input.members.length > 0
+          ? input.members
+          : [
+              ...Array.from({ length: input.count }, () => ({ harness: null as string | null, model: null, effort: null, permission: null, transport: null, args: "" })),
+              ...input.agents.map((harness) => ({ harness: harness as string | null, model: null, effort: null, permission: null, transport: null, args: "" })),
+            ];
       const started: SessionView[] = [];
-      for (let i = 0; i < input.count; i++) {
-        const s = (await mockInvoke<SessionView>("start_session", {
-          input: { path: input.path, prompt: input.prompt, isolation: "worktree", group },
-        })) as SessionView;
-        started.push(s);
-      }
       const terminals: HostedView[] = [];
-      for (const harness of input.agents) {
-        terminals.push(
-          await mockInvoke<HostedView>("hosted_start", {
-            input: { harness, cwd: input.path, isolation: "worktree", group, args: "", rows: null, cols: null },
-          }),
-        );
+      const order: string[] = [];
+      for (const m of members) {
+        if (m.harness === null) {
+          const s = (await mockInvoke<SessionView>("start_session", {
+            input: { path: input.path, prompt: input.prompt, isolation: "worktree", group },
+          })) as SessionView;
+          started.push(s);
+          order.push(s.id);
+        } else {
+          const h = await mockInvoke<HostedView>("hosted_start", {
+            input: { harness: m.harness, cwd: input.path, isolation: "worktree", group, args: m.args, rows: null, cols: null },
+          });
+          terminals.push(h);
+          order.push(h.id);
+        }
       }
-      return out({ group, sessions: started, terminals });
+      return out({ group, sessions: started, terminals, order });
     }
     case "add_to_group": {
       const input = args.input as { group: string; path: string; prompt: string | null; harness: string | null };
@@ -423,12 +448,12 @@ export async function mockInvoke<T>(cmd: string, rawArgs?: unknown): Promise<T> 
         const s = (await mockInvoke<SessionView>("start_session", {
           input: { path: input.path, prompt: input.prompt, isolation: "worktree", group: input.group },
         })) as SessionView;
-        return out({ group: input.group, sessions: [s], terminals: [] });
+        return out({ group: input.group, sessions: [s], terminals: [], order: [s.id] });
       }
       const h = await mockInvoke<HostedView>("hosted_start", {
         input: { harness: input.harness, cwd: input.path, isolation: "worktree", group: input.group, args: "", rows: null, cols: null },
       });
-      return out({ group: input.group, sessions: [], terminals: [h] });
+      return out({ group: input.group, sessions: [], terminals: [h], order: [h.id] });
     }
     case "rename_session": {
       const s = sessions.find((x) => x.id === (args.sessionId as string));

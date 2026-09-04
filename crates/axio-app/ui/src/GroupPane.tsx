@@ -7,6 +7,7 @@ import {
   type ApprovalView,
   type HostedView,
   type SessionView,
+  type SlashCommand,
   type TerminalSettings,
   type TranscriptView,
 } from "./bridge";
@@ -15,16 +16,21 @@ import type { Tab } from "./Tabs";
 import { hostedMenu, sessionMenu, type MenuHooks } from "./menus";
 import { RowMenu, type MenuItem } from "./RowMenu";
 import { HostedTerminal } from "./Terminal";
+import { HostedChat } from "./TerminalPane";
 import { Transcript } from "./Transcript";
+import { balanced, place, reconcile, withRatio, type LayoutNode, type Side } from "./layout";
 import {
   IconBranch,
   IconClose,
   IconDiff,
   IconExpand,
+  IconGrid,
+  IconListen,
   IconMessage,
   IconMore,
   IconPlus,
   IconResize,
+  IconSplit,
   IconStart,
   IconStop,
   IconTerminal,
@@ -48,18 +54,44 @@ const NEXT: Record<Exclude<CardSize, object>, Exclude<CardSize, object>> = {
 const MIN_W = 240;
 const MIN_H = 160;
 
-// Several agents, one prompt, side by side.
+// Several agents side by side: a group started on one prompt, or everything
+// running in one repository.
 //
 // Each member is a card: who it is, what it is doing, and — live — what it is
 // saying: a session's transcript as it streams, a hosted agent's real terminal
 // at a smaller size. Changes swaps every card to its diff, read when the pane
 // opens and again whenever a member's status changes — a `git diff` per token
 // would be the wrong kind of live. A card's header opens the member's own tab;
-// the group is a way of looking, not a thing to drive.
+// the pane is a way of looking, not a thing to drive.
 type Mode = "overview" | "live" | "changes";
 
+/** How one terminal is shown. `card` is the summary, `tui` the real terminal
+ *  under the card's header, `plain` the terminal with no chrome at all —
+ *  which only a tab of its own can offer; inside a group it reads as `tui`. */
+export type TerminalView = "card" | "tui" | "plain" | "chat";
+
+/** The menu entries that pick a terminal's view, with the current one marked. */
+export function viewItems(current: TerminalView, choices: TerminalView[], onView: (view: TerminalView) => void): MenuItem[] {
+  const titles: Record<TerminalView, string> = {
+    card: "Card overview",
+    tui: "Terminal, with this header",
+    plain: "Plain terminal",
+    chat: "Its transcript, as a chat",
+  };
+  return choices.map((v) => ({
+    kind: "action" as const,
+    title: `${v === current ? "● " : "○ "}${titles[v]}`,
+    run: () => onView(v),
+  }));
+}
+
+/** What the pane shows side by side. A group's members share a prompt and an
+ *  id; a project's are whatever is open in that repository, session or
+ *  terminal, grouped or not. */
+export type Scope = { kind: "group"; id: string } | { kind: "project"; id: string; name: string };
+
 export function GroupPane({
-  group,
+  scope,
   sessions,
   hosted,
   attention,
@@ -72,10 +104,16 @@ export function GroupPane({
   onError,
   onCloseSession,
   onStopTerminal,
+  onResumeTerminal,
+  onRemoveTerminal,
   sizes,
   onSize,
+  views,
+  onView,
+  layout,
+  onLayout,
 }: {
-  group: string;
+  scope: Scope;
   sessions: SessionView[];
   hosted: HostedView[];
   attention: Set<string>;
@@ -84,20 +122,29 @@ export function GroupPane({
   terminal: TerminalSettings | null;
   /** Agents this machine can host, for the Add menu. */
   available: HostedView[];
-  /** The repository the group works on, from any member. */
+  /** The repository the members work on. */
   projectRoot: string | null;
   onOpen: (tab: Tab) => void;
   onChanged: () => void;
   onError: (message: string) => void;
   onCloseSession: (id: string, discard: boolean) => void;
   onStopTerminal: (id: string) => void;
+  onResumeTerminal: (id: string) => void;
+  onRemoveTerminal: (id: string) => void;
   /** Card sizes by member id. Held by the window, so they survive a tab switch. */
   sizes: Record<string, CardSize>;
   onSize: (id: string, size: CardSize) => void;
+  /** Each terminal's own view, overriding the pane's Overview / Live for
+   *  that card. Held by the window, like the sizes. */
+  views: Record<string, TerminalView>;
+  onView: (id: string, view: TerminalView) => void;
+  /** Where the members sit. `null` is the grid. */
+  layout: LayoutNode | null;
+  onLayout: (node: LayoutNode | null) => void;
 }) {
   const [mode, setMode] = useState<Mode>("overview");
   const [menu, setMenu] = useState<{ items: MenuItem[]; at: { x: number; y: number } } | null>(null);
-  const hooks: MenuHooks = { onChanged, onError, onCloseSession, onStopTerminal };
+  const hooks: MenuHooks = { onChanged, onError, onCloseSession, onStopTerminal, onResumeTerminal, onRemoveTerminal };
   const openMenu = (e: React.MouseEvent, items: MenuItem[]) => {
     e.preventDefault();
     e.stopPropagation();
@@ -114,23 +161,35 @@ export function GroupPane({
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [adding]);
-  const members = [
-    ...sessions.filter((s) => s.group === group).map((s) => ({ kind: "session" as const, s })),
-    ...hosted.filter((h) => h.group === group).map((h) => ({ kind: "terminal" as const, h })),
-  ];
-  const first = sessions.find((s) => s.group === group);
-  const prompt = first?.label ?? "group";
   const root = projectRoot;
+  const mine = (s: SessionView) => (scope.kind === "group" ? s.group === scope.id : s.projectId === scope.id && s.open);
+  const hostedMine = (h: HostedView) => (scope.kind === "group" ? h.group === scope.id : root !== null && h.repo === root);
+  const members = [
+    ...sessions.filter(mine).map((s) => ({ kind: "session" as const, s })),
+    ...hosted.filter(hostedMine).map((h) => ({ kind: "terminal" as const, h })),
+  ];
+  const first = sessions.find(mine);
+  const prompt = scope.kind === "group" ? (first?.label ?? "group") : scope.name;
+  const key = `${scope.kind}:${scope.id}`;
 
+  // One more member. In a group it joins the group and is asked the same
+  // prompt; in a repository it is simply one more agent working there, in a
+  // worktree of its own, waiting to be typed at.
   const add = async (harness: string | null) => {
     setAdding(false);
     if (!root) {
-      onError("this group's repository is not known, so nothing can join it");
+      onError("this repository is not known, so nothing can start in it");
       return;
     }
     setBusy(true);
     try {
-      await api.addToGroup({ group, path: root, prompt: first?.label ?? null, harness });
+      if (scope.kind === "group") {
+        await api.addToGroup({ group: scope.id, path: root, prompt: first?.label ?? null, harness });
+      } else if (harness === null) {
+        await api.startSession({ path: root, prompt: null, isolation: null, group: null });
+      } else {
+        await api.hostedStart(harness, root, "worktree");
+      }
       onChanged();
     } catch (e) {
       onError(describe(e));
@@ -139,6 +198,53 @@ export function GroupPane({
     }
   };
   const statuses = members.map((m) => (m.kind === "session" ? m.s.status : m.h.status)).join(",");
+  const ids = members.map((m) => (m.kind === "session" ? m.s.id : m.h.id));
+  const idsKey = ids.join(",");
+
+  // Members come and go; the layout follows. A member that left is taken
+  // out of the tree, one that arrived is added on the right.
+  useEffect(() => {
+    if (!layout) return;
+    const next = reconcile(layout, ids);
+    if (JSON.stringify(next) !== JSON.stringify(layout)) onLayout(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
+
+  // The master box reaches every member that has not been muted. Muted
+  // rather than listening so a newcomer hears it without being asked.
+  const [muted, setMuted] = useState<Set<string>>(new Set());
+  const [master, setMaster] = useState("");
+  const [masterBusy, setMasterBusy] = useState(false);
+  const toggleMute = (id: string) =>
+    setMuted((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const broadcast = async () => {
+    const text = master.trim();
+    if (!text) return;
+    setMasterBusy(true);
+    try {
+      await Promise.all(
+        members
+          .filter((m) => !muted.has(m.kind === "session" ? m.s.id : m.h.id))
+          .map((m) => (m.kind === "session" ? api.sendPrompt(m.s.id, text) : api.hostedSubmit(m.h.id, text))),
+      );
+      setMaster("");
+      onChanged();
+    } catch (e) {
+      onError(describe(e));
+    } finally {
+      setMasterBusy(false);
+    }
+  };
+
+  // Dragging a card's header, in the split layout, onto another card's
+  // edge splits that card; onto its middle swaps the two.
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [hover, setHover] = useState<{ id: string; side: Side } | null>(null);
 
   const [diffs, setDiffs] = useState<Record<string, string | null>>({});
   useEffect(() => {
@@ -157,9 +263,9 @@ export function GroupPane({
     // The member list is derived from props; its identity changes per render,
     // so the effect keys on what actually matters — who, and what state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group, statuses, mode]);
+  }, [key, statuses, mode]);
 
-  if (members.length === 0) {
+  if (members.length === 0 && scope.kind === "group") {
     return <div className="empty">This group has no members left.</div>;
   }
 
@@ -168,7 +274,9 @@ export function GroupPane({
       <header className="group-head">
         <span className="group-prompt">{prompt}</span>
         <span className="quiet">
-          {members.length} agent{members.length === 1 ? "" : "s"} · each in its own worktree
+          {members.length === 0
+            ? "nothing running here yet"
+            : `${members.length} agent${members.length === 1 ? "" : "s"} · each in its own worktree`}
         </span>
         {/* One more member, asked the same prompt. The group grows the way it
             started: each newcomer in a worktree of its own. */}
@@ -183,7 +291,7 @@ export function GroupPane({
                 <button role="menuitem" onClick={() => void add(null)}>
                   <IconStart size={13} />
                   <span className="menu-title">axio session</span>
-                  <span className="menu-detail">its own worktree, the same prompt</span>
+                  <span className="menu-detail">{scope.kind === "group" ? "its own worktree, the same prompt" : "its own worktree, waiting for a prompt"}</span>
                 </button>
               </li>
               {available.length > 0 && <li className="menu-rule" role="separator" />}
@@ -199,6 +307,14 @@ export function GroupPane({
             </ul>
           )}
         </div>
+        <button
+          className="act"
+          title={layout ? "Back to the grid of cards" : "Split panes: drag a card's header onto another's edge, drag the dividers"}
+          onClick={() => onLayout(layout ? null : balanced(ids, "row"))}
+        >
+          {layout ? <IconGrid size={13} /> : <IconSplit size={13} />}
+          {layout ? "Grid" : "Split"}
+        </button>
         <div className="views" role="tablist">
           <button role="tab" aria-selected={mode === "overview"} className={mode === "overview" ? "view on" : "view"} onClick={() => setMode("overview")}>
             Overview
@@ -213,8 +329,56 @@ export function GroupPane({
           </button>
         </div>
       </header>
-      <div className={mode === "overview" ? "group-grid dense" : "group-grid"} style={{ ["--cols" as string]: Math.min(members.length, 3) }}>
-        {members.map((m) => {
+      {layout ? (
+        <div className="group-split">
+          <SplitView
+            node={layout}
+            path={[]}
+            render={(id) => {
+              const m = members.find((x) => (x.kind === "session" ? x.s.id : x.h.id) === id);
+              return m ? card(m) : <div className="empty">gone</div>;
+            }}
+            onRatio={(path, ratio) => onLayout(withRatio(layout, path, ratio))}
+            dragging={dragging}
+            hover={hover}
+            onHover={setHover}
+            onDrop={(target, side) => {
+              if (dragging) onLayout(place(layout, dragging, target, side));
+              setDragging(null);
+              setHover(null);
+            }}
+          />
+        </div>
+      ) : (
+        <div className={mode === "overview" ? "group-grid dense" : "group-grid"} style={{ ["--cols" as string]: Math.min(members.length, 3) }}>
+          {members.map(card)}
+        </div>
+      )}
+      {/* The master box: one line to every member that is listening. */}
+      {members.length > 0 && (
+        <div className="master-ask">
+          <IconListen size={13} />
+          <input
+            value={master}
+            disabled={masterBusy}
+            placeholder={`To ${members.length - muted.size} of ${members.length} — the listening ones`}
+            aria-label="Type to every listening member"
+            onChange={(e) => setMaster(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void broadcast();
+              }
+            }}
+          />
+        </div>
+      )}
+      {menu && <RowMenu items={menu.items} at={menu.at} onClose={() => setMenu(null)} />}
+    </div>
+  );
+
+  function card(m: (typeof members)[number]) {
+    {
           const id = m.kind === "session" ? m.s.id : m.h.id;
           const name = m.kind === "session" ? (m.s.title ?? "axio") : m.h.name;
           const branch = m.kind === "session" ? m.s.branch : m.h.branch;
@@ -224,8 +388,9 @@ export function GroupPane({
                 ? "var(--agent-pi)"
                 : "var(--agent-axio)"
               : `var(${m.h.accentVar})`;
-          const needs = m.kind === "session" && attention.has(id);
-          const status = m.kind === "session" ? (m.s.open ? m.s.status : "closed") : m.h.status;
+          const needs = attention.has(id);
+          const status =
+            m.kind === "session" ? (m.s.open ? m.s.status : "closed") : m.h.status === "running" ? (m.h.agentStatus ?? "running") : m.h.status;
           const text = diffs[id];
           const files = text ? (text.match(/^diff --git /gm)?.length ?? (text.trim() ? 1 : 0)) : 0;
           const body =
@@ -233,22 +398,24 @@ export function GroupPane({
               <div className="group-card-diff">
                 <Diff text={text ?? null} />
               </div>
-            ) : mode === "overview" ? (
-              m.kind === "session" ? (
-                <SessionSummary
-                  session={m.s}
-                  needs={needs}
-                  approvals={approvals.filter((a) => a.sessionId === id)}
-                  onChanged={onChanged}
-                  onError={onError}
-                />
-              ) : (
-                <TerminalSummary terminal={m.h} onError={onError} />
-              )
             ) : m.kind === "terminal" ? (
-              <div className="group-card-term">
-                <HostedTerminal key={id} session={m.h} terminal={terminal} compact />
-              </div>
+              // A terminal card follows the pane's switch until it is told
+              // its own view from its menu, and then keeps that.
+              (views[id] ?? (mode === "live" ? "tui" : "card")) === "card" ? (
+                <TerminalSummary terminal={m.h} settings={terminal} compact onError={onError} />
+              ) : (
+                <div className="group-card-term">
+                  <HostedTerminal key={id} session={m.h} terminal={terminal} compact />
+                </div>
+              )
+            ) : mode === "overview" ? (
+              <SessionSummary
+                session={m.s}
+                needs={needs}
+                approvals={approvals.filter((a) => a.sessionId === id)}
+                onChanged={onChanged}
+                onError={onError}
+              />
             ) : (
               <LiveTranscript id={id} onError={onError} />
             );
@@ -261,6 +428,13 @@ export function GroupPane({
           const preset = typeof size === "string" ? size : null;
           const lead: MenuItem[] = [
             { kind: "action", title: "Expand into its own tab", run: () => onOpen(tab) },
+            ...(m.kind === "terminal"
+              ? [
+                  { kind: "rule" as const },
+                  ...viewItems(views[id] ?? (mode === "live" ? "tui" : "card"), ["card", "tui"], (v) => onView(id, v)),
+                  { kind: "rule" as const },
+                ]
+              : []),
             ...SIZES.map((s) => ({
               kind: "action" as const,
               title: `${s.size === preset ? "● " : "○ "}${s.title}`,
@@ -308,12 +482,25 @@ export function GroupPane({
               onContextMenu={(e) => openMenu(e, items)}
             >
               {/* Not a button: clicking a header must not yank the view to
-                  that member. Expanding is on the menu, deliberately. */}
-              <div className="group-card-head">
+                  that member. Expanding is on the menu, deliberately. In the
+                  split layout the header is the handle a card is moved by. */}
+              <div
+                className="group-card-head"
+                draggable={layout !== null}
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", id);
+                  setDragging(id);
+                }}
+                onDragEnd={() => {
+                  setDragging(null);
+                  setHover(null);
+                }}
+              >
                 <span className={`dot ${needs ? "needs" : status}`} />
                 {m.kind === "terminal" && <IconTerminal size={12} />}
                 <span className="name">{name}</span>
-                <span className="state">{needs ? "needs you" : status === "running" ? "working" : status}</span>
+                <span className="state">{needs ? "needs you" : status === "running" || status === "working" ? "working" : status}</span>
                 <span className="card-acts">
                   <button className="row-more" aria-label={`Options for ${name}`} title="Options" onClick={(e) => openMenu(e, items)}>
                     <IconMore size={12} />
@@ -325,6 +512,15 @@ export function GroupPane({
                     onClick={() => onSize(id, NEXT[preset ?? "small"])}
                   >
                     <IconResize size={12} />
+                  </button>
+                  <button
+                    className={`row-more${muted.has(id) ? "" : " on"}`}
+                    aria-pressed={!muted.has(id)}
+                    aria-label={muted.has(id) ? `${name} ignores the master box` : `${name} listens to the master box`}
+                    title={muted.has(id) ? "Not listening to the box below — click to listen" : "Listening to the box below — click to mute"}
+                    onClick={() => toggleMute(id)}
+                  >
+                    <IconListen size={12} />
                   </button>
                   <button className="row-more" aria-label={`Expand ${name}`} title="Expand into its own tab" onClick={() => onOpen(tab)}>
                     <IconExpand size={12} />
@@ -353,17 +549,105 @@ export function GroupPane({
                 )}
               </div>
               {body}
-              <span
-                className="card-grip"
-                role="presentation"
-                title="Drag to resize"
-                onPointerDown={startDrag}
-              />
+              {layout === null && (
+                <span
+                  className="card-grip"
+                  role="presentation"
+                  title="Drag to resize"
+                  onPointerDown={startDrag}
+                />
+              )}
             </section>
           );
-        })}
+    }
+  }
+}
+
+// The split layout, drawn: a tree of rows and columns with a divider at
+// each split that drags, and at each leaf a card and — while another card
+// is being dragged — five drop zones saying where it would land.
+function SplitView({
+  node,
+  path,
+  render,
+  onRatio,
+  dragging,
+  hover,
+  onHover,
+  onDrop,
+}: {
+  node: LayoutNode;
+  path: ("a" | "b")[];
+  render: (id: string) => React.ReactNode;
+  onRatio: (path: ("a" | "b")[], ratio: number) => void;
+  dragging: string | null;
+  hover: { id: string; side: Side } | null;
+  onHover: (h: { id: string; side: Side } | null) => void;
+  onDrop: (target: string, side: Side) => void;
+}) {
+  const host = useRef<HTMLDivElement>(null);
+  if (node.kind === "leaf") {
+    const sideAt = (e: React.DragEvent): Side => {
+      const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const x = (e.clientX - box.left) / box.width;
+      const y = (e.clientY - box.top) / box.height;
+      if (x < 0.25) return "left";
+      if (x > 0.75) return "right";
+      if (y < 0.25) return "top";
+      if (y > 0.75) return "bottom";
+      return "center";
+    };
+    const over = dragging !== null && dragging !== node.id;
+    return (
+      <div
+        className="lay-leaf"
+        onDragOver={(e) => {
+          if (!over) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const side = sideAt(e);
+          if (hover?.id !== node.id || hover.side !== side) onHover({ id: node.id, side });
+        }}
+        onDragLeave={() => {
+          if (hover?.id === node.id) onHover(null);
+        }}
+        onDrop={(e) => {
+          if (!over) return;
+          e.preventDefault();
+          onDrop(node.id, sideAt(e));
+        }}
+      >
+        {render(node.id)}
+        {over && hover?.id === node.id && <div className={`drop-hint ${hover.side}`} />}
       </div>
-      {menu && <RowMenu items={menu.items} at={menu.at} onClose={() => setMenu(null)} />}
+    );
+  }
+  const startDivider = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const box = host.current?.getBoundingClientRect();
+    if (!box) return;
+    const move = (ev: PointerEvent) => {
+      const ratio = node.dir === "row" ? (ev.clientX - box.left) / box.width : (ev.clientY - box.top) / box.height;
+      onRatio(path, ratio);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.classList.remove(node.dir === "row" ? "resizing-x" : "resizing-y");
+    };
+    document.body.classList.add(node.dir === "row" ? "resizing-x" : "resizing-y");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  return (
+    <div className={`lay-split lay-${node.dir}`} ref={host}>
+      <div className="lay-side" style={{ flexBasis: `${node.ratio * 100}%` }}>
+        <SplitView node={node.a} path={[...path, "a"]} render={render} onRatio={onRatio} dragging={dragging} hover={hover} onHover={onHover} onDrop={onDrop} />
+      </div>
+      <div className="lay-divider" role="separator" aria-orientation={node.dir === "row" ? "vertical" : "horizontal"} onPointerDown={startDivider} />
+      <div className="lay-side" style={{ flexBasis: `${(1 - node.ratio) * 100}%` }}>
+        <SplitView node={node.b} path={[...path, "b"]} render={render} onRatio={onRatio} dragging={dragging} hover={hover} onHover={onHover} onDrop={onDrop} />
+      </div>
     </div>
   );
 }
@@ -525,38 +809,212 @@ function SessionSummary({
   );
 }
 
-// A hosted agent at a glance. Its words are its terminal's — there is no
-// transcript to summarise — so the card is a state, a follow-up that types
-// into it, and where it is.
-function TerminalSummary({ terminal, onError }: { terminal: HostedView; onError: (message: string) => void }) {
+// A hosted agent in a card. Its words are its terminal's — there is no
+// transcript to summarise — so the card *is* the terminal: the agent's own
+// interface, live, with its menus and selections, and under it a follow-up
+// box of ours that types into it and knows its slash commands. The two are
+// the same prompt seen twice; the box is for a wall of cards, where typing
+// into a small terminal is fiddly.
+/** A key as the terminal would receive it, or `null` for one that is the
+ *  browser's — Cmd-anything, function keys, a modifier alone. */
+function keyBytes(e: React.KeyboardEvent, lettersToo: boolean): string | null {
+  if (e.metaKey) return null;
+  const named: Record<string, string> = {
+    ArrowUp: "\x1b[A",
+    ArrowDown: "\x1b[B",
+    ArrowRight: "\x1b[C",
+    ArrowLeft: "\x1b[D",
+    Enter: "\r",
+    Escape: "\x1b",
+    Tab: "\t",
+    Backspace: "\x7f",
+    Delete: "\x1b[3~",
+    Home: "\x1b[H",
+    End: "\x1b[F",
+    PageUp: "\x1b[5~",
+    PageDown: "\x1b[6~",
+  };
+  const hit = named[e.key];
+  if (hit !== undefined) return hit;
+  if (e.ctrlKey && e.key.length === 1 && /[a-z]/i.test(e.key)) {
+    return String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64);
+  }
+  if (lettersToo && !e.ctrlKey && !e.altKey && e.key.length === 1) return e.key;
+  return null;
+}
+
+/** Whether a key is one a terminal menu is driven with rather than typed text. */
+function isSteering(e: React.KeyboardEvent): boolean {
+  return e.key.length > 1 || (e.ctrlKey && !e.metaKey);
+}
+
+export function TerminalSummary({
+  terminal,
+  settings,
+  compact = false,
+  resumeKey,
+  onError,
+}: {
+  terminal: HostedView;
+  settings: TerminalSettings | null;
+  compact?: boolean;
+  /** Changes on a resume, so the emulator remounts for the new process. */
+  resumeKey?: number;
+  onError: (message: string) => void;
+}) {
   const [draft, setDraft] = useState("");
   const live = terminal.status === "running";
+  const pickRef = useRef<HTMLLIElement>(null);
+  // Relay: every key goes to the agent, letters included, so a picker the
+  // agent drew after a slash command can be filtered and chosen from here.
+  // Entered when a slash command is sent; left on Enter or Esc, which the
+  // agent gets too, or by clicking the pill, which it does not.
+  const [relay, setRelay] = useState(false);
+  const relayKey = (bytes: string) => void api.hostedWrite(terminal.id, bytes, false).catch((e) => onError(describe(e)));
+  // What the agent's own slash menu would offer, read once per terminal.
+  // The box types into the agent's prompt, so anything on this list works
+  // exactly as it would there; the list is so a person is not typing blind.
+  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const [pick, setPick] = useState(0);
+  useEffect(() => {
+    void api.hostedCommands(terminal.id).then(setCommands).catch(() => setCommands([]));
+  }, [terminal.id]);
+  const slashing = draft.startsWith("/") && !draft.includes(" ");
+  const matches = slashing ? commands.filter((c) => c.name.startsWith(draft)) : [];
+  const chosen = matches[Math.min(pick, Math.max(0, matches.length - 1))];
+  useEffect(() => {
+    pickRef.current?.scrollIntoView({ block: "nearest" });
+  }, [pick, chosen]);
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
     try {
-      await api.hostedWrite(terminal.id, text, true);
+      // Paced: the text, a pause, then Enter — so a slash command opens the
+      // agent's own menu and the Enter chooses it rather than pasting both.
+      await api.hostedSubmit(terminal.id, text);
       setDraft("");
+      setPick(0);
+      if (text.startsWith("/")) setRelay(true);
     } catch (e) {
       onError(describe(e));
     }
   };
+  const complete = (name: string) => {
+    setDraft(`${name} `);
+    setPick(0);
+  };
   return (
     <div className="summary">
       <div className="summary-state">
-        <b>{live ? "Running" : terminal.status}</b>
-        <span className="quiet">read it under Live</span>
+        <b>
+          {live
+            ? terminal.agentStatus === "blocked"
+              ? "Needs you"
+              : terminal.agentStatus === "done"
+                ? "Done"
+                : terminal.agentStatus === "idle"
+                  ? "Waiting for a prompt"
+                  : "Working"
+            : terminal.stopped
+              ? "Stopped"
+              : terminal.status}
+        </b>
+        <span className="quiet">
+          {terminal.agentStatus ? "its own word, by its hooks" : "its own interface · type into it, or into the box below"}
+        </span>
       </div>
-      <div className="summary-said quiet">Its own interface. Typed below goes to its prompt.</div>
+      <div className="summary-term">
+        {terminal.transport === "app" ? (
+          <HostedChat terminal={terminal} onError={onError} />
+        ) : (
+          <HostedTerminal
+            key={`${terminal.id}:${resumeKey ?? (live ? "live" : "dead")}`}
+            session={terminal}
+            terminal={settings}
+            compact={compact}
+          />
+        )}
+      </div>
       <div className="summary-ask">
-        <span className="prompt-mark">›</span>
+        {matches.length > 0 && (
+          <ul className="slash-menu" role="listbox" aria-label="Slash commands">
+            {matches.map((c) => (
+              <li
+                key={c.name}
+                ref={c === chosen ? pickRef : undefined}
+                role="option"
+                aria-selected={c === chosen}
+                className={c === chosen ? "on" : undefined}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  complete(c.name);
+                }}
+              >
+                <code>{c.name}</code>
+                {c.detail && <span className="quiet">{c.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {relay ? (
+          <button className="relay-pill" onClick={() => setRelay(false)} title="Keys typed here go to the agent. Click to stop; Esc stops and is sent too.">
+            keys go to the agent · Esc to stop
+          </button>
+        ) : (
+          <span className="prompt-mark">›</span>
+        )}
         <input
-          value={draft}
-          placeholder="Type to the agent"
+          value={relay ? "" : draft}
+          placeholder={relay ? "arrows, Enter, letters — straight to the agent" : "Type to the agent · / for its commands"}
           disabled={!live}
           aria-label="Type to the agent"
-          onChange={(e) => setDraft(e.target.value)}
+          className={relay ? "relaying" : undefined}
+          onChange={(e) => {
+            if (relay) return;
+            setDraft(e.target.value);
+            setPick(0);
+          }}
           onKeyDown={(e) => {
+            if (relay) {
+              const bytes = keyBytes(e, true);
+              if (bytes === null) return;
+              e.preventDefault();
+              relayKey(bytes);
+              if (e.key === "Enter" || e.key === "Escape") setRelay(false);
+              return;
+            }
+            // An empty box is the agent's: arrows, Enter, Esc, Tab and
+            // Ctrl keys drive whatever it is showing, letters still type.
+            if (draft === "" && isSteering(e)) {
+              const bytes = keyBytes(e, false);
+              if (bytes !== null) {
+                e.preventDefault();
+                relayKey(bytes);
+                return;
+              }
+            }
+            if (matches.length > 0) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setPick((p) => (p + 1) % matches.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setPick((p) => (p - 1 + matches.length) % matches.length);
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && chosen && chosen.name !== draft)) {
+                e.preventDefault();
+                if (chosen) complete(chosen.name);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setDraft("");
+                return;
+              }
+            }
             if (e.key === "Enter") {
               e.preventDefault();
               void send();

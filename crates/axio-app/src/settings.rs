@@ -69,6 +69,16 @@ pub struct TerminalSettings {
     /// contiguous at anything else, and provider interfaces are full of them.
     pub line_height: f64,
     pub scrollback: u32,
+    /// How a terminal opened in its own tab is shown until it is told
+    /// otherwise: `card` (the group card: state, a typed follow-up, the
+    /// branch), `tui` (the real terminal under that card's header), or
+    /// `plain` (the terminal edge to edge, no chrome). Each terminal's own
+    /// choice, made from its header menu, overrides this for that terminal.
+    pub view: String,
+    /// Start every remembered terminal again when the window opens, each in
+    /// its own worktree with its tool asked to continue. Off, they are
+    /// listed as ended until resumed one by one.
+    pub resume_on_launch: bool,
 }
 
 impl Default for TerminalSettings {
@@ -78,6 +88,8 @@ impl Default for TerminalSettings {
             font_size: 13,
             line_height: 1.0,
             scrollback: 10_000,
+            view: "card".to_owned(),
+            resume_on_launch: true,
         }
     }
 }
@@ -129,6 +141,17 @@ impl Settings {
             app: home.join("app.toml"),
             config: home.join("config.toml"),
         }
+    }
+
+    /// The directory both files live in.
+    pub fn home(&self) -> PathBuf {
+        self.app.parent().map(Path::to_path_buf).unwrap_or_default()
+    }
+
+    /// Where the window keeps the terminals it hosts, beside its settings —
+    /// its own record, since no other surface has hosted terminals to list.
+    pub fn terminals(&self) -> PathBuf {
+        self.app.with_file_name("terminals.json")
     }
 
     /// The window's own settings. A missing file is the defaults; a file that

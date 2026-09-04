@@ -13,6 +13,7 @@ description = "Running another agent's command-line tool in a pseudo-terminal ax
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 # The pseudo-terminal itself. Pure Rust on every platform we ship — it binds
 # ConPTY through `windows-sys` rather than compiling anything, so it does not

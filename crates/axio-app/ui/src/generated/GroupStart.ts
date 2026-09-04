@@ -5,4 +5,9 @@ import type { SessionView } from "./SessionView";
 /**
  * What `start_group` returns: the id every member carries, and the members.
  */
-export type GroupStart = { group: string, sessions: Array<SessionView>, terminals: Array<HostedView>, };
+export type GroupStart = { group: string, sessions: Array<SessionView>, terminals: Array<HostedView>, 
+/**
+ * Every member's id in the order the plan named them, sessions and
+ * terminals interleaved, so a layout drawn from the plan can find them.
+ */
+order: Array<string>, };

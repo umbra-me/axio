@@ -299,6 +299,32 @@ does not break the cycle because the terminal outlives its process. The master
 is released on a detached thread now; without it, closing a terminal in the
 application would hang the window on the click.
 
+### M15 — the window as a multi-agent desktop
+
+The window stops being a viewer of one thing at a time. Every agent working in
+a repository is listed under that repository — sessions and terminals alike,
+inside the group they were started in, the whole tree folding away — and a
+repository opens as a tab over everything running in it.
+
+Starting is a **plan**: how many of each agent, on which model, at what effort,
+with what it may do without asking, in which column. The columns become the
+layout, which is a tree of splits a card can be dragged into, or a grid, and a
+single box at the foot types into every member that is listening.
+
+Terminals stop being ephemeral. What each one was — its harness, worktree,
+branch, name, arguments — is journaled, so the next window lists them and
+brings them back running on the tool's own session id, while one that a person
+stopped stays stopped. And the agents in them stop being opaque: hooks handed
+to each process on its command line report four states and that session id, an
+in-band sequence covers tools without hooks, and Codex can be driven through
+its own JSON-RPC instead of a terminal — structured turns, structured
+approvals, answered from the card.
+
+Underneath, three supervisor changes the window needed: worktrees named from a
+list of 2,500 rather than numbered by ULID, a per-repository setup command run
+before an agent starts, and a checkpoint either side of every turn so a diff
+can be one turn's work.
+
 ## Next
 
 ### v0.1 — the release itself

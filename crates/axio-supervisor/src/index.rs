@@ -94,6 +94,9 @@ enum IndexRecord {
         session: SessionId,
         title: Option<String>,
     },
+    /// The first prompt, given after the start: a session started with none
+    /// and asked something later is labelled by what it was asked.
+    Labelled { session: SessionId, label: String },
     /// Written by a later axio. Skipped, never fatal — the same forward
     /// compatibility the session format has.
     #[serde(other)]
@@ -148,6 +151,9 @@ impl SessionIndex {
                         Ok(IndexRecord::Renamed { session, title }) => {
                             index.mark_renamed(session, title)
                         }
+                        Ok(IndexRecord::Labelled { session, label }) => {
+                            index.mark_labelled(session, label)
+                        }
                         Ok(IndexRecord::Unknown) => {}
                         Err(e) => tracing::warn!("skipping a damaged index line: {e}"),
                     }
@@ -191,6 +197,15 @@ impl SessionIndex {
             && let Some(entry) = self.entries.get_mut(position)
         {
             entry.title = title;
+        }
+    }
+
+    fn mark_labelled(&mut self, session: SessionId, label: String) {
+        if let Some(&position) = self.at.get(&session)
+            && let Some(entry) = self.entries.get_mut(position)
+            && entry.label.is_none()
+        {
+            entry.label = Some(label);
         }
     }
 
@@ -248,6 +263,23 @@ impl SessionIndex {
         Ok(())
     }
 
+    /// Give a session started without a prompt the label its first prompt
+    /// is. A session that already has one keeps it: the label records what
+    /// was asked first, and this is only ever the first.
+    pub fn record_labelled(&mut self, session: SessionId, label: String) -> Result<()> {
+        match self.get(session) {
+            None => return Err(SupervisorError::NoSuchSession(session)),
+            Some(entry) if entry.label.is_some() => return Ok(()),
+            Some(_) => {}
+        }
+        self.append(&IndexRecord::Labelled {
+            session,
+            label: label.clone(),
+        })?;
+        self.mark_labelled(session, label);
+        Ok(())
+    }
+
     pub fn get(&self, session: SessionId) -> Option<&IndexEntry> {
         self.at.get(&session).and_then(|&at| self.entries.get(at))
     }
@@ -285,6 +317,42 @@ impl SessionIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_first_prompt_labels_an_unlabelled_session_and_only_that_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut index = SessionIndex::open(dir.path().join("index.jsonl")).unwrap();
+        let project = project("umbra");
+        let mut blank = entry(&project, "");
+        blank.label = None;
+        let blank_id = blank.session;
+        index.record_started(blank).unwrap();
+        let asked = entry(&project, "do a thing");
+        let asked_id = asked.session;
+        index.record_started(asked).unwrap();
+
+        index
+            .record_labelled(blank_id, "fix the tests".into())
+            .unwrap();
+        index
+            .record_labelled(asked_id, "something else".into())
+            .unwrap();
+        assert_eq!(
+            index.get(blank_id).unwrap().label.as_deref(),
+            Some("fix the tests")
+        );
+        assert_eq!(
+            index.get(asked_id).unwrap().label.as_deref(),
+            Some("do a thing")
+        );
+
+        // And it survives a reopen, since it was written as a record.
+        let again = SessionIndex::open(dir.path().join("index.jsonl")).unwrap();
+        assert_eq!(
+            again.get(blank_id).unwrap().label.as_deref(),
+            Some("fix the tests")
+        );
+    }
 
     fn entry(project: &Project, label: &str) -> IndexEntry {
         IndexEntry {

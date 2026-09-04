@@ -62,6 +62,8 @@ pub struct AppState {
     /// commands answer with defaults and refuse to save.
     settings: Option<Settings>,
     supervisor: Option<Arc<Supervisor>>,
+    /// Where the window keeps how it was looking at things. Absent in tests.
+    window: Option<crate::window_state::WindowStateFile>,
     /// Why there is no supervisor, when there is none. Kept so the interface
     /// can say what is wrong instead of showing an empty list — "no work" and
     /// "could not look" are different answers and must not look alike.
@@ -75,6 +77,7 @@ impl AppState {
             transcripts: Transcripts::default(),
             store: None,
             settings: None,
+            window: None,
             supervisor: Some(supervisor),
             unavailable: None,
         }
@@ -86,10 +89,32 @@ impl AppState {
         self
     }
 
-    /// Where the window keeps what it remembers about itself.
+    /// Where the window keeps what it remembers about itself — its settings,
+    /// and the terminals it hosted, which the next window lists as ended.
+    ///
+    /// Given before anything starts: the registry it replaces is empty.
     pub fn with_settings(mut self, settings: Settings) -> Self {
+        self.hosted = crate::hosted::Hosted::remembered_in(settings.terminals());
+        self.window = Some(crate::window_state::WindowStateFile::in_home(
+            &settings.home(),
+        ));
         self.settings = Some(settings);
         self
+    }
+
+    /// How the window was looking at things when it last saved.
+    pub fn window_state(&self) -> crate::window_state::WindowState {
+        self.window.as_ref().map(|w| w.load()).unwrap_or_default()
+    }
+
+    pub fn save_window_state(
+        &self,
+        state: &crate::window_state::WindowState,
+    ) -> Result<(), AppError> {
+        match &self.window {
+            Some(w) => w.save(state),
+            None => Ok(()),
+        }
     }
 
     // --- settings ----------------------------------------------------------
@@ -98,6 +123,15 @@ impl AppState {
         self.settings.as_ref().ok_or_else(|| {
             AppError::Unavailable("this window has nowhere to keep settings".to_owned())
         })
+    }
+
+    /// Whether the window brings its remembered terminals back on opening.
+    /// Defaults on; a window with no settings file has no terminals to bring.
+    pub fn resumes_on_launch(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.load().ok())
+            .is_none_or(|app| app.terminal.resume_on_launch)
     }
 
     pub fn settings_view(&self) -> Result<SettingsView, AppError> {
@@ -123,6 +157,7 @@ impl AppState {
             transcripts: Transcripts::default(),
             store: None,
             settings: None,
+            window: None,
             supervisor: None,
             unavailable: Some(why.into()),
         }

@@ -66,13 +66,18 @@ serde_json.workspace = true
 # and then drifted anyway. A derive and a test beat a warning.
 ts-rs = "12.0.1"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net", "io-util"] }
 # The window's own settings file, `app.toml`. Read and written whole, by this
 # crate alone; axio's `config.toml` is edited through `axio_core::config::edit`.
 toml.workspace = true
 # Group ids: sessions started together carry one, minted here.
 ulid.workspace = true
-tauri = { workspace = true, optional = true }
+# `macos-private-api` because a transparent window on macOS is behind that
+# flag, and without it `transparent: true` is ignored: the glass had no effect
+# there because the window under it was opaque. On the dependency line rather
+# than in the `app` feature, because `tauri-build` checks this line against
+# `macOSPrivateApi` in the config and does not follow feature forwarding.
+tauri = { workspace = true, optional = true, features = ["macos-private-api"] }
 tauri-plugin-dialog = { version = "2.7.2", optional = true }
 # One window per machine. Two of them would be two supervisors over one index
 # and one set of worktrees, each unaware of what the other is running.

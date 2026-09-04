@@ -97,6 +97,9 @@ impl AppState {
         let handle = supervisor
             .session(id)
             .map_err(|e| AppError::NoSuchSession(e.to_string()))?;
+        // A session started with no prompt is "(no prompt)" in every list
+        // until it is asked something; what it is asked first is its label.
+        let _ = supervisor.label(id, &prompt);
         tokio::spawn(async move {
             let _ = handle.turn(prompt).await;
         });
@@ -136,6 +139,38 @@ impl AppState {
     }
 
     /// What a session changed, as a unified diff.
+    /// The turns of a session that have a checkpoint either side.
+    pub async fn turns(&self, session_id: &str) -> Result<Vec<u32>, AppError> {
+        let entry = self.index_entry(session_id)?;
+        entry
+            .checkout()
+            .turns(&session_id.to_lowercase())
+            .await
+            .map_err(|e| AppError::Supervisor(e.to_string()))
+    }
+
+    /// What one turn of a session changed.
+    pub async fn turn_diff(&self, session_id: &str, turn: u32) -> Result<String, AppError> {
+        let entry = self.index_entry(session_id)?;
+        entry
+            .checkout()
+            .turn_diff(&session_id.to_lowercase(), turn)
+            .await
+            .map_err(|e| AppError::Supervisor(e.to_string()))
+    }
+
+    fn index_entry(&self, session_id: &str) -> Result<axio_supervisor::IndexEntry, AppError> {
+        let supervisor = self.supervisor()?;
+        let id: axio_core::protocol::SessionId = session_id
+            .parse()
+            .map_err(|_| AppError::NoSuchSession(format!("`{session_id}` is not a session id")))?;
+        supervisor
+            .history()
+            .into_iter()
+            .find(|e| e.session == id)
+            .ok_or_else(|| AppError::NoSuchSession(format!("no session {session_id}")))
+    }
+
     pub async fn diff(&self, session_id: &str) -> Result<String, AppError> {
         let supervisor = self.supervisor()?;
         let id: axio_core::protocol::SessionId = session_id

@@ -770,9 +770,23 @@ git refusing to diff the file. No other tracked source file has any.
 the timestamp and the rest is random, so two ids minted in the same millisecond
 sort arbitrarily — and a queue of agents starts sessions in the same millisecond
 as a matter of course. The session index therefore holds file order rather than
-id order, and a worktree's branch carries the whole ULID rather than a readable
-prefix. Sorting a list of sessions by id looks correct in every test with a sleep
-in it and is wrong in the case the feature exists for.
+id order. Sorting a list of sessions by id looks correct in every test with a
+sleep in it and is wrong in the case the feature exists for. A branch is not
+named from the id at all: a name is picked from a fixed list against the
+branches the repository already has, which is a question git can answer and a
+timestamp cannot.
+
+**A checkpoint must not use the agent's index.** `git add -A` in a worktree an
+agent is working in stages its files under it, and the next thing that reads
+`git status` there sees a tree somebody else touched. Point `GIT_INDEX_FILE` at
+a throwaway path and the same three commands — add, write-tree, commit-tree —
+leave the real index exactly as it was.
+
+**A setup command that fails must fail the start.** A worktree with no
+dependencies installed is a checkout where every tool call fails for the same
+boring reason, and an agent will spend a turn discovering it. Refusing with the
+last twenty lines the command printed costs one message; the alternative costs
+a turn and reads like the agent's fault.
 
 **Record a worktree's path exactly as git was given it.** git registers a
 worktree under the string it was handed, and on Windows `canonicalize` returns
@@ -819,6 +833,48 @@ allowed to exist and no other one is.
 **The executable is allowlisted and only arguments are configurable.** "Run
 whatever this string says" in a desktop application is remote code execution
 wearing the word *preference*.
+
+**Hooks belong on the command line, not in the person's configuration.** Both
+Claude Code and Codex will run a command on the events that matter, and both
+read that from files a person owns. Writing there would mean editing somebody's
+settings to make a window work, and every session they start anywhere would pay
+for it. Passed per process — `--settings` with the hooks inline, a `-c notify=`
+override — only the processes this window started report, and quitting takes the
+arrangement with it.
+
+**The id in a tool's own notification is not always the id its resume takes.**
+Codex's notify names a thread; `codex resume` wants the session, which is
+written in the rollout file it keeps. Reading that file back — newest first,
+matched on the directory it names — is the difference between resuming the
+conversation and starting a new one.
+
+**"Continue the last session" means the last one anywhere.** `resume --last`
+does not mean "here", so two terminals resumed in the same instant can both
+claim the same conversation and one of them loses. Without an id worth
+resuming, start fresh in the worktree: that is at least the work the person
+was looking at.
+
+**A prompt on the command line beats typing one in.** Where a tool takes a
+first prompt as an argument it also opens its interface, so there is nothing to
+wait for and nothing to mistake for a paste. Typing is what is left for tools
+that take no argument, and it is a heuristic — output, then quiet, then keys —
+which is why it is the fallback and not the mechanism.
+
+**Replaying a terminal's history replays its questions.** A program asks the
+terminal about itself as it starts — device attributes, cursor position, mode
+and colour queries — and a fresh emulator catching up on the recorded bytes
+answers every one of them into the program's stdin, as keystrokes it never
+typed. Strip them from a replay and leave the live stream alone: a live
+question deserves its answer.
+
+**A terminal that was replaced needs its screen reset, not its scrollback.** A
+resumed row is a new process whose output starts at zero, and an emulator still
+holding the old cursor waits forever for bytes that already went past. A cursor
+that has moved backwards is the tell.
+
+**Stopping is a decision and a closing window is not.** Both leave a row with
+no process, and only one of them should stay that way when the next window
+opens. Record why, not merely that.
 
 **A hosted tool must not inherit the session markers of the tool that started
 axio.** One that finds them concludes it was launched by a copy of itself and
@@ -949,6 +1005,18 @@ is the cheaper material if that shows.
 root element clips the content inside a corner the window effect behind it does
 not share, so the backdrop keeps square corners while the interface has round
 ones.
+
+**A generic class name in a large stylesheet is a collision waiting for the
+next feature.** `.row` was a transcript row with a reading measure on it, and a
+layout tree that also called something a row inherited an 88ch maximum width
+nobody wrote for it. The same day, `.split` meant two things. Namespace the
+structural ones; the symptom is a box that is mysteriously narrower than its
+container, and the cause is never in the file you are reading.
+
+**A rule written for one button in a component catches every button added
+later.** A dismissable notice sized *its* control to a 22px square, so the day
+that notice grew Resume and Remove they collapsed on top of each other at the
+edge. Scope by what the thing is, not by where it sits.
 
 **The TypeScript boundary is generated, and the test run is what generates it.**
 ts-rs writes it during `cargo test`, so a Rust change with no regeneration shows

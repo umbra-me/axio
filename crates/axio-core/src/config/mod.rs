@@ -86,6 +86,7 @@ impl Default for WorktreeSection {
         Self {
             enabled: true,
             branch_prefix: "axio/".to_owned(),
+            setup: String::new(),
         }
     }
 }

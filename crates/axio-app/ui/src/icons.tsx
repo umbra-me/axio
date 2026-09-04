@@ -99,6 +99,39 @@ export const IconRepo = (p: IconProps) => (
   </Icon>
 );
 
+/** A fold's chevron; points right when folded, rotated by the stylesheet. */
+export const IconChevron = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 3.5 10.5 8 6 12.5" />
+  </Icon>
+);
+
+/** Listening: an ear-ish arc with a dot. Marks a card the master box reaches. */
+export const IconListen = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 7.5a3.5 3.5 0 0 1 7 0c0 2.5-2.5 3-2.5 5.5" />
+    <path d="M8 13.5v.01" />
+  </Icon>
+);
+
+/** Split panes: a box with a divider. */
+export const IconSplit = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
+    <path d="M8 3.5v9" />
+  </Icon>
+);
+
+/** A grid of cards. */
+export const IconGrid = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+  </Icon>
+);
+
 export const IconDiff = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4.5 3v6M2.5 5h4" />

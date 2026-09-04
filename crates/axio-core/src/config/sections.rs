@@ -77,6 +77,12 @@ pub struct WorktreeSection {
     /// assumed — the prefix is used verbatim, so `axio/` and `axio-` both work
     /// and neither is guessed at.
     pub branch_prefix: String,
+    /// A command run in every fresh worktree before its agent starts —
+    /// `pnpm install`, a `make setup` — through the shell, with the worktree
+    /// as its directory. Empty runs nothing. A project's own file may set
+    /// it, since a project knows what it needs; a failing command fails the
+    /// start rather than handing the agent a half-made checkout.
+    pub setup: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
