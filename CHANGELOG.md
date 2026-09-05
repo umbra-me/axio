@@ -7,6 +7,8 @@ a minor bump may break things.
 
 ## [Unreleased]
 
+- September 5: Local-profile launch integration, versioned capture imports, desktop CI and installer packaging with flat release artifacts. See [change set](docs/change-set-2026-09-05.md).
+
 ### Added
 
 - **Hosted agents report their own state, by their hooks.** Claude Code and

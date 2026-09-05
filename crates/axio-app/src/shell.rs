@@ -58,6 +58,7 @@ pub fn run(
             commands::hosted_available,
             commands::hosted_list,
             commands::hosted_start,
+            commands::hosted_start_capture,
             commands::hosted_read,
             commands::hosted_write,
             commands::hosted_resize,

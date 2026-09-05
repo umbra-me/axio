@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "active": true,
+    "externalBin": [
+      "binaries/axio"
+    ],
+    "targets": [
+      "dmg",
+      "nsis",
+      "deb",
+      "appimage"
+    ]
+  }
+}

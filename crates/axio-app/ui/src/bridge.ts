@@ -112,6 +112,7 @@ export const api = {
   // Hosted agents: Claude Code, Codex or Pi in a terminal axio owns.
   hostedAvailable: () => invoke<HostedView[]>("hosted_available"),
   hostedList: () => invoke<HostedView[]>("hosted_list"),
+  hostedStartCapture: (cwd: string) => invoke<HostedView | null>("hosted_start_capture", { cwd }),
   hostedStart: (
     harness: string,
     cwd: string,

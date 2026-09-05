@@ -37,6 +37,7 @@ mod surfaces;
 mod app_cmd;
 mod cli;
 mod credentials;
+mod local_cmd;
 // Only the interactive surface can switch provider mid-session, so only it
 // has a default to save.
 mod cost;
@@ -97,6 +98,9 @@ use tokio_util::sync::CancellationToken;
 /// reused, so this one is not binary-only.
 pub fn main_entry() -> std::process::ExitCode {
     let cli = Cli::parse();
+    if let Some(Command::Local { profile, args }) = &cli.command {
+        return std::process::ExitCode::from(local_cmd::run(profile, args));
+    }
 
     // Before the runtime, and that is not a preference. A Landlock domain
     // belongs to the calling *thread* and is inherited by threads it creates,

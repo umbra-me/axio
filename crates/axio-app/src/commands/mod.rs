@@ -4,7 +4,9 @@
 //! groups, landing and settings in `hosted.rs`. Every command is `async`
 //! so none of them runs on the thread that paints.
 
+mod capture;
 mod hosted;
+pub use capture::*;
 pub use hosted::*;
 
 use tauri::{Manager, State};

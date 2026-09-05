@@ -1,5 +1,7 @@
 # axio
 
+Current source changes and verification gates: [September 5 change set](docs/change-set-2026-09-05.md).
+
 A cross-platform AI coding agent — Rust, with a one-shot CLI and an
 interactive terminal interface.
 

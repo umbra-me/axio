@@ -1,5 +1,9 @@
 # Roadmap
 
+For the September 5 implementation and its remaining gates, see
+[the current change set](change-set-2026-09-05.md). Earlier verification entries
+below apply to their recorded revisions, not automatically to this change.
+
 Milestones toward v0.1. Each one is done when its acceptance criteria are
 checkable and checked, not when the code exists.
 

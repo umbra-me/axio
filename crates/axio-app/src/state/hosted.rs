@@ -38,6 +38,24 @@ impl AppState {
                 .to_owned();
         }
 
+        if input.harness == "axio"
+            && let Some(settings) = &self.settings
+            && let Ok(app) = settings.load()
+            && let Some(agent) = app.agents.get("axio")
+            && !agent.local_profile.trim().is_empty()
+        {
+            let profile = agent.local_profile.trim();
+            if !profile
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            {
+                return Err(AppError::Supervisor(
+                    "local profile names use letters, digits, hyphens and underscores".into(),
+                ));
+            }
+            input.args = format!("local {profile} {}", input.args);
+        }
+
         let isolation = input.isolation.unwrap_or(Isolation::Worktree);
         let place = match (isolation, self.supervisor()) {
             (Isolation::Worktree, Ok(supervisor)) => {

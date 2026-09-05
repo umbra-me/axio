@@ -8,4 +8,8 @@ export type AgentSettings = {
  * Extra arguments, split the way a shell would. Appended to whatever a
  * launch asks for.
  */
-args: string, };
+args: string, 
+/**
+ * Named Axio Local profile; used only for hosted Axio terminals.
+ */
+localProfile: string, };

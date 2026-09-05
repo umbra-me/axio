@@ -25,6 +25,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attachments;
 pub mod hooks;
 pub mod hosted;
 pub mod model;

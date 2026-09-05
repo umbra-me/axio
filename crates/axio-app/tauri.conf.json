@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "ui/dist",
     "devUrl": "http://127.0.0.1:5273",
-    "beforeDevCommand": "npm --prefix ui run dev",
-    "beforeBuildCommand": "npm --prefix ui run build"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -24,8 +24,15 @@
         "transparent": true,
         "shadow": true,
         "windowEffects": {
-          "effects": ["acrylic"],
-          "color": [8, 9, 12, 190]
+          "effects": [
+            "acrylic"
+          ],
+          "color": [
+            8,
+            9,
+            12,
+            190
+          ]
         }
       }
     ],

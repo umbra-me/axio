@@ -102,6 +102,8 @@ pub struct AgentSettings {
     /// Extra arguments, split the way a shell would. Appended to whatever a
     /// launch asks for.
     pub args: String,
+    /// Named Axio Local profile; used only for hosted Axio terminals.
+    pub local_profile: String,
 }
 
 /// The default model, from axio's own configuration file.
@@ -262,6 +264,7 @@ mod tests {
             "claude".into(),
             AgentSettings {
                 args: "--verbose".into(),
+                ..Default::default()
             },
         );
         settings.save(&wanted).expect("saved");

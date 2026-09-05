@@ -626,3 +626,5 @@ project.** Record the conclusion, not the provenance. Enforced by
 - The relevant build and tests run clean, and their output was read.
 - Anything unverified is labelled as such.
 - Docs invalidated by the change are updated in the same change.
+
+Current integration, schema and release boundaries: [September 5 change set](docs/change-set-2026-09-05.md). Keep its completed and pending validation separate.

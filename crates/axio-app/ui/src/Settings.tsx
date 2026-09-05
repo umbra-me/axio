@@ -253,6 +253,10 @@ export function Settings({
                   Each agent runs as itself in a terminal axio owns, in a worktree of its own. What is set here is
                   passed on its command line every time it is started.
                 </p>
+                <Field label="Axio Local profile" hint="Optional named profile from Axio Local’s config.json. Used for new hosted Axio terminals on macOS, Linux or WSL; leave empty for normal launches.">
+                  <input value={draft.agents.axio?.localProfile ?? ""} placeholder="workstation"
+                    onChange={(e) => setDraft((d) => ({ ...d, agents: { ...d.agents, axio: { args: d.agents.axio?.args ?? "", localProfile: e.target.value } } }))} />
+                </Field>
                 {available.length === 0 && <p className="settings-lead">No agent tools were found on this machine.</p>}
                 {available.map((a) => (
                   <Field
@@ -267,7 +271,7 @@ export function Settings({
                       onChange={(e) =>
                         setDraft((d) => ({
                           ...d,
-                          agents: { ...d.agents, [a.harness]: { args: e.target.value } },
+                          agents: { ...d.agents, [a.harness]: { localProfile: d.agents[a.harness]?.localProfile ?? "", args: e.target.value } },
                         }))
                       }
                     />

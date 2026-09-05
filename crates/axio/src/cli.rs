@@ -18,6 +18,12 @@ pub(crate) enum Command {
     /// binary is looked for beside this one, then on PATH. A second launch
     /// brings the already-open window forward rather than opening another.
     App,
+    /// Start Axio using a named Axio Local profile. Requires axio-local on PATH.
+    Local {
+        profile: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Manage stored credentials.
     Auth {
         #[command(subcommand)]

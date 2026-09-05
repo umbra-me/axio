@@ -53,3 +53,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  desktop:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci --prefix crates/axio-app/ui
+      - run: npm ci --prefix crates/axio-quota/ui
+      - run: cargo test --locked -p axio-app
+      - run: git diff --exit-code -- crates/axio-app/ui/src/generated
+      - run: npm --prefix crates/axio-app/ui run build
+      - run: npm --prefix crates/axio-quota/ui run build
+      - run: cargo check --locked -p axio-app --features app
+      - if: runner.os == 'Windows'
+        run: cargo check --locked -p axio-quota --features app

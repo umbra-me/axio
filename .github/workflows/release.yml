@@ -60,7 +60,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             name: axio-aarch64-macos
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             name: axio-x86_64-macos
           - os: windows-latest
@@ -77,7 +77,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build -p axio --release --target ${{ matrix.target }}
+        run: cargo build --locked -p axio --release --target ${{ matrix.target }}
 
       # The binary is the deliverable, so prove it runs on the machine that
       # produced it before it goes anywhere.
@@ -111,8 +111,71 @@ jobs:
             *.zip
           if-no-files-found: error
 
+  desktop:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: npm ci --prefix crates/axio-app/ui
+      - run: cargo test --locked -p axio-app
+      - run: git diff --exit-code -- crates/axio-app/ui/src/generated
+      - name: Build the bundled CLI
+        shell: bash
+        run: |
+          cargo build --locked --release -p axio --target "${{ matrix.target }}"
+          mkdir -p crates/axio-app/binaries
+          suffix=""
+          [ "${{ runner.os }}" != Windows ] || suffix=".exe"
+          cp "target/${{ matrix.target }}/release/axio${suffix}" "crates/axio-app/binaries/axio-${{ matrix.target }}${suffix}"
+      - name: Package desktop
+        working-directory: crates/axio-app
+        run: npx --yes --package @tauri-apps/cli@2.11.4 tauri build --ci --config tauri.release.conf.json --features app --target ${{ matrix.target }}
+      - name: Stage desktop installers
+        shell: bash
+        env:
+          BUNDLE_DIR: target/${{ matrix.target }}/release/bundle
+        run: |
+          shopt -s nullglob
+          installers=("$BUNDLE_DIR"/dmg/*.dmg "$BUNDLE_DIR"/nsis/*.exe "$BUNDLE_DIR"/msi/*.msi "$BUNDLE_DIR"/deb/*.deb "$BUNDLE_DIR"/appimage/*.AppImage)
+          [ "${#installers[@]}" -gt 0 ] || { echo "No desktop installers found" >&2; exit 1; }
+          mkdir desktop-artifacts
+          for installer in "${installers[@]}"; do
+            destination="desktop-artifacts/${installer##*/}"
+            [ ! -e "$destination" ] || { echo "Duplicate installer filename: $destination" >&2; exit 1; }
+            cp "$installer" "$destination"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: desktop-artifacts/*
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -230,7 +230,7 @@ let settings: AppSettings = {
   appearance: { uiFont: "", uiScale: 1, density: "comfortable", theme: import.meta.env.VITE_MOCK_THEME ?? "dark" },
   terminal: { font: "", fontSize: 13, lineHeight: 1, scrollback: 10000, view: "card", resumeOnLaunch: true },
   editor: "code",
-  agents: { claude: { args: "--verbose" } },
+  agents: { claude: { args: "--verbose", localProfile: "" } },
 };
 let model: ModelDefault = { provider: "openai-codex", name: "gpt-5.4-mini" };
 const settingsView = (): SettingsView => ({

@@ -48,6 +48,7 @@ app = [
 ]
 
 [dependencies]
+sha2 = "0.10.9"
 axio-core.workspace = true
 axio-supervisor.workspace = true
 axio-pty.workspace = true

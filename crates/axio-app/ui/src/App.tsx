@@ -585,6 +585,10 @@ export default function App() {
     const out: Command[] = [
       { id: "new", group: "Start", title: "New session", detail: label("newSession"), run: () => setActive(null) },
       { id: "repo", group: "Start", title: "Add a repository", detail: label("addRepository"), run: () => void addRepository() },
+      ...(available.some((a) => a.harness === "codex") ? [{ id: "capture", group: "Start", title: "Start Codex with Capture", detail: "Choose an exported attachment; send with your first prompt", run: () => {
+        if (!chosen) { setNotice("Add a repository first"); return; }
+        void api.hostedStartCapture(chosen).then(async (h) => { if (h) { await refresh(); open({ kind: "terminal", id: h.id }); } }).catch((e) => setNotice(describe(e)));
+      } }] : []),
       ...available.map((a) => ({
         id: `term:${a.harness}`,
         group: "Start",
@@ -655,7 +659,7 @@ export default function App() {
       }
     }
     return out;
-  }, [available, split, railOpen, view, session, active, sessions, hosted, projects, attention, addRepository, startTerminal, resumeTerminal, closeTab, open, refresh]);
+  }, [chosen, available, split, railOpen, view, session, active, sessions, hosted, projects, attention, addRepository, startTerminal, resumeTerminal, closeTab, open, refresh]);
 
   const running = sessions.filter((s) => s.status === "running").length;
 
