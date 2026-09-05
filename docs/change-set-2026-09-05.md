@@ -38,3 +38,31 @@ Final source checks: naming firewall passes. The limits script fails on unchange
 300-line limit; no refactor of those unrelated files is included. Generated
 AgentSettings.ts includes ts-rs trailing whitespace; it is preserved rather than
 hand-editing generated code.
+
+## Quota tray focus — estate verification follow-up
+
+The tray now selects the provider with the highest usable headline utilization,
+instead of whichever snapshot appears first. Ties use the stable `ProviderId`
+declaration order, so changing map iteration order cannot change the chosen
+provider. Providers with no usable window are excluded; no usable snapshot means
+no focus rather than a fabricated percentage. This follows the previously ignored
+behavior specifications and introduces no pinning or hysteresis setting.
+
+A usable headline is finite and within 0–100 percent. `RateWindow::new` retains
+its existing normalization; invalid cached/deserialized values that bypass it
+are excluded. Filtering happens in `UsageSnapshot::headline`, so tray selection,
+label and tooltip agree even when a malformed window accompanies a valid one.
+
+All three tray specifications now execute, with three additional tests for
+empty/unusable inputs, mixed valid/NaN windows, normalized bounds and signed-zero
+ties. Quota has 89 passing tests and no ignored tests. Locked full-workspace tests
+pass 843 tests with one intentional opt-in real-user-log test ignored. Full
+workspace strict Clippy, formatting, quota build, both default/headless feature
+builds, naming firewall and dependency-boundary checks pass.
+
+The limits script still reports the unchanged 467-line `hosted/agent.rs` and
+585-line `hosted/appserver.rs` above its 300-line limit. This change does not alter
+those modules or waive the failures. Runtime tray repaint on a supported desktop
+and a new distributed native build are not claimed by these source checks.
+No provider calls, credential reads or personal settings changes were needed.
+Logs: `/tmp/axio-tray-focus-{tests,clippy,features}-20260905.log`.

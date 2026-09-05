@@ -162,10 +162,16 @@ impl UsageSnapshot {
     /// A user with a 90%-used weekly window and a 10%-used session window needs to see the
     /// 90% — showing the session window would imply everything is fine.
     pub fn headline(&self) -> Option<&RateWindow> {
-        self.windows.iter().max_by(|a, b| {
-            a.used_percent
-                .partial_cmp(&b.used_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
+        self.windows
+            .iter()
+            // Cached/deserialized rows can bypass RateWindow::new's normalization.
+            .filter(|window| {
+                window.used_percent.is_finite() && (0.0..=100.0).contains(&window.used_percent)
+            })
+            .max_by(|a, b| {
+                a.used_percent
+                    .partial_cmp(&b.used_percent)
+                    .expect("usable utilization is finite")
+            })
     }
 }
