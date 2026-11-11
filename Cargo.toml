@@ -1,0 +1,20 @@
+[package]
+name = "axio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "A minimal, fast coding agent harness"
+repository = "https://github.com/umbra-me/axio"
+publish = false
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.149"
+# Blocking HTTP with rustls + ring: no async runtime, no CMake or NASM on Windows.
+ureq = { version = "3", features = ["json"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

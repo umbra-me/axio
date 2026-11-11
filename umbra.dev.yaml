@@ -1,0 +1,17 @@
+schema_version: 1
+component: axio/core
+hosts: [macos, linux, windows]
+tools:
+  - {executable: cargo, version: "1.98.1"}
+actions:
+  prepare: [{executable: cargo, arguments: [fetch, --locked], cwd: .}]
+  check:
+    - {executable: cargo, arguments: [fmt, --all, --, --check], cwd: .}
+    - {executable: cargo, arguments: [clippy, --all-targets, --locked, --, -D, warnings], cwd: .}
+    - {executable: cargo, arguments: [test, --locked], cwd: .}
+  build: [{executable: cargo, arguments: [build, --release, --locked], cwd: .}]
+fixtures: {kind: synthetic, services: []}
+previews: []
+manual_gates:
+  - Live provider runs spend money on user-owned credentials and need explicit authorization.
+  - Windows acceptance is unverified; the bash tool expects bash on PATH.
