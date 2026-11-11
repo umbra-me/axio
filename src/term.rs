@@ -255,11 +255,45 @@ impl Drop for RawMode {
 }
 
 pub fn width() -> usize {
-    stty(&["size"])
-        .and_then(|s| s.split_whitespace().nth(1)?.parse().ok())
+    ioctl_width()
+        .or_else(|| stty(&["size"]).and_then(|s| s.split_whitespace().nth(1)?.parse().ok()))
         .filter(|w: &usize| *w > 0)
         .or_else(|| std::env::var("COLUMNS").ok()?.parse().ok())
         .unwrap_or(80)
+}
+
+/// The terminal's columns straight from the kernel: cheap enough to ask on
+/// every spinner frame, so a resized window is noticed at once.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn ioctl_width() -> Option<usize> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct WinSize {
+        rows: u16,
+        cols: u16,
+        x_pixels: u16,
+        y_pixels: u16,
+    }
+    unsafe extern "C" {
+        fn ioctl(fd: i32, request: std::ffi::c_ulong, ...) -> i32;
+    }
+    #[cfg(target_os = "macos")]
+    const TIOCGWINSZ: std::ffi::c_ulong = 0x4008_7468;
+    #[cfg(target_os = "linux")]
+    const TIOCGWINSZ: std::ffi::c_ulong = 0x5413;
+    for fd in [2, 1, 0] {
+        let mut size = WinSize::default();
+        // SAFETY: TIOCGWINSZ only writes one `struct winsize`, which `size` is.
+        if unsafe { ioctl(fd, TIOCGWINSZ, &mut size) } == 0 && size.cols > 0 {
+            return Some(size.cols.into());
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn ioctl_width() -> Option<usize> {
+    None
 }
 
 #[cfg(test)]
