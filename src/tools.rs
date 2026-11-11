@@ -291,6 +291,47 @@ fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
     }
 }
 
+thread_local! {
+    /// The newest line a running command printed, for the interface to show.
+    /// Per thread: the command and the interface's polling share one.
+    static LATEST_LINE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+pub fn latest_output_line() -> Option<String> {
+    LATEST_LINE.with_borrow(|line| (!line.is_empty()).then(|| line.clone()))
+}
+
+fn set_latest_line(out: &[u8]) {
+    let tail = &out[out.len().saturating_sub(512)..];
+    let text = strip_ansi(&String::from_utf8_lossy(tail));
+    let line = text
+        .split(['\n', '\r'])
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("");
+    LATEST_LINE.with_borrow_mut(|latest| line.clone_into(latest));
+}
+
+/// Text without terminal colour and cursor sequences.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        if chars.next() == Some('[') {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<String, String> {
     let command = str_arg(input, "command")?;
     let timeout = Duration::from_millis(
@@ -335,9 +376,14 @@ fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<Str
     let mut out = Vec::new();
     let mut timed_out = false;
     let mut stopped = false;
+    set_latest_line(b"");
     let status = loop {
+        let before = out.len();
         while let Ok(chunk) = rx.try_recv() {
             out.extend_from_slice(&chunk);
+        }
+        if out.len() != before {
+            set_latest_line(&out);
         }
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break Some(status);
@@ -356,6 +402,7 @@ fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<Str
         out.extend_from_slice(&chunk);
     }
 
+    set_latest_line(b"");
     let mut text = shorten(&String::from_utf8_lossy(&out));
     if stopped {
         return Err(format!("{text}\n{STOPPED}"));
@@ -529,6 +576,26 @@ mod tests {
         assert!(err.contains("killed after 1s"));
         assert!(started.elapsed() < Duration::from_secs(4));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn running_commands_report_their_newest_line() {
+        let mut seen = Vec::new();
+        bash(
+            &std::env::temp_dir(),
+            &json!({"command": "printf 'one\\n\\033[32mtwo\\033[0m\\n'; sleep 0.3; printf 'three\\r'; sleep 0.3"}),
+            &mut || {
+                if let Some(l) = latest_output_line()
+                    && seen.last() != Some(&l)
+                {
+                    seen.push(l);
+                }
+                false
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, ["two", "three"]);
+        assert_eq!(latest_output_line(), None, "cleared when the command ends");
     }
 
     #[test]
