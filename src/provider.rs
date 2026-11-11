@@ -2,6 +2,7 @@ use crate::message::{Block, Message};
 use crate::tools::ToolSpec;
 use std::io::{BufReader, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 pub mod anthropic;
 pub mod openai;
@@ -169,12 +170,52 @@ pub(crate) fn post_stream(
         .send_json(body)
         .map_err(|e| format!("request to {url} failed: {e}"))?;
     let status = resp.status().as_u16();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|s| format!(" (retry after {s}s)"))
+        .unwrap_or_default();
     let mut body = resp.into_body();
     if !(200..300).contains(&status) {
         let text = body.read_to_string().unwrap_or_default();
-        return Err(format!("{status} from {url}: {}", text.trim()));
+        return Err(format!("{status} from {url}{retry_after}: {}", text.trim()));
     }
     Ok(BufReader::new(body.into_reader()))
+}
+
+/// Why a failed call is worth trying again, or `None` when it is not:
+/// overload, rate limits, server errors and dropped connections.
+pub fn retry_reason(err: &str) -> Option<&'static str> {
+    let status = err
+        .split_once(" from ")
+        .and_then(|(s, _)| s.parse::<u16>().ok());
+    Some(match status {
+        Some(529) => "the API is overloaded",
+        Some(429) => "rate limited",
+        Some(408 | 409 | 500 | 502 | 503 | 504) => "the API had an error",
+        Some(_) => return None,
+        None if err.starts_with("overloaded_error") => "the API is overloaded",
+        None if err.starts_with("rate_limit_error") => "rate limited",
+        None if err.starts_with("api_error") => "the API had an error",
+        None if err.starts_with("request to ") => "the connection failed",
+        None if err == "stream ended before the model finished" => "the connection dropped",
+        None => return None,
+    })
+}
+
+/// How long to wait before retry `attempt` (from 0): the server's
+/// `retry-after` when it gave one, else doubling from `unit`, at most 30 units.
+pub fn retry_wait(err: &str, attempt: u32, unit: Duration) -> Duration {
+    let after = err
+        .split_once("(retry after ")
+        .and_then(|(_, r)| r.split_once("s)"))
+        .and_then(|(n, _)| n.parse::<u64>().ok());
+    match after {
+        Some(s) => Duration::from_secs(s.min(60)),
+        None => unit * 2u32.pow(attempt).min(30),
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +235,32 @@ pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retries_only_transient_failures() {
+        assert_eq!(
+            retry_reason("529 from https://x: {}"),
+            Some("the API is overloaded")
+        );
+        assert_eq!(
+            retry_reason("overloaded_error: busy"),
+            Some("the API is overloaded")
+        );
+        assert_eq!(
+            retry_reason("request to https://x failed: timeout"),
+            Some("the connection failed")
+        );
+        assert_eq!(retry_reason("400 from https://x: bad"), None);
+        assert_eq!(retry_reason("401 from https://x: no key"), None);
+        assert_eq!(retry_reason("invalid_request_error: nope"), None);
+        let s = Duration::from_secs(1);
+        assert_eq!(
+            retry_wait("429 from u (retry after 7s): x", 0, s),
+            Duration::from_secs(7)
+        );
+        assert_eq!(retry_wait("529 from u: x", 2, s), Duration::from_secs(4));
+        assert_eq!(retry_wait("529 from u: x", 9, s), Duration::from_secs(30));
+    }
 
     #[test]
     fn parses_model_specs() {
