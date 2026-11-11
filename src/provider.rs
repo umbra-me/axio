@@ -108,7 +108,10 @@ impl Reply {
 pub enum Delta<'a> {
     Text(&'a str),
     Thinking,
-    ToolCall,
+    /// A tool call started; its name.
+    ToolCall(&'a str),
+    /// A piece of the tool call's JSON input as it streams.
+    ToolInput(&'a str),
 }
 
 pub struct Request<'a> {
@@ -117,6 +120,8 @@ pub struct Request<'a> {
     pub messages: &'a [Message],
     pub tools: &'a [ToolSpec],
     pub effort: Option<&'a str>,
+    /// Ask for faster output at a higher price, where the provider offers it.
+    pub fast: bool,
     /// Set when the user stops the turn; streams check it between events.
     pub cancel: &'a AtomicBool,
 }
@@ -182,6 +187,7 @@ pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) ->
         messages: &[],
         tools: &[],
         effort: None,
+        fast: false,
         cancel: &cancel,
     })
 }

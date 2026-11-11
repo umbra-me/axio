@@ -52,6 +52,9 @@ fn body(req: &Request) -> Value {
     if let Some(effort) = req.effort {
         body["output_config"] = json!({ "effort": effort });
     }
+    if req.fast {
+        body["speed"] = json!("fast");
+    }
     body
 }
 
@@ -127,7 +130,7 @@ pub(crate) fn parse_stream<R: BufRead>(
                     "text" => Building::Text(cb["text"].as_str().unwrap_or("").to_string()),
                     "tool_use" => {
                         let name = cb["name"].as_str().unwrap_or("").to_string();
-                        on(Delta::ToolCall);
+                        on(Delta::ToolCall(&name));
                         Building::Tool {
                             id: cb["id"].as_str().unwrap_or("").to_string(),
                             name,
@@ -155,7 +158,9 @@ pub(crate) fn parse_stream<R: BufRead>(
                         on(Delta::Text(s));
                     }
                     Some(Building::Tool { json, .. }) => {
-                        json.push_str(d["partial_json"].as_str().unwrap_or(""));
+                        let part = d["partial_json"].as_str().unwrap_or("");
+                        json.push_str(part);
+                        on(Delta::ToolInput(part));
                     }
                     Some(Building::Opaque(v)) => match d["type"].as_str() {
                         Some("thinking_delta") => append(v, "thinking", &d["thinking"]),
@@ -297,6 +302,21 @@ data: {"type":"message_stop"}
                 input: json!({"command":"ls"})
             }
         );
+    }
+
+    #[test]
+    fn fast_mode_and_effort_reach_the_body() {
+        super::super::with_request(false, |r| {
+            assert!(body(r).get("speed").is_none());
+            let fast = Request {
+                fast: true,
+                effort: Some("medium"),
+                ..*r
+            };
+            let b = body(&fast);
+            assert_eq!(b["speed"], "fast");
+            assert_eq!(b["output_config"]["effort"], "medium");
+        });
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub type Complete = dyn Fn(&Request, &mut dyn FnMut(Delta)) -> Result<Reply, Str
 pub struct Agent {
     pub model: Model,
     pub effort: Option<String>,
+    pub fast: bool,
     pub cwd: PathBuf,
     pub system: String,
     pub messages: Vec<Message>,
@@ -62,7 +63,8 @@ pub struct Agent {
 enum Event {
     Text(String),
     Thinking,
-    ToolCall,
+    ToolCall(String),
+    ToolInput(String),
     Done(Result<Reply, String>),
 }
 
@@ -71,6 +73,7 @@ impl Agent {
         Agent {
             model,
             effort: None,
+            fast: false,
             cwd,
             system,
             messages: Vec::new(),
@@ -126,6 +129,7 @@ impl Agent {
         });
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
+        let fast = self.fast;
         let (complete, model, system, effort, flag) = (
             self.complete.clone(),
             self.model.clone(),
@@ -140,6 +144,7 @@ impl Agent {
                 messages: &messages,
                 tools: &tools,
                 effort: effort.as_deref(),
+                fast,
                 cancel: &flag,
             };
             let deltas = tx.clone();
@@ -147,7 +152,8 @@ impl Agent {
                 let _ = deltas.send(match d {
                     Delta::Text(t) => Event::Text(t.to_string()),
                     Delta::Thinking => Event::Thinking,
-                    Delta::ToolCall => Event::ToolCall,
+                    Delta::ToolCall(n) => Event::ToolCall(n.to_string()),
+                    Delta::ToolInput(p) => Event::ToolInput(p.to_string()),
                 });
             });
             let _ = tx.send(Event::Done(result));
@@ -162,7 +168,8 @@ impl Agent {
                 Ok(_) if !stream => {}
                 Ok(Event::Text(t)) => ui.delta(Delta::Text(&t)),
                 Ok(Event::Thinking) => ui.delta(Delta::Thinking),
-                Ok(Event::ToolCall) => ui.delta(Delta::ToolCall),
+                Ok(Event::ToolCall(n)) => ui.delta(Delta::ToolCall(&n)),
+                Ok(Event::ToolInput(p)) => ui.delta(Delta::ToolInput(&p)),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     return Err("the model call ended without a reply".into());
