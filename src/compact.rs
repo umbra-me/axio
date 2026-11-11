@@ -18,12 +18,22 @@ pub const INTERRUPTED: &str = "[The user interrupted the previous turn on purpos
 
 pub const INSTRUCTION: &str = "Summarize the transcript inside <summary></summary> tags. Include relevant information in the summary such that this conversation will be continued by a new context window without needing to redo work or be reprovided with relevant constraints or context. Be sure to preserve: (1) any difficulties or problems that came up, and how they were handled or resolved; (2) any possibilities, options, or approaches that were raised, tried, or set aside, and why; (3) anything that was asked for, decided, agreed, ruled out, or established as a preference, constraint, or boundary - stated exactly; (4) exactly where things stand now - what has been covered, settled, or completed so far; (5) anything still open, unresolved, promised, or expected to happen next; (6) specific details that would be hard to reconstruct - names, numbers, dates, exact wording, links or references - kept exactly. Be complete on these even at the cost of length; keep everything else concise. Weight the two voices differently: keep what the user said, asked for, shared, or established carefully and close to their own words; your own explanations and reasoning can be condensed much further, to what they concluded or produced - as long as nothing in the six items above is dropped. Do not call any tools while writing this summary; respond with text only.";
 
+/// About what one attached image costs.
+const IMAGE_TOKENS: u64 = 1_600;
+
 /// A rough token count for a history, used when a resumed session has no
 /// reply yet to measure it. About four characters per token.
 pub fn estimate_tokens(messages: &[Message]) -> u64 {
     messages
         .iter()
-        .map(|m| serde_json::to_string(m).map_or(0, |s| s.len() as u64 / 4))
+        .flat_map(|m| match m {
+            Message::User { content } | Message::Assistant { content } => content,
+        })
+        .map(|b| match b {
+            // Images cost by their pixels, not their encoded size.
+            Block::Image { .. } => IMAGE_TOKENS,
+            b => serde_json::to_string(b).map_or(0, |s| s.len() as u64 / 4),
+        })
         .sum()
 }
 
@@ -58,6 +68,7 @@ pub fn transcript(messages: &[Message]) -> String {
                     let kind = if *is_error { "error" } else { "result" };
                     out.push_str(&format!("Tool {kind}: {text}\n\n"));
                 }
+                Block::Image { .. } => out.push_str(&format!("{who}: [an image]\n\n")),
                 Block::Opaque { .. } => {}
             }
         }

@@ -182,8 +182,10 @@ is skipped.
 | Tab | complete a `/command`, or a path after `@` |
 | Ctrl-R | search prompt history (Enter takes the match, Esc cancels) |
 
-`@path` in a prompt attaches that file (up to 256 KB) or a directory listing,
-so the model does not have to read it first.
+`@path` in a prompt attaches that file (up to 256 KB), an image (PNG, JPEG,
+GIF or WebP, up to 3.7 MB) or a directory listing, so the model does not have
+to read it first. Dropping an image file on the terminal pastes its path as an
+`@` mention.
 
 Commands: `/new`, `/undo` (put back the files the last turn wrote or edited),
 `/compact`, `/model [provider/model]`, `/effort [level]`, `/profile`,

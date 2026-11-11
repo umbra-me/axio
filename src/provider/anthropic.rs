@@ -105,6 +105,10 @@ fn message(m: &Message) -> Value {
                 "content": output,
                 "is_error": is_error,
             })),
+            Block::Image { media_type, data } => Some(json!({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": data},
+            })),
             Block::Opaque { provider, value } if provider == PROVIDER => Some(value.clone()),
             Block::Opaque { .. } => None,
         })
