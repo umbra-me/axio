@@ -144,7 +144,7 @@ mod tests {
                     },
                     Block::ToolCall {
                         id: "a".into(),
-                        name: "bash".into(),
+                        name: "Bash".into(),
                         input: json!({"command": "ls"}),
                     },
                 ],
@@ -223,7 +223,7 @@ mod tests {
     fn transcript_drops_thinking_and_trims_results() {
         let t = transcript(&history()[..4]);
         assert!(
-            t.starts_with("User: first request\n\nAssistant called bash: {\"command\":\"ls\"}")
+            t.starts_with("User: first request\n\nAssistant called Bash: {\"command\":\"ls\"}")
         );
         assert!(t.contains("[…]"));
         assert!(t.len() < 3_000);

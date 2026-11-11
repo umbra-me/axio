@@ -300,7 +300,7 @@ mod tests {
     fn bash(id: &str, command: &str) -> Vec<Block> {
         vec![Block::ToolCall {
             id: id.into(),
-            name: "bash".into(),
+            name: "Bash".into(),
             input: json!({ "command": command }),
         }]
     }
@@ -353,7 +353,7 @@ mod tests {
         agent.prompt("go", &mut log).unwrap();
         assert_eq!(
             log.events,
-            ["tool bash", "ok true", "text done", "stop EndTurn"]
+            ["tool Bash", "ok true", "text done", "stop EndTurn"]
         );
         assert_eq!(agent.messages.len(), 4);
         assert_eq!(agent.context, 20);
