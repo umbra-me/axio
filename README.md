@@ -10,6 +10,7 @@ axio auth set anthropic   # or set or change it here, or export ANTHROPIC_API_KE
 axio -p "explain src/"    # one answer, then exit
 git diff | axio -p "review this"
 axio -c                   # continue the last session in this directory
+axio -r                   # pick one of this directory's recent sessions
 ```
 
 ## What it does

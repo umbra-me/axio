@@ -138,6 +138,49 @@ pub fn latest(dir: &Path) -> Option<PathBuf> {
         .max()
 }
 
+/// A saved session, for choosing one to continue.
+pub struct Summary {
+    pub path: PathBuf,
+    pub modified: std::time::SystemTime,
+    pub first_prompt: String,
+    pub messages: usize,
+}
+
+/// The sessions in `dir`, most recently used first.
+pub fn recent(dir: &Path, limit: usize) -> Vec<Summary> {
+    let mut out: Vec<Summary> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .filter_map(|path| {
+            let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+            let messages = load(&path).ok()?;
+            let first_prompt = messages
+                .iter()
+                .find_map(|m| match m {
+                    Message::User { content } => content.iter().find_map(|b| match b {
+                        Block::Text { text } if !text.starts_with('[') => Some(text.clone()),
+                        _ => None,
+                    }),
+                    Message::Assistant { .. } => None,
+                })
+                .unwrap_or_default();
+            Some(Summary {
+                path,
+                modified,
+                first_prompt,
+                messages: messages.len(),
+            })
+        })
+        .filter(|s| s.messages > 0)
+        .collect();
+    out.sort_by_key(|s| std::cmp::Reverse(s.modified));
+    out.truncate(limit);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
