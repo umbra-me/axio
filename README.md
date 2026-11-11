@@ -61,6 +61,19 @@ a folder in `~/.axio/agent/plugins/` (or a trusted project's
 and asks before `git push`; copy it into `~/.axio/agent/plugins/` to use it.
 Matchers support `*`, exact names, `A|B` and prefixes like `mcp__github__.*`.
 
+## Skills and commands
+
+- **Skills** are `skills/<name>/SKILL.md` files with `name` and `description`
+  frontmatter. The system prompt lists each one in a line, and the model reads
+  the file when a task matches. A skill with `user-invocable: true` can also
+  be run as `/name`.
+- **Commands** are `commands/<name>.md` files. `/name args` sends the body as
+  your prompt, with `$ARGUMENTS` (or `$1` to `$9`) filled in; plugin commands
+  also answer to `/plugin:name`. `/help` lists them.
+
+Both are read from a trusted project's `.axio/`, then `~/.axio/agent/`, then
+plugins; the first definition of a name wins.
+
 ## MCP servers
 
 axio starts MCP servers listed in `~/.axio/agent/mcp.json`, in plugins'

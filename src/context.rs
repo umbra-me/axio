@@ -45,8 +45,12 @@ pub fn files(cwd: &Path) -> Vec<(PathBuf, String)> {
     found
 }
 
-pub fn system_prompt(cwd: &Path) -> String {
+pub fn system_prompt(cwd: &Path, skills: Option<&str>) -> String {
     let mut prompt = BASE.to_string();
+    if let Some(skills) = skills {
+        prompt.push_str("\n\n");
+        prompt.push_str(skills);
+    }
     for (path, text) in files(cwd) {
         prompt.push_str(&format!(
             "\n\n<project-instructions path=\"{}\">\n{}\n</project-instructions>",

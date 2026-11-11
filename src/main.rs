@@ -8,6 +8,7 @@ mod message;
 mod provider;
 mod session;
 mod settings;
+mod skills;
 mod sse;
 mod term;
 mod tools;
@@ -39,7 +40,7 @@ Options:
 
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Up/Down
 walk history, Esc or Ctrl-C stops a running turn, Ctrl-D exits.
-Commands: /new, /compact, /model <model>, /session, /quit
+Commands: /new, /compact, /model <model>, /session, /help, /quit, plus your own
 
 Credentials come from the environment: ANTHROPIC_API_KEY or
 ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY. Any other provider
@@ -391,6 +392,50 @@ fn load_mcp(
     Ok(c)
 }
 
+/// Skills and commands: a trusted project's first, so it can override global
+/// ones, then `~/.axio/agent` and its plugins.
+fn load_library(home: &std::path::Path, project: Option<&std::path::Path>) -> skills::Library {
+    let mut lib = skills::Library::default();
+    if let Some(root) = project {
+        lib.add_dir(&root.join(".axio"), None);
+        lib.add_plugins(&root.join(".axio/plugins"));
+    }
+    lib.add_dir(home, None);
+    lib.add_plugins(&home.join("plugins"));
+    lib
+}
+
+/// `/name args` for a command or invocable skill. `None` for ordinary text,
+/// including paths such as `/usr/bin/x`.
+fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>> {
+    let rest = input.strip_prefix('/')?;
+    let (name, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    Some(
+        lib.expand(name, args.trim())
+            .ok_or_else(|| format!("unknown command /{name}; /help lists them")),
+    )
+}
+
+fn help(lib: &skills::Library) -> String {
+    let mut s = String::from(
+        "/new  start a new session\n/compact  summarize the conversation now\n/model [provider/model]  show or switch the model\n/session  show the session file\n/help  this list\n/quit  exit",
+    );
+    for c in &lib.commands {
+        s.push_str(&format!("\n/{}  {}", c.name, c.description));
+    }
+    for k in lib.skills.iter().filter(|k| k.invocable) {
+        s.push_str(&format!(
+            "\n/{}  {} (skill)",
+            k.name,
+            k.description.chars().take(80).collect::<String>()
+        ));
+    }
+    s
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -410,6 +455,10 @@ fn run() -> Result<ExitCode, String> {
     let interactive = !args.print && io::stdin().is_terminal();
     let project = trusted_project(&home, &cwd, &args, interactive)?;
     let config = settings::Settings::load(&home, project.as_deref())?;
+    let library = load_library(&home, project.as_deref());
+    for shadowed in &library.shadowed {
+        eprintln!("axio: ignored duplicate {shadowed}");
+    }
     let spec = args
         .model
         .or_else(|| std::env::var("AXIO_MODEL").ok())
@@ -418,7 +467,7 @@ fn run() -> Result<ExitCode, String> {
     let mut agent = Agent::new(
         Model::parse(&spec),
         cwd.clone(),
-        context::system_prompt(&cwd),
+        context::system_prompt(&cwd, library.prompt_section().as_deref()),
     );
     agent.effort = args
         .effort
@@ -479,6 +528,11 @@ fn run() -> Result<ExitCode, String> {
             return Err("no prompt".into());
         }
         agent.start(source, &mut term)?;
+        let prompt = match command(&library, &prompt) {
+            Some(Ok(expanded)) => expanded,
+            Some(Err(e)) => return Err(e),
+            None => prompt,
+        };
         let result = agent.prompt(&prompt, &mut term);
         agent.end("other", &mut term);
         result?;
@@ -546,10 +600,19 @@ fn run() -> Result<ExitCode, String> {
                 Some(s) => eprintln!("{}", s.path.display()),
                 None => eprintln!("not saved"),
             },
+            ("/help", _) => eprintln!("{}", help(&library)),
             _ => {
+                let text = match command(&library, input) {
+                    Some(Ok(expanded)) => expanded,
+                    Some(Err(e)) => {
+                        eprintln!("axio: {e}");
+                        continue;
+                    }
+                    None => input.to_string(),
+                };
                 term.turn = Usage::default();
                 term.thinking = false;
-                match agent.prompt(input, &mut term) {
+                match agent.prompt(&text, &mut term) {
                     Ok(()) => {}
                     Err(e) if e == agent::ABORTED => eprintln!("\n{}", term.dim("[stopped]")),
                     Err(e) => eprintln!("\naxio: {e}"),
@@ -560,4 +623,24 @@ fn run() -> Result<ExitCode, String> {
     }
     agent.end("prompt_input_exit", &mut term);
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slash_input_is_a_command_only_when_it_names_one() {
+        let lib = skills::Library::default();
+        assert_eq!(command(&lib, "fix the bug"), None);
+        assert_eq!(
+            command(&lib, "/usr/bin/env is broken"),
+            None,
+            "paths are text"
+        );
+        assert_eq!(
+            command(&lib, "/nope a b"),
+            Some(Err("unknown command /nope; /help lists them".into()))
+        );
+    }
 }
