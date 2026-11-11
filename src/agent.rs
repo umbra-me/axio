@@ -54,6 +54,10 @@ pub struct Agent {
     pub modules: Modules,
     /// Fraction of the context window at which compaction starts.
     pub compact_ratio: f64,
+    /// Retries of a model call that failed for a passing reason, and the
+    /// first wait between them (it doubles).
+    pub max_retries: u32,
+    pub retry_unit: Duration,
     mcp: Arc<Mcp>,
     tools: Vec<ToolSpec>,
     complete: Arc<Complete>,
@@ -84,6 +88,8 @@ impl Agent {
             mcp: Arc::default(),
             tools: tools::specs(),
             complete: Arc::new(provider::complete),
+            max_retries: 4,
+            retry_unit: Duration::from_secs(1),
         }
     }
 
@@ -111,8 +117,8 @@ impl Agent {
         Ok(())
     }
 
-    /// Runs one model call on a worker thread so the user can stop it at once;
-    /// the stream sees the cancel flag and closes the connection.
+    /// One model call, retried with backoff when it fails for a passing
+    /// reason before any of its text was shown.
     fn call(
         &self,
         system: &str,
@@ -120,6 +126,56 @@ impl Agent {
         tools: Vec<ToolSpec>,
         stream: bool,
         ui: &mut dyn Ui,
+    ) -> Result<Reply, String> {
+        let mut attempt = 0;
+        loop {
+            let mut shown = false;
+            let err = match self.call_once(
+                system,
+                messages.clone(),
+                tools.clone(),
+                stream,
+                ui,
+                &mut shown,
+            ) {
+                Err(e) if e != ABORTED => e,
+                result => return result,
+            };
+            let reason = provider::retry_reason(&err).filter(|_| !shown);
+            let Some(reason) = reason.filter(|_| attempt < self.max_retries) else {
+                return Err(match (reason, attempt) {
+                    (Some(_), n) if n > 0 => format!("{err} (gave up after {n} retries)"),
+                    _ => err,
+                });
+            };
+            let wait = provider::retry_wait(&err, attempt, self.retry_unit);
+            attempt += 1;
+            ui.notice(&format!(
+                "{reason}; retrying in {}s ({attempt} of {})",
+                wait.as_secs().max(1),
+                self.max_retries
+            ));
+            ui.waiting(&format!("{reason}; waiting to retry"));
+            let until = std::time::Instant::now() + wait;
+            while std::time::Instant::now() < until {
+                if ui.interrupted() {
+                    return Err(ABORTED.into());
+                }
+                std::thread::sleep(Duration::from_millis(20).min(wait));
+            }
+        }
+    }
+
+    /// Runs one model call on a worker thread so the user can stop it at once;
+    /// the stream sees the cancel flag and closes the connection.
+    fn call_once(
+        &self,
+        system: &str,
+        messages: Vec<Message>,
+        tools: Vec<ToolSpec>,
+        stream: bool,
+        ui: &mut dyn Ui,
+        shown: &mut bool,
     ) -> Result<Reply, String> {
         ui.waiting(if stream {
             "thinking"
@@ -164,7 +220,10 @@ impl Agent {
             match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(Event::Done(result)) => return result,
                 Ok(_) if !stream => {}
-                Ok(Event::Text(t)) => ui.delta(Delta::Text(&t)),
+                Ok(Event::Text(t)) => {
+                    *shown = true;
+                    ui.delta(Delta::Text(&t));
+                }
                 Ok(Event::Thinking) => ui.delta(Delta::Thinking),
                 Ok(Event::ThinkingText(t)) => ui.delta(Delta::ThinkingText(&t)),
                 Ok(Event::ToolCall(n)) => ui.delta(Delta::ToolCall(&n)),
@@ -710,6 +769,59 @@ mod tests {
         a.start("startup", &mut Log::default()).unwrap();
         a.prompt("hello", &mut Log::default()).unwrap();
         assert_eq!(a.messages[0].text(), "branch: mainhelloit is Tuesday");
+    }
+
+    #[test]
+    fn retries_passing_failures_before_anything_is_shown() {
+        let calls = Arc::new(Mutex::new(0));
+        let n = calls.clone();
+        let mut a = agent(move |_, on| {
+            let mut n = n.lock().unwrap();
+            *n += 1;
+            match *n {
+                1 => Err("529 from https://x: overloaded".into()),
+                2 => Err("request to https://x failed: reset".into()),
+                _ => {
+                    on(Delta::Text("hi"));
+                    reply(vec![Block::Text { text: "hi".into() }], Stop::EndTurn, 1)
+                }
+            }
+        });
+        a.retry_unit = Duration::from_millis(1);
+        let mut log = Log::default();
+        a.prompt("go", &mut log).unwrap();
+        assert_eq!(*calls.lock().unwrap(), 3);
+        assert_eq!(
+            log.events[..2],
+            [
+                "the API is overloaded; retrying in 1s (1 of 4)",
+                "the connection failed; retrying in 1s (2 of 4)"
+            ]
+        );
+
+        // Not after text was shown, and never for a request the API rejected.
+        for (shows, err) in [(true, "529 from u: busy"), (false, "400 from u: bad")] {
+            let calls = Arc::new(Mutex::new(0));
+            let n = calls.clone();
+            let mut a = agent(move |_, on| {
+                *n.lock().unwrap() += 1;
+                if shows {
+                    on(Delta::Text("partial"));
+                }
+                Err(err.into())
+            });
+            a.retry_unit = Duration::from_millis(1);
+            assert_eq!(a.prompt("go", &mut Log::default()).unwrap_err(), err);
+            assert_eq!(*calls.lock().unwrap(), 1);
+        }
+
+        let mut a = agent(|_, _| Err("529 from u: busy".into()));
+        a.retry_unit = Duration::from_millis(1);
+        a.max_retries = 2;
+        assert_eq!(
+            a.prompt("go", &mut Log::default()).unwrap_err(),
+            "529 from u: busy (gave up after 2 retries)"
+        );
     }
 
     fn reply(content: Vec<Block>, stop: Stop, input: u64) -> Result<Reply, String> {
