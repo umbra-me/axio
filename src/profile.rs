@@ -27,6 +27,14 @@ fn builtin(name: &str) -> Option<Profile> {
             search: true,
             plan: true,
             background: true,
+            ..Modules::default()
+        },
+        "full" => Modules {
+            search: true,
+            plan: true,
+            background: true,
+            web: true,
+            sandbox: true,
         },
         _ => return None,
     };
@@ -47,7 +55,7 @@ pub fn load(home: &Path, name: &str) -> Result<Profile, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return builtin(name).ok_or_else(|| {
                 format!(
-                    "unknown profile {name}: built in are minimal and standard, or add {}",
+                    "unknown profile {name}: built in are minimal, standard and full, or add {}",
                     path.display()
                 )
             });

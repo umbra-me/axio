@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::Mutex;
 
 struct Task {
@@ -50,10 +50,8 @@ pub fn start(cwd: &Path, input: &Value) -> Result<String, String> {
     let log = dir.join(format!("{id}-{}.log", std::process::id()));
     let out = std::fs::File::create(&log).map_err(|e| format!("{}: {e}", log.display()))?;
     let err = out.try_clone().map_err(|e| e.to_string())?;
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(cwd)
+    let mut cmd = crate::sandbox::bash(command);
+    cmd.current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(out)
         .stderr(err);
