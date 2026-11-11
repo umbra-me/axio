@@ -76,7 +76,7 @@ impl Markdown {
     fn finish(&mut self, rest: &str) -> String {
         let mut out = match self.open.take() {
             Some(close) if self.in_code => format!("{rest}{close}"),
-            Some(close) => format!("{}{close}", inline(rest)),
+            Some(close) => format!("{}{close}", inline_in(rest, base(close))),
             None => self.line(rest),
         };
         out.push('\n');
@@ -120,7 +120,7 @@ impl Markdown {
             .find(|&i| balanced(&self.pending[..i]));
         if let Some(end) = safe {
             let done: String = self.pending.drain(..end).collect();
-            out.push_str(&inline(&done));
+            out.push_str(&inline_in(&done, base(self.open.unwrap_or(""))));
         }
         out
     }
@@ -146,7 +146,10 @@ impl Markdown {
             return format!("{DIM}{line}{NO_BOLD}");
         }
         let (prefix, skip, close) = block(trimmed);
-        format!("{indent}{prefix}{}{close}", inline(&trimmed[skip..]))
+        format!(
+            "{indent}{prefix}{}{close}",
+            inline_in(&trimmed[skip..], base(close))
+        )
     }
 }
 
@@ -169,16 +172,62 @@ fn block(trimmed: &str) -> (String, usize, &'static str) {
     (String::new(), 0, "")
 }
 
-/// Whether every inline span in `s` is closed, so it can render alone.
+/// The style a line's prefix opened, to restore after an inner span ends.
+fn base(close: &str) -> &'static str {
+    match close {
+        NO_BOLD => BOLD,
+        NO_ITALIC => ITALIC,
+        _ => "",
+    }
+}
+
+/// Whether no inline span is left open at the end of `s`, so it can render
+/// alone. Mirrors `inline`: a `*` only opens emphasis before a non-space
+/// and not straight after a letter or digit, and parentheses matter only
+/// in a link's URL, so prose such as "1) read" or "4* overall" streams.
 fn balanced(s: &str) -> bool {
-    let even = |c: char| s.matches(c).count().is_multiple_of(2);
-    let doubles = s.matches("**").count();
-    let singles = s.matches('*').count() - 2 * doubles;
-    even('`')
-        && doubles.is_multiple_of(2)
-        && singles.is_multiple_of(2)
-        && s.matches('[').count() == s.matches(']').count()
-        && s.matches('(').count() == s.matches(')').count()
+    let c: Vec<char> = s.chars().collect();
+    let (mut code, mut bold, mut italic, mut link, mut url) = (false, false, false, false, false);
+    let mut i = 0;
+    while i < c.len() {
+        let prev = i.checked_sub(1).map(|j| c[j]);
+        let next = |k: usize| c.get(i + k).copied();
+        match c[i] {
+            '`' => code = !code,
+            _ if code => {}
+            '*' if next(1) == Some('*') => {
+                if bold {
+                    bold = false;
+                } else if next(2).is_some_and(|n| !n.is_whitespace()) {
+                    bold = true;
+                }
+                i += 2;
+                continue;
+            }
+            '*' => {
+                if italic && prev.is_some_and(|p| !p.is_whitespace()) {
+                    italic = false;
+                } else if next(1).is_some_and(|n| !n.is_whitespace())
+                    && !prev.is_some_and(char::is_alphanumeric)
+                {
+                    italic = true;
+                }
+            }
+            '[' if !url => link = true,
+            ']' if link => {
+                link = false;
+                if next(1) == Some('(') {
+                    url = true;
+                    i += 2;
+                    continue;
+                }
+            }
+            ')' if url => url = false,
+            _ => {}
+        }
+        i += 1;
+    }
+    !(code || bold || italic || link || url)
 }
 
 fn heading(line: &str) -> Option<&str> {
@@ -190,7 +239,14 @@ fn heading(line: &str) -> Option<&str> {
 }
 
 /// `**bold**`, `*italic*`, `` `code` `` and `[text](url)` in one line.
-pub fn inline(s: &str) -> String {
+#[cfg(test)]
+fn inline(s: &str) -> String {
+    inline_in(s, "")
+}
+
+/// `inline` inside text already styled with `base`, such as a bold
+/// heading: closing an inner span turns `base` back on.
+fn inline_in(s: &str, base: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::new();
     let mut i = 0;
@@ -213,7 +269,10 @@ pub fn inline(s: &str) -> String {
             && end > i + 2
         {
             let inner: String = chars[i + 2..end].iter().collect();
-            out.push_str(&format!("{BOLD}{}{NO_BOLD}", inline(&inner)));
+            out.push_str(&format!(
+                "{BOLD}{}{NO_BOLD}{base}",
+                inline_in(&inner, &format!("{BOLD}{base}"))
+            ));
             i = end + 2;
             continue;
         }
@@ -225,7 +284,7 @@ pub fn inline(s: &str) -> String {
             && !chars[end - 1].is_whitespace()
         {
             let inner: String = chars[i + 1..end].iter().collect();
-            out.push_str(&format!("{ITALIC}{inner}{NO_ITALIC}"));
+            out.push_str(&format!("{ITALIC}{inner}{NO_ITALIC}{base}"));
             i = end + 1;
             continue;
         }
@@ -238,7 +297,10 @@ pub fn inline(s: &str) -> String {
             if url == text {
                 out.push_str(&format!("{CODE}{url}{NO_COLOR}"));
             } else {
-                out.push_str(&format!("{}{DIM} ({url}){NO_BOLD}", inline(&text)));
+                out.push_str(&format!(
+                    "{}{DIM} ({url}){NO_BOLD}{base}",
+                    inline_in(&text, base)
+                ));
             }
             i = end + 1;
             continue;
@@ -289,6 +351,29 @@ mod tests {
         );
         assert_eq!(inline("snake_case_name"), "snake_case_name");
         assert_eq!(inline("unclosed `tick"), "unclosed `tick");
+    }
+
+    #[test]
+    fn inner_spans_keep_the_lines_style() {
+        let mut md = Markdown::new(true);
+        assert_eq!(
+            md.push("## See [docs](u) and **key** now\n"),
+            format!(
+                "{BOLD}See docs{DIM} (u){NO_BOLD}{BOLD} and {BOLD}key{NO_BOLD}{BOLD} now{NO_BOLD}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn prose_with_stray_marks_keeps_streaming() {
+        let mut md = Markdown::new(true);
+        assert_eq!(md.push("Steps: 1) read, "), "Steps: 1) read, ");
+        assert_eq!(md.push("rated 4* overall "), "rated 4* overall ");
+        assert_eq!(md.push("see [the docs"), "see ");
+        assert_eq!(
+            md.push("](https://x) ok "),
+            "the docs\x1b[2m (https://x)\x1b[22m ok "
+        );
     }
 
     #[test]
