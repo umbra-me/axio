@@ -44,7 +44,6 @@ pub type Complete = dyn Fn(&Request, &mut dyn FnMut(Delta)) -> Result<Reply, Str
 pub struct Agent {
     pub model: Model,
     pub effort: Option<String>,
-    pub fast: bool,
     pub cwd: PathBuf,
     pub system: String,
     pub messages: Vec<Message>,
@@ -73,7 +72,6 @@ impl Agent {
         Agent {
             model,
             effort: None,
-            fast: false,
             cwd,
             system,
             messages: Vec::new(),
@@ -129,7 +127,6 @@ impl Agent {
         });
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
-        let fast = self.fast;
         let (complete, model, system, effort, flag) = (
             self.complete.clone(),
             self.model.clone(),
@@ -144,7 +141,6 @@ impl Agent {
                 messages: &messages,
                 tools: &tools,
                 effort: effort.as_deref(),
-                fast,
                 cancel: &flag,
             };
             let deltas = tx.clone();

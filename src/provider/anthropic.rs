@@ -52,9 +52,6 @@ fn body(req: &Request) -> Value {
     if let Some(effort) = req.effort {
         body["output_config"] = json!({ "effort": effort });
     }
-    if req.fast {
-        body["speed"] = json!("fast");
-    }
     body
 }
 
@@ -305,16 +302,13 @@ data: {"type":"message_stop"}
     }
 
     #[test]
-    fn fast_mode_and_effort_reach_the_body() {
+    fn effort_reaches_the_body() {
         super::super::with_request(false, |r| {
-            assert!(body(r).get("speed").is_none());
-            let fast = Request {
-                fast: true,
+            assert!(body(r).get("output_config").is_none());
+            let b = body(&Request {
                 effort: Some("medium"),
                 ..*r
-            };
-            let b = body(&fast);
-            assert_eq!(b["speed"], "fast");
+            });
             assert_eq!(b["output_config"]["effort"], "medium");
         });
     }
