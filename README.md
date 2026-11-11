@@ -189,6 +189,7 @@ to read it first. Dropping an image file on the terminal pastes its path as an
 `@` mention.
 
 Commands: `/new`, `/undo` (put back the files the last turn wrote or edited),
+`/output` (the last tool call's full result),
 `/compact`, `/model [provider/model]`, `/effort [level]`, `/profile`,
 `/session`, `/help`, `/quit`, plus plugin commands and skills.
 Keys typed while a turn runs are kept for the next prompt.

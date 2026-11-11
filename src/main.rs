@@ -67,8 +67,8 @@ Options:
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
 Esc or Ctrl-C stops a running turn, Ctrl-D exits. @path attaches a file.
-Commands: /new, /undo, /compact, /model <model>, /effort <level>, /session, /help,
-/quit, plus your own
+Commands: /new, /undo, /output, /compact, /model <model>, /effort <level>,
+/session, /help, /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
 ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY, <NAME>_BASE_URL and
@@ -453,14 +453,16 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
     )
 }
 
-const BUILTIN_COMMANDS: [&str; 10] = [
-    "new", "undo", "model", "effort", "compact", "profile", "session", "help", "quit", "exit",
+const BUILTIN_COMMANDS: [&str; 11] = [
+    "new", "undo", "output", "model", "effort", "compact", "profile", "session", "help", "quit",
+    "exit",
 ];
 
 fn help(lib: &skills::Library) -> String {
     let mut rows: Vec<(String, String)> = [
         ("/new", "start a new session"),
         ("/undo", "put back the files the last turn wrote or edited"),
+        ("/output", "show the last tool call's full result"),
         ("/model [provider/model]", "show or switch the model"),
         ("/effort [level]", "show or set reasoning effort"),
         ("/compact", "summarize the conversation now"),
@@ -908,6 +910,13 @@ fn run() -> Result<ExitCode, String> {
                 Err(e) => eprintln!("axio: {e}"),
             },
             ("/model", "") => eprintln!("{}", term.dim(&model_line(&agent))),
+            ("/output", _) => match &term.last_output {
+                Some((title, text)) => {
+                    eprintln!("{}", term.dim(&format!("── {title}")));
+                    println!("{}", text.trim_end());
+                }
+                None => eprintln!("{}", term.dim("no tool has run yet")),
+            },
             ("/undo", _) => match agent.undo() {
                 Ok(done) => {
                     for (path, restored) in done {

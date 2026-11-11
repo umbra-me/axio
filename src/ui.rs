@@ -39,6 +39,8 @@ pub struct Term {
     tool: Option<(String, Value)>,
     /// Where an Edit's old text began, read before it ran.
     edit_at: Option<usize>,
+    /// The latest tool call's header and full result, for /output.
+    pub last_output: Option<(String, String)>,
     /// Summary of the model's current thinking, shown after the spinner.
     thought: String,
     /// The tool call the model is writing now.
@@ -72,6 +74,7 @@ impl Term {
             frame: 0,
             tool: None,
             edit_at: None,
+            last_output: None,
             writing: None,
             thought: String::new(),
             last: Shown::Nothing,
@@ -804,6 +807,11 @@ impl Ui for Term {
                     .and_then(|p| std::fs::read_to_string(p).ok())
             })
             .flatten();
+        let (title, detail) = tool_title(&name, &input, &self.cwd);
+        let text = match result {
+            Ok(t) | Err(t) => t.clone(),
+        };
+        self.last_output = Some((format!("{title} {detail}").trim_end().to_string(), text));
         let at = self.edit_at.take();
         let view = after.as_deref().map(|a| (a, at));
         for line in tool_lines(&name, &input, result, view, self.color) {
