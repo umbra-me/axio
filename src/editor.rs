@@ -1,5 +1,5 @@
 //! A small multi-line prompt editor: Enter sends, Alt-Enter or a trailing
-//! backslash adds a line, Up and Down walk history.
+//! backslash adds a line, Up and Down walk history, Ctrl-R searches it.
 
 use crate::term::Key;
 
@@ -26,6 +26,15 @@ pub struct Editor {
     draft: String,
     /// Slash command names, without the slash, for Tab completion.
     pub commands: Vec<String>,
+    search: Option<Search>,
+}
+
+/// Ctrl-R: the typed query and the history entry it matched.
+struct Search {
+    query: String,
+    hit: Option<usize>,
+    /// The text being edited before the search began.
+    saved: String,
 }
 
 impl Editor {
@@ -152,8 +161,86 @@ impl Editor {
         }
     }
 
-    pub fn handle(&mut self, key: Key) -> Outcome {
+    /// The newest history entry before `before` that contains `query`.
+    fn find(&self, query: &str, before: usize) -> Option<usize> {
+        let query = query.to_lowercase();
+        (0..before.min(self.history.len()))
+            .rev()
+            .find(|&i| self.history[i].to_lowercase().contains(&query))
+    }
+
+    /// Keys while searching. Returns the key to handle normally once the
+    /// search has ended by accepting its match.
+    fn search_key(&mut self, key: Key) -> Option<Key> {
+        let s = self.search.as_mut()?;
         match key {
+            Key::Char(_) | Key::Paste(_) => {
+                match key {
+                    Key::Char(c) => s.query.push(c),
+                    Key::Paste(t) => s.query.push_str(t.lines().next().unwrap_or("")),
+                    _ => unreachable!(),
+                }
+                let q = s.query.clone();
+                let hit = self.find(&q, self.history.len());
+                if let Some(s) = &mut self.search {
+                    s.hit = hit;
+                }
+            }
+            Key::Backspace => {
+                s.query.pop();
+                let q = s.query.clone();
+                let hit = if q.is_empty() {
+                    None
+                } else {
+                    self.find(&q, self.history.len())
+                };
+                if let Some(s) = &mut self.search {
+                    s.hit = hit;
+                }
+            }
+            Key::Ctrl('r') => {
+                let (q, from) = (s.query.clone(), s.hit.unwrap_or(self.history.len()));
+                if let (Some(hit), Some(s)) = (self.find(&q, from), &mut self.search) {
+                    s.hit = Some(hit);
+                }
+            }
+            Key::Esc | Key::Ctrl('g') | Key::Ctrl('c') => {
+                let s = self.search.take()?;
+                self.set(&s.saved);
+            }
+            other => {
+                let s = self.search.take()?;
+                match s.hit {
+                    Some(i) => {
+                        let text = self.history[i].clone();
+                        self.set(&text);
+                    }
+                    None => self.set(&s.saved),
+                }
+                // Enter accepts the match for editing rather than sending it.
+                return (other != Key::Enter).then_some(other);
+            }
+        }
+        None
+    }
+
+    pub fn handle(&mut self, key: Key) -> Outcome {
+        let key = if self.search.is_some() {
+            match self.search_key(key) {
+                Some(k) => k,
+                None => return Outcome::Editing,
+            }
+        } else {
+            key
+        };
+        match key {
+            Key::Ctrl('r') => {
+                self.search = Some(Search {
+                    query: String::new(),
+                    hit: None,
+                    saved: self.text(),
+                });
+            }
             Key::Ctrl('i') => self.complete(),
             Key::Char(c) => self.insert(&c.to_string()),
             Key::Paste(s) => self.insert(&s),
@@ -221,6 +308,24 @@ impl Editor {
     /// The text to print for the prompt area at `width` columns, plus the
     /// cursor's row and column and the row the printed text ends on.
     pub fn layout(&self, width: usize) -> Layout {
+        if let Some(s) = &self.search {
+            let found = match s.hit {
+                Some(i) => self.history[i].lines().next().unwrap_or("").to_string(),
+                None if s.query.is_empty() => String::new(),
+                None => "no match".into(),
+            };
+            let line: String = format!("search history: {}  › {found}", s.query)
+                .chars()
+                .take(width.max(4) - 1)
+                .collect();
+            let col = line.chars().count();
+            return Layout {
+                text: line,
+                cursor_row: 0,
+                cursor_col: col,
+                end_row: 0,
+            };
+        }
         let width = width.max(4);
         let mut out = String::from(PROMPT);
         let (mut row, mut col) = (0, PROMPT.chars().count());
@@ -297,6 +402,44 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_r_searches_history_newest_first() {
+        let mut e = Editor {
+            history: ["cargo build", "git status", "cargo test"]
+                .map(String::from)
+                .into(),
+            ..Editor::default()
+        };
+        e.handle(Key::Paste("draft".into()));
+        e.handle(Key::Ctrl('r'));
+        for c in "CARGO".chars() {
+            e.handle(Key::Char(c));
+        }
+        assert!(e.layout(80).text.ends_with("› cargo test"));
+        e.handle(Key::Ctrl('r'));
+        assert!(e.layout(80).text.ends_with("› cargo build"));
+        assert_eq!(
+            e.handle(Key::Enter),
+            Outcome::Editing,
+            "Enter accepts for editing"
+        );
+        assert_eq!(e.text(), "cargo build");
+        assert_eq!(e.handle(Key::Enter), Outcome::Submit("cargo build".into()));
+
+        e.handle(Key::Paste("mine".into()));
+        e.handle(Key::Ctrl('r'));
+        e.handle(Key::Char('z'));
+        assert!(e.layout(80).text.ends_with("no match"));
+        e.handle(Key::Esc);
+        assert_eq!(e.text(), "mine", "Esc restores the draft");
+
+        e.handle(Key::Ctrl('r'));
+        e.handle(Key::Paste("stat".into()));
+        e.handle(Key::End);
+        e.handle(Key::Char('!'));
+        assert_eq!(e.text(), "git status!", "other keys accept and then apply");
+    }
 
     #[test]
     fn tab_completes_slash_commands() {

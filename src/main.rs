@@ -64,8 +64,8 @@ Options:
   -V, --version         Show the version
 
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
-completes a /command, Up/Down walk history, Esc or Ctrl-C stops a running
-turn, Ctrl-D exits.
+completes a /command, Up/Down walk history, Ctrl-R searches it, Esc or Ctrl-C
+stops a running turn, Ctrl-D exits.
 Commands: /new, /compact, /model <model>, /effort <level>, /session, /help,
 /quit, plus your own
 
@@ -908,6 +908,10 @@ fn run() -> Result<ExitCode, String> {
     }
     agent.end("prompt_input_exit", &mut term);
     background::stop_all();
+    eprintln!(
+        "{}",
+        term.farewell(agent.session.as_ref().map(|s| s.path.as_path()))
+    );
     Ok(ExitCode::SUCCESS)
 }
 
