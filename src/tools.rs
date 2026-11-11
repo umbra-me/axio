@@ -313,7 +313,7 @@ fn set_latest_line(out: &[u8]) {
 }
 
 /// Text without terminal colour and cursor sequences.
-fn strip_ansi(s: &str) -> String {
+pub(crate) fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
