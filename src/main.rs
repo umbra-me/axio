@@ -800,6 +800,13 @@ fn run() -> Result<ExitCode, String> {
         "{}",
         term.dim(&format!("{resumed}Esc stops a turn · /help · Ctrl-D exits"))
     );
+    let recap = ui::recap(&agent.messages);
+    if !recap.is_empty() {
+        eprintln!();
+        for line in recap {
+            eprintln!("{}", term.dim(&line));
+        }
+    }
     let mut editor = editor::Editor::default();
     editor.history = load_history();
     editor.commands = BUILTIN_COMMANDS

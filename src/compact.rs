@@ -10,7 +10,7 @@ use crate::message::{Block, Message};
 /// Roughly how many tokens of the user's own recent requests stay verbatim.
 pub const KEEP_USER_TOKENS: usize = 20_000;
 const RESULT_CHARS: usize = 2_000;
-const SUMMARY_MARK: &str = "This session was compacted.";
+pub const SUMMARY_MARK: &str = "This session was compacted.";
 
 /// Appended when the user stops a turn, so the model knows its last reply or
 /// command was cut short.
