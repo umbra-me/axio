@@ -1,17 +1,21 @@
 mod agent;
+mod compact;
 mod context;
+mod editor;
 mod message;
 mod provider;
 mod session;
 mod sse;
+mod term;
 mod tools;
 
 use agent::{Agent, Ui};
 use provider::{Delta, Model, Stop, Usage};
 use serde_json::Value;
-use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 const USAGE: &str = "axio: a minimal coding agent
 
@@ -28,7 +32,9 @@ Options:
   -h, --help            Show this help
   -V, --version         Show the version
 
-Interactive commands: /new, /model <model>, /session, /quit
+Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Up/Down
+walk history, Esc or Ctrl-C stops a running turn, Ctrl-D exits.
+Commands: /new, /compact, /model <model>, /session, /quit
 
 Credentials come from the environment: ANTHROPIC_API_KEY or
 ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY. Any other provider
@@ -76,6 +82,8 @@ fn parse_args() -> Result<Option<Args>, String> {
 struct Term {
     color: bool,
     thinking: bool,
+    keys: Option<term::Keys>,
+    turn: Usage,
 }
 
 impl Term {
@@ -147,7 +155,131 @@ impl Ui for Term {
         }
     }
 
-    fn usage(&mut self, _: Usage) {}
+    fn usage(&mut self, u: Usage) {
+        self.turn.output += u.output;
+        self.turn.input = u.input;
+        self.turn.cache_read = u.cache_read;
+        self.turn.cache_write = u.cache_write;
+    }
+
+    fn interrupted(&mut self) -> bool {
+        self.keys.as_mut().is_some_and(|k| k.stop_requested())
+    }
+
+    fn notice(&mut self, text: &str) {
+        eprintln!("{}", self.dim(text));
+    }
+}
+
+fn tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
+        _ => format!("{:.1}M", n as f64 / 1e6),
+    }
+}
+
+fn status(agent: &Agent, turn: &Usage) -> String {
+    let sent = turn.input + turn.cache_read + turn.cache_write;
+    let cached = (turn.cache_read * 100)
+        .checked_div(sent)
+        .map(|p| format!(" · {p}% cached"))
+        .unwrap_or_default();
+    format!(
+        "context {}/{} · {} out{cached}",
+        tokens(agent.context),
+        tokens(agent.model.context_window()),
+        tokens(turn.output)
+    )
+}
+
+fn history_path() -> std::path::PathBuf {
+    context::home().join("history.jsonl")
+}
+
+fn load_history() -> Vec<String> {
+    let text = std::fs::read_to_string(history_path()).unwrap_or_default();
+    let mut all: Vec<String> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let skip = all.len().saturating_sub(500);
+    all.drain(..skip);
+    all
+}
+
+fn save_history(entry: &str) {
+    let path = history_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{}", serde_json::Value::String(entry.into()));
+    }
+}
+
+enum Input {
+    Line(String),
+    Exit,
+}
+
+/// Edits one prompt until Enter. Ctrl-C twice on an empty line, or Ctrl-D,
+/// exits.
+fn read_prompt(editor: &mut editor::Editor, keys: &mut term::Keys) -> Input {
+    let mut width = term::width();
+    let mut drawn = editor.layout(width);
+    print!("{}", drawn.redraw(0));
+    let _ = io::stdout().flush();
+    let mut last_interrupt: Option<Instant> = None;
+    loop {
+        let Some(key) = keys.next() else {
+            return Input::Exit;
+        };
+        let outcome = editor.handle(key);
+        let previous = drawn.cursor_row;
+        match outcome {
+            editor::Outcome::Submit(text) => {
+                // Leave the submitted text on screen, then start below it.
+                let mut done = editor::Editor::default();
+                done.handle(term::Key::Paste(text.clone()));
+                println!("{}", done.layout(width).redraw(previous));
+                let _ = io::stdout().flush();
+                return Input::Line(text);
+            }
+            editor::Outcome::Exit => {
+                println!();
+                return Input::Exit;
+            }
+            editor::Outcome::Interrupt => {
+                if last_interrupt.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+                    println!();
+                    return Input::Exit;
+                }
+                last_interrupt = Some(Instant::now());
+                print!("\r\x1b[J\x1b[2m(Ctrl-C again or Ctrl-D to exit)\x1b[0m\n");
+                drawn = editor.layout(width);
+                print!("{}", drawn.redraw(0));
+                let _ = io::stdout().flush();
+                continue;
+            }
+            editor::Outcome::Redraw => {
+                width = term::width();
+                print!("\x1b[2J\x1b[H");
+                drawn = editor.layout(width);
+                print!("{}", drawn.redraw(0));
+                let _ = io::stdout().flush();
+                continue;
+            }
+            editor::Outcome::Editing => {}
+        }
+        drawn = editor.layout(width);
+        print!("{}", drawn.redraw(previous));
+        let _ = io::stdout().flush();
+    }
 }
 
 fn main() -> ExitCode {
@@ -192,6 +324,8 @@ fn run() -> Result<ExitCode, String> {
     let mut term = Term {
         color: io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
         thinking: false,
+        keys: None,
+        turn: Usage::default(),
     };
 
     let mut prompt = args.prompt.join(" ");
@@ -210,10 +344,12 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    let _raw = term::RawMode::enter().ok_or("could not configure the terminal (stty failed)")?;
+    term.keys = Some(term::Keys::spawn());
     eprintln!(
         "{}",
         term.dim(&format!(
-            "axio {} · {} · /quit to exit",
+            "axio {} · {} · Esc stops a turn · /quit to exit",
             env!("CARGO_PKG_VERSION"),
             agent.model
         ))
@@ -224,15 +360,18 @@ fn run() -> Result<ExitCode, String> {
             term.dim(&format!("resumed {} messages", agent.messages.len()))
         );
     }
-    let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
+    let mut editor = editor::Editor::default();
+    editor.history = load_history();
     loop {
         if prompt.is_empty() {
-            eprint!("\n› ");
-            let _ = io::stderr().flush();
-            match lines.next() {
-                Some(Ok(line)) => prompt = line,
-                _ => break,
+            println!();
+            let keys = term.keys.as_mut().expect("keys");
+            match read_prompt(&mut editor, keys) {
+                Input::Line(line) => {
+                    save_history(&line);
+                    prompt = line;
+                }
+                Input::Exit => break,
             }
         }
         let input = std::mem::take(&mut prompt);
@@ -245,11 +384,17 @@ fn run() -> Result<ExitCode, String> {
             ("/quit" | "/exit", _) => break,
             ("/new", _) => {
                 agent.messages.clear();
+                agent.context = 0;
                 if agent.session.is_some() {
                     agent.session = Some(session::Session::create(&sessions, &cwd)?);
                 }
                 eprintln!("{}", term.dim("new session"));
             }
+            ("/compact", _) => match agent.compact(&mut term) {
+                Ok(true) => eprintln!("{}", term.dim("compacted")),
+                Ok(false) => eprintln!("{}", term.dim("nothing older to compact")),
+                Err(e) => eprintln!("axio: {e}"),
+            },
             ("/model", "") => eprintln!("{}", agent.model),
             ("/model", m) => {
                 agent.model = Model::parse(m);
@@ -260,9 +405,14 @@ fn run() -> Result<ExitCode, String> {
                 None => eprintln!("not saved"),
             },
             _ => {
-                if let Err(e) = agent.prompt(input, &mut term) {
-                    eprintln!("\naxio: {e}");
+                term.turn = Usage::default();
+                term.thinking = false;
+                match agent.prompt(input, &mut term) {
+                    Ok(()) => {}
+                    Err(e) if e == agent::ABORTED => eprintln!("\n{}", term.dim("[stopped]")),
+                    Err(e) => eprintln!("\naxio: {e}"),
                 }
+                eprintln!("{}", term.dim(&status(&agent, &term.turn)));
             }
         }
     }

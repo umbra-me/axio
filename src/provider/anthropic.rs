@@ -21,7 +21,7 @@ pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, Strin
         &headers,
         &body(req),
     )?;
-    parse_stream(reader, on)
+    parse_stream(reader, req, on)
 }
 
 fn body(req: &Request) -> Value {
@@ -101,6 +101,7 @@ enum Building {
 
 pub(crate) fn parse_stream<R: BufRead>(
     reader: R,
+    req: &Request,
     on: &mut dyn FnMut(Delta),
 ) -> Result<Reply, String> {
     let mut blocks: Vec<Option<Building>> = Vec::new();
@@ -108,6 +109,7 @@ pub(crate) fn parse_stream<R: BufRead>(
     let mut usage = Usage::default();
 
     sse::read(reader, |data| {
+        req.check()?;
         let ev: Value =
             serde_json::from_str(data).map_err(|e| format!("bad stream event: {e}: {data}"))?;
         let index = ev["index"].as_u64().unwrap_or(0) as usize;
@@ -116,6 +118,7 @@ pub(crate) fn parse_stream<R: BufRead>(
                 let u = &ev["message"]["usage"];
                 usage.input = u["input_tokens"].as_u64().unwrap_or(0);
                 usage.cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                usage.cache_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
             }
             "content_block_start" => {
                 let cb = &ev["content_block"];
@@ -232,7 +235,7 @@ mod tests {
     use super::*;
 
     const STREAM: &str = r#"event: message_start
-data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":4}}}
+data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":4,"cache_creation_input_tokens":3}}}
 
 data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
 
@@ -259,10 +262,12 @@ data: {"type":"message_stop"}
     #[test]
     fn assembles_thinking_text_and_tool_calls() {
         let mut text = String::new();
-        let reply = parse_stream(STREAM.as_bytes(), &mut |d| {
-            if let Delta::Text(t) = d {
-                text.push_str(t)
-            }
+        let reply = super::super::with_request(false, |r| {
+            parse_stream(STREAM.as_bytes(), r, &mut |d| {
+                if let Delta::Text(t) = d {
+                    text.push_str(t)
+                }
+            })
         })
         .unwrap();
         assert_eq!(text, "Hi");
@@ -272,7 +277,8 @@ data: {"type":"message_stop"}
             Usage {
                 input: 10,
                 output: 7,
-                cache_read: 4
+                cache_read: 4,
+                cache_write: 3
             }
         );
         assert_eq!(
@@ -312,13 +318,20 @@ data: {"type":"message_stop"}
 
     #[test]
     fn reports_stream_errors_and_truncation() {
-        let err = parse_stream(
+        let err = super::super::with_request(false, |r| parse_stream(
             "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n"
                 .as_bytes(),
+            r,
             &mut |_| {},
-        )
+        ))
         .unwrap_err();
         assert_eq!(err, "overloaded_error: busy");
-        assert!(parse_stream("".as_bytes(), &mut |_| {}).is_err());
+        assert!(
+            super::super::with_request(false, |r| parse_stream("".as_bytes(), r, &mut |_| {}))
+                .is_err()
+        );
+        let stopped =
+            super::super::with_request(true, |r| parse_stream(STREAM.as_bytes(), r, &mut |_| {}));
+        assert_eq!(stopped.unwrap_err(), crate::agent::ABORTED);
     }
 }

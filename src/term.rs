@@ -1,0 +1,310 @@
+//! Terminal input without a terminal library: `stty` switches modes, a thread
+//! reads raw bytes, and `parse` turns them into keys.
+
+use std::collections::VecDeque;
+use std::io::{Read, Write};
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
+use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
+
+/// How long a lone Escape waits for the rest of an escape sequence.
+const ESC_WAIT: Duration = Duration::from_millis(30);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Key {
+    Char(char),
+    Enter,
+    AltEnter,
+    Backspace,
+    AltBackspace,
+    Delete,
+    Left,
+    Right,
+    WordLeft,
+    WordRight,
+    Up,
+    Down,
+    Home,
+    End,
+    Esc,
+    Paste(String),
+    Ctrl(char),
+}
+
+/// Reads one key, pulling bytes from `next` (which waits up to the given time
+/// and returns `None` when nothing arrived).
+pub fn parse(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Option<Key> {
+    let b = next(None)?;
+    Some(match b {
+        0x1b => escape(next),
+        b'\r' | b'\n' => Key::Enter,
+        0x7f | 0x08 => Key::Backspace,
+        0x02 => Key::Left,
+        0x06 => Key::Right,
+        0x10 => Key::Up,
+        0x0e => Key::Down,
+        0x01 => Key::Home,
+        0x05 => Key::End,
+        0x00..=0x1f => Key::Ctrl((b + b'a' - 1) as char),
+        _ => Key::Char(utf8(b, next)),
+    })
+}
+
+fn utf8(first: u8, next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> char {
+    let extra = match first {
+        0xc0..=0xdf => 1,
+        0xe0..=0xef => 2,
+        0xf0..=0xf7 => 3,
+        _ => 0,
+    };
+    let mut bytes = vec![first];
+    for _ in 0..extra {
+        match next(Some(ESC_WAIT)) {
+            Some(b) => bytes.push(b),
+            None => break,
+        }
+    }
+    std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|s| s.chars().next())
+        .unwrap_or('\u{fffd}')
+}
+
+fn escape(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
+    let Some(b) = next(Some(ESC_WAIT)) else {
+        return Key::Esc;
+    };
+    match b {
+        b'[' => csi(next),
+        b'O' => match next(Some(ESC_WAIT)) {
+            Some(b'A') => Key::Up,
+            Some(b'B') => Key::Down,
+            Some(b'C') => Key::Right,
+            Some(b'D') => Key::Left,
+            Some(b'H') => Key::Home,
+            Some(b'F') => Key::End,
+            _ => Key::Esc,
+        },
+        b'\r' | b'\n' => Key::AltEnter,
+        b'b' => Key::WordLeft,
+        b'f' => Key::WordRight,
+        0x7f => Key::AltBackspace,
+        _ => Key::Esc,
+    }
+}
+
+fn csi(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
+    let mut params = String::new();
+    let fin = loop {
+        match next(Some(ESC_WAIT)) {
+            Some(b @ 0x40..=0x7e) => break b,
+            Some(b) => params.push(b as char),
+            None => return Key::Esc,
+        }
+    };
+    match (params.as_str(), fin) {
+        (_, b'A') => Key::Up,
+        (_, b'B') => Key::Down,
+        ("1;3" | "1;5", b'C') => Key::WordRight,
+        ("1;3" | "1;5", b'D') => Key::WordLeft,
+        (_, b'C') => Key::Right,
+        (_, b'D') => Key::Left,
+        (_, b'H') | ("1" | "7", b'~') => Key::Home,
+        (_, b'F') | ("4" | "8", b'~') => Key::End,
+        ("3", b'~') => Key::Delete,
+        ("200", b'~') => paste(next),
+        _ => Key::Esc,
+    }
+}
+
+/// Bracketed paste: everything up to ESC [ 2 0 1 ~ is literal text.
+fn paste(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
+    const END: &[u8] = b"\x1b[201~";
+    let mut bytes = Vec::new();
+    while let Some(b) = next(Some(Duration::from_millis(500))) {
+        bytes.push(b);
+        if bytes.ends_with(END) {
+            bytes.truncate(bytes.len() - END.len());
+            break;
+        }
+    }
+    Key::Paste(
+        String::from_utf8_lossy(&bytes)
+            .replace("\r\n", "\n")
+            .replace('\r', "\n"),
+    )
+}
+
+/// Keys from the terminal, read by a background thread so a running turn can
+/// still notice Escape and Ctrl-C.
+pub struct Keys {
+    rx: Receiver<u8>,
+    pending: VecDeque<u8>,
+    /// Keys typed during a turn, replayed into the next prompt.
+    typed_ahead: VecDeque<Key>,
+}
+
+impl Keys {
+    pub fn spawn() -> Keys {
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin();
+            let mut buf = [0u8; 256];
+            while let Ok(n) = stdin.read(&mut buf) {
+                if n == 0 || buf[..n].iter().any(|b| tx.send(*b).is_err()) {
+                    break;
+                }
+            }
+        });
+        Keys {
+            rx,
+            pending: VecDeque::new(),
+            typed_ahead: VecDeque::new(),
+        }
+    }
+
+    fn byte(&mut self, wait: Option<Duration>) -> Option<u8> {
+        if let Some(b) = self.pending.pop_front() {
+            return Some(b);
+        }
+        match wait {
+            None => self.rx.recv().ok(),
+            Some(d) => self.rx.recv_timeout(d).ok(),
+        }
+    }
+
+    /// Blocks for the next key, typed-ahead keys first; `None` when stdin closed.
+    pub fn next(&mut self) -> Option<Key> {
+        if let Some(k) = self.typed_ahead.pop_front() {
+            return Some(k);
+        }
+        parse(&mut |w| self.byte(w))
+    }
+
+    /// During a turn: whether Esc or Ctrl-C was pressed. Other keys are kept
+    /// for the next prompt.
+    pub fn stop_requested(&mut self) -> bool {
+        loop {
+            if self.pending.is_empty() {
+                match self.rx.try_recv() {
+                    Ok(b) => self.pending.push_back(b),
+                    Err(_) => return false,
+                }
+            }
+            match parse(&mut |w| self.byte(w)) {
+                Some(Key::Esc | Key::Ctrl('c')) => {
+                    self.typed_ahead.clear();
+                    return true;
+                }
+                Some(k) => self.typed_ahead.push_back(k),
+                None => return false,
+            }
+        }
+    }
+}
+
+static SAVED: OnceLock<String> = OnceLock::new();
+
+fn stty(args: &[&str]) -> Option<String> {
+    let out = Command::new("stty")
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Character-at-a-time input with signals off, so Ctrl-C reaches the editor
+/// as a key. Output processing stays on, so `\n` still returns the carriage.
+pub struct RawMode;
+
+impl RawMode {
+    pub fn enter() -> Option<RawMode> {
+        let saved = stty(&["-g"])?;
+        stty(&[
+            "-icanon", "-echo", "-isig", "-ixon", "-iexten", "min", "1", "time", "0",
+        ])?;
+        let _ = SAVED.set(saved);
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore();
+            previous(info);
+        }));
+        print!("\x1b[?2004h");
+        let _ = std::io::stdout().flush();
+        Some(RawMode)
+    }
+}
+
+fn restore() {
+    print!("\x1b[?2004l");
+    let _ = std::io::stdout().flush();
+    if let Some(saved) = SAVED.get() {
+        let _ = stty(&[saved]);
+    }
+}
+
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        restore();
+    }
+}
+
+pub fn width() -> usize {
+    stty(&["size"])
+        .and_then(|s| s.split_whitespace().nth(1)?.parse().ok())
+        .filter(|w: &usize| *w > 0)
+        .or_else(|| std::env::var("COLUMNS").ok()?.parse().ok())
+        .unwrap_or(80)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys(input: &[u8]) -> Vec<Key> {
+        let mut bytes: VecDeque<u8> = input.iter().copied().collect();
+        let mut out = Vec::new();
+        while let Some(k) = parse(&mut |_| bytes.pop_front()) {
+            out.push(k);
+        }
+        out
+    }
+
+    #[test]
+    fn parses_text_controls_and_sequences() {
+        assert_eq!(
+            keys("hé\r\x7f\x03\x1b[A\x1b[D\x1bOC\x1b[3~\x1b\r\x1b[1;5D".as_bytes()),
+            [
+                Key::Char('h'),
+                Key::Char('é'),
+                Key::Enter,
+                Key::Backspace,
+                Key::Ctrl('c'),
+                Key::Up,
+                Key::Left,
+                Key::Right,
+                Key::Delete,
+                Key::AltEnter,
+                Key::WordLeft,
+            ]
+        );
+    }
+
+    #[test]
+    fn lone_escape_is_a_key() {
+        assert_eq!(keys(b"\x1b"), [Key::Esc]);
+    }
+
+    #[test]
+    fn bracketed_paste_keeps_newlines_literal() {
+        assert_eq!(
+            keys(b"\x1b[200~a\r\nb\x1b[201~x"),
+            [Key::Paste("a\nb".into()), Key::Char('x')]
+        );
+    }
+}

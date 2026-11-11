@@ -3,7 +3,7 @@
 A minimal, fast coding agent. One small Rust binary, no runtime, no daemon.
 
 ```sh
-cargo install --git https://github.com/umbra-me/axio --locked
+cargo install --git https://github.com/umbra-me/axio --locked   # or: cargo install --path . --locked
 export ANTHROPIC_API_KEY=...
 axio                      # interactive
 axio -p "explain src/"    # one answer, then exit
@@ -22,6 +22,23 @@ axio -c                   # continue the last session in this directory
   `CLAUDE.md`) from the filesystem root down to the working directory.
 - **Sessions**: append-only JSONL under `~/.axio/agent/sessions/`, grouped by
   directory. `-c` continues the latest; `-s <file>` opens one.
+- **Compaction**: at 85% of the model's context window, older turns are
+  summarized and the last ~20k tokens stay verbatim. `/compact` does it on
+  demand; `AXIO_CONTEXT_WINDOW` and `AXIO_COMPACT_AT` override the numbers.
+
+## Keys
+
+| Key | Does |
+|---|---|
+| Enter | send |
+| Alt-Enter, or `\` then Enter | new line |
+| Up / Down | move between lines, then through history |
+| Esc or Ctrl-C | stop the running turn (a running command is killed) |
+| Ctrl-C twice, or Ctrl-D, on an empty line | exit |
+| Ctrl-A / Ctrl-E, Alt-B / Alt-F, Ctrl-W, Ctrl-U, Ctrl-K | usual line editing |
+
+Commands: `/new`, `/compact`, `/model <provider/model>`, `/session`, `/quit`.
+Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out
 

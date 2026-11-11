@@ -1,3 +1,4 @@
+use crate::compact;
 use crate::message::{Block, Message};
 use serde_json::{Value, json};
 use std::fs::{File, OpenOptions};
@@ -32,11 +33,17 @@ impl Session {
     }
 
     pub fn open(path: PathBuf) -> Result<Session, String> {
-        let file = OpenOptions::new()
+        let err = |e: std::io::Error| format!("{}: {e}", path.display());
+        // A crash can leave a half-written last line; start ours on a fresh one.
+        let torn = std::fs::read(&path).is_ok_and(|b| b.last().is_some_and(|c| *c != b'\n'));
+        let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+            .map_err(err)?;
+        if torn {
+            file.write_all(b"\n").map_err(err)?;
+        }
         Ok(Session { path, file })
     }
 
@@ -44,13 +51,18 @@ impl Session {
         self.write_line(&json!({"type": "message", "message": m}))
     }
 
+    pub fn compaction(&mut self, keep_from: usize, summary: &str) -> Result<(), String> {
+        self.write_line(&json!({"type": "compaction", "keep_from": keep_from, "summary": summary}))
+    }
+
     fn write_line(&mut self, v: &Value) -> Result<(), String> {
         writeln!(self.file, "{v}").map_err(|e| format!("{}: {e}", self.path.display()))
     }
 }
 
-/// Loads a transcript, closing any tool call left without a result by an
-/// interrupted run so the provider accepts the history.
+/// Loads a transcript. Compaction entries replay the same summary the live
+/// session applied, and a tool call left without a result by an interrupted
+/// run is closed wherever it sits, so the provider accepts the history.
 pub fn load(path: &Path) -> Result<Vec<Message>, String> {
     let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut messages = Vec::new();
@@ -59,27 +71,53 @@ pub fn load(path: &Path) -> Result<Vec<Message>, String> {
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue; // a line cut short by a crash
         };
-        if v["type"] == "message"
-            && let Ok(m) = serde_json::from_value::<Message>(v["message"].clone())
-        {
-            messages.push(m);
+        match v["type"].as_str() {
+            Some("message") => {
+                if let Ok(m) = serde_json::from_value::<Message>(v["message"].clone()) {
+                    close_open_calls(&mut messages, Some(&m));
+                    compact::append(&mut messages, m);
+                }
+            }
+            Some("compaction") => {
+                if let (Some(keep_from), Some(summary)) =
+                    (v["keep_from"].as_u64(), v["summary"].as_str())
+                {
+                    compact::apply(&mut messages, keep_from as usize, summary);
+                }
+            }
+            _ => {}
         }
     }
-    if let Some(last) = messages.last() {
-        let open: Vec<Block> = last
-            .tool_calls()
-            .into_iter()
-            .map(|(id, _, _)| Block::ToolResult {
-                id: id.to_string(),
-                output: "interrupted before the tool ran".into(),
-                is_error: true,
-            })
-            .collect();
-        if !open.is_empty() {
-            messages.push(Message::User { content: open });
-        }
-    }
+    close_open_calls(&mut messages, None);
     Ok(messages)
+}
+
+/// Adds error results for calls in the last message that `next` does not answer.
+fn close_open_calls(messages: &mut Vec<Message>, next: Option<&Message>) {
+    let Some(last) = messages.last() else { return };
+    let answered: Vec<&str> = match next {
+        Some(Message::User { content }) => content
+            .iter()
+            .filter_map(|b| match b {
+                Block::ToolResult { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let open: Vec<Block> = last
+        .tool_calls()
+        .into_iter()
+        .filter(|(id, _, _)| !answered.contains(id))
+        .map(|(id, _, _)| Block::ToolResult {
+            id: id.to_string(),
+            output: "interrupted before the tool ran".into(),
+            is_error: true,
+        })
+        .collect();
+    if !open.is_empty() {
+        messages.push(Message::User { content: open });
+    }
 }
 
 /// Sessions are grouped by working directory, like `--Users-me-project--`.
@@ -136,6 +174,61 @@ mod tests {
             Message::User { content } if matches!(&content[0], Block::ToolResult { id, is_error: true, .. } if id == "t1")
         ));
         assert_eq!(latest(&dir), Some(path));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn call(id: &str) -> Message {
+        Message::Assistant {
+            content: vec![Block::ToolCall {
+                id: id.into(),
+                name: "bash".into(),
+                input: json!({"command": "ls"}),
+            }],
+        }
+    }
+
+    #[test]
+    fn closes_calls_left_open_mid_history_and_replays_compaction() {
+        let dir = std::env::temp_dir().join(format!("axio-session-mid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Session::create(&dir, Path::new("/w")).unwrap();
+        s.append(&Message::user_text("one")).unwrap();
+        s.append(&call("t1")).unwrap();
+        let path = s.path.clone();
+        drop(s);
+        // A crash mid-line, then a resumed run carries on in the same file.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"ty")
+            .unwrap();
+        let mut s = Session::open(path.clone()).unwrap();
+        s.append(&Message::user_text("two")).unwrap();
+        s.append(&Message::Assistant {
+            content: vec![Block::Text { text: "ok".into() }],
+        })
+        .unwrap();
+
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.len(), 4);
+        let Message::User { content } = &loaded[2] else {
+            panic!()
+        };
+        assert!(matches!(&content[0], Block::ToolResult { id, is_error: true, .. } if id == "t1"));
+        assert_eq!(content[1], Block::Text { text: "two".into() });
+
+        s.compaction(2, "did one").unwrap();
+        let compacted = load(&path).unwrap();
+        assert_eq!(compacted.len(), 2);
+        let Message::User { content } = &compacted[0] else {
+            panic!()
+        };
+        assert!(
+            content.iter().all(|b| matches!(b, Block::Text { .. })),
+            "orphaned result dropped"
+        );
+        assert!(compacted[0].text().contains("did one") && compacted[0].text().ends_with("two"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

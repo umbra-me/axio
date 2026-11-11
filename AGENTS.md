@@ -13,6 +13,8 @@ The desktop super app that used to live here is now Axio Atrium
 - Dependencies: serde, serde_json and ureq only. Adding a crate needs the
   owner's approval and a line in README.md saying why.
 - No async runtime. Blocking I/O and threads are enough for one agent.
+- Never edit history in place: Anthropic binds thinking blocks to the exact
+  prefix. Append, or compact between prompts through `compact::apply`.
 - Every behaviour change starts with a failing test. Provider streams are
   tested from recorded SSE text, never from live calls.
 - Live provider runs spend the owner's money: ask first.
@@ -28,6 +30,8 @@ cargo test --locked
 ## Layout
 
 - `src/main.rs`: arguments, terminal output, interactive loop
+- `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor
+- `src/compact.rs`: keep-tail compaction (retained turns lose thinking blocks)
 - `src/agent.rs`: the turn loop (model, tools, repeat)
 - `src/provider/`: Anthropic Messages and OpenAI-compatible chat completions
 - `src/tools.rs`: read, write, edit, bash
