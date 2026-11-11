@@ -61,6 +61,7 @@ fn push_message(out: &mut Vec<Value>, m: &Message) {
     match m {
         Message::User { content } => {
             let mut text = String::new();
+            let mut images = Vec::new();
             for b in content {
                 match b {
                     Block::Text { text: t } => {
@@ -72,10 +73,18 @@ fn push_message(out: &mut Vec<Value>, m: &Message) {
                     Block::ToolResult { id, output, .. } => out.push(json!({
                         "role": "tool", "tool_call_id": id, "content": output,
                     })),
+                    Block::Image { media_type, data } => images.push(json!({
+                        "type": "image_url",
+                        "image_url": {"url": format!("data:{media_type};base64,{data}")},
+                    })),
                     _ => {}
                 }
             }
-            if !text.is_empty() {
+            if !images.is_empty() {
+                let mut parts = vec![json!({"type": "text", "text": text})];
+                parts.extend(images);
+                out.push(json!({"role": "user", "content": parts}));
+            } else if !text.is_empty() {
                 out.push(json!({"role": "user", "content": text}));
             }
         }

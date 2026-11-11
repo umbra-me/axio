@@ -367,7 +367,7 @@ impl Agent {
         let mut content = vec![Block::Text { text: text.into() }];
         for (block, note) in crate::context::mentions(text, &self.cwd) {
             ui.notice(&note);
-            content.push(Block::Text { text: block });
+            content.push(block);
         }
         content.extend(submit.context.into_iter().map(|text| Block::Text { text }));
         self.push(Message::User { content })?;

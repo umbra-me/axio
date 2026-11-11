@@ -39,6 +39,32 @@ struct Search {
     saved: String,
 }
 
+/// A pasted path to an image file, as dropping a file on a terminal pastes
+/// it (quoted, or with spaces escaped), turned into an `@` mention.
+fn dropped_image(pasted: &str, cwd: Option<&std::path::Path>) -> Option<String> {
+    let t = pasted.trim();
+    if t.contains('\n') {
+        return None;
+    }
+    let quoted = t.len() > 1
+        && (t.starts_with('\'') && t.ends_with('\'') || t.starts_with('"') && t.ends_with('"'));
+    let raw = if quoted { &t[1..t.len() - 1] } else { t };
+    let mut path = String::new();
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if !quoted => path.extend(chars.next()),
+            c => path.push(c),
+        }
+    }
+    let full = match path.strip_prefix("~/") {
+        Some(rest) => std::path::PathBuf::from(std::env::var_os("HOME")?).join(rest),
+        None => cwd.map_or_else(|| path.clone().into(), |d| d.join(&path)),
+    };
+    (full.is_file() && crate::context::image_type(&full).is_some())
+        .then(|| format!("@{} ", path.replace(' ', "\\ ")))
+}
+
 /// Completes `partial`, a path relative to `cwd`: the whole name when one
 /// entry matches (with `/` for a directory, a space for a file), else the
 /// part all matches share. Hidden entries only when asked for with a dot.
@@ -293,8 +319,12 @@ impl Editor {
             }
             Key::Ctrl('i') => self.complete(),
             Key::Char(c) => self.insert(&c.to_string()),
-            // Tabs would render at a width the layout cannot know.
-            Key::Paste(s) => self.insert(&s.replace('\t', "    ")),
+            Key::Paste(s) => {
+                let text = dropped_image(&s, self.cwd.as_deref())
+                    // Tabs would render at a width the layout cannot know.
+                    .unwrap_or_else(|| s.replace('\t', "    "));
+                self.insert(&text);
+            }
             Key::AltEnter => self.insert("\n"),
             Key::Enter => {
                 if self.cursor == self.buf.len() && self.buf.last() == Some(&'\\') {
@@ -517,6 +547,33 @@ mod tests {
         e.handle(Key::End);
         e.handle(Key::Char('!'));
         assert_eq!(e.text(), "git status!", "other keys accept and then apply");
+    }
+
+    #[test]
+    fn dropped_image_paths_become_mentions() {
+        let dir = std::env::temp_dir().join(format!("axio-drop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Shot 1.png"), "x").unwrap();
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        let abs = dir.join("Shot 1.png").display().to_string();
+        let mut e = Editor {
+            cwd: Some(dir.clone()),
+            ..Editor::default()
+        };
+        e.handle(Key::Paste(abs.replace(' ', "\\ ")));
+        assert_eq!(e.text(), format!("@{} ", abs.replace(' ', "\\ ")));
+        e.set("");
+        e.handle(Key::Paste(format!("'{abs}'")));
+        assert_eq!(
+            e.text(),
+            format!("@{} ", abs.replace(' ', "\\ ")),
+            "quoted form too"
+        );
+        e.set("");
+        e.handle(Key::Paste(dir.join("notes.txt").display().to_string()));
+        assert!(!e.text().starts_with('@'), "only images");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

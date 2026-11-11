@@ -25,6 +25,11 @@ pub enum Block {
         #[serde(default)]
         is_error: bool,
     },
+    /// An image the user attached, base64-encoded.
+    Image {
+        media_type: String,
+        data: String,
+    },
     /// A provider-specific block (Anthropic thinking) that must be sent back
     /// byte-for-byte to the provider that produced it and dropped for others.
     Opaque {
