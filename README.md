@@ -179,14 +179,19 @@ is skipped.
 | Esc or Ctrl-C | stop the running turn (a running command is killed) |
 | Ctrl-C twice, or Ctrl-D, on an empty line | exit |
 | Ctrl-A / Ctrl-E, Alt-B / Alt-F, Ctrl-W, Ctrl-U, Ctrl-K | usual line editing |
+| Tab | complete a `/command` |
+| Ctrl-R | search prompt history (Enter takes the match, Esc cancels) |
 
-Commands: `/new`, `/compact`, `/model <provider/model>`, `/session`, `/quit`.
+Commands: `/new`, `/undo` (put back the files the last turn wrote or edited),
+`/compact`, `/model [provider/model]`, `/effort [level]`, `/profile`,
+`/session`, `/help`, `/quit`, plus plugin commands and skills.
 Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out
 
-No MCP, no sub-agents, no plan mode, no permission prompts, no built-in to-do
-list. The model runs commands with your user's rights in the working
+No sub-agents, no plan mode and no built-in permission prompts (a hook can
+ask). `/undo` puts back files written by Write and Edit, not changes made by
+commands. The model runs commands with your user's rights in the working
 directory, so run it where that is acceptable.
 
 ## Dependencies

@@ -58,6 +58,9 @@ pub struct Agent {
     /// first wait between them (it doubles).
     pub max_retries: u32,
     pub retry_unit: Duration,
+    /// Files the latest turn wrote or edited, with what they held before
+    /// (`None`: the turn created them), for /undo.
+    changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
     mcp: Arc<Mcp>,
     tools: Vec<ToolSpec>,
     complete: Arc<Complete>,
@@ -90,6 +93,7 @@ impl Agent {
             complete: Arc::new(provider::complete),
             max_retries: 4,
             retry_unit: Duration::from_secs(1),
+            changed: Default::default(),
         }
     }
 
@@ -349,6 +353,9 @@ impl Agent {
                 Ok(_) => {}
             }
         }
+        if let Ok(mut changed) = self.changed.lock() {
+            changed.clear();
+        }
         let mut content = vec![Block::Text { text: text.into() }];
         content.extend(submit.context.into_iter().map(|text| Block::Text { text }));
         self.push(Message::User { content })?;
@@ -443,6 +450,52 @@ impl Agent {
 
     /// One tool call with its PreToolUse and PostToolUse hooks. Returns the
     /// result and, when a hook ended the turn, its reason.
+    /// Keeps a file's contents from before this turn first changed it.
+    fn remember_original(&self, input: &Value) {
+        let Some(path) = input["file_path"]
+            .as_str()
+            .map(|p| tools::resolve(&self.cwd, p))
+        else {
+            return;
+        };
+        if let Ok(mut changed) = self.changed.lock()
+            && !changed.iter().any(|(p, _)| *p == path)
+        {
+            let before = std::fs::read(&path).ok();
+            changed.push((path, before));
+        }
+    }
+
+    /// Puts back the files the latest turn wrote or edited, and tells the
+    /// model. Returns what was restored (`true`) or removed (`false`).
+    pub fn undo(&mut self) -> Result<Vec<(PathBuf, bool)>, String> {
+        let changed = std::mem::take(&mut *self.changed.lock().map_err(|e| e.to_string())?);
+        if changed.is_empty() {
+            return Err("nothing to undo: the last turn wrote or edited no files".into());
+        }
+        let mut done = Vec::new();
+        for (path, before) in changed.into_iter().rev() {
+            match &before {
+                Some(bytes) => std::fs::write(&path, bytes),
+                None => std::fs::remove_file(&path).or_else(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        Ok(())
+                    } else {
+                        Err(e)
+                    }
+                }),
+            }
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+            done.push((path, before.is_some()));
+        }
+        let names: Vec<String> = done.iter().map(|(p, _)| p.display().to_string()).collect();
+        self.push(Message::user_text(format!(
+            "[The user undid the file changes from your previous turn: {}. Commands you ran were not undone.]",
+            names.join(", ")
+        )))?;
+        Ok(done)
+    }
+
     fn run_tool(
         &self,
         id: &str,
@@ -491,6 +544,9 @@ impl Agent {
             }
             None => {
                 ui.tool_start(name, &input);
+                if matches!(name, "Write" | "Edit") && !self.mcp.owns(name) {
+                    self.remember_original(&input);
+                }
                 let r = if self.mcp.owns(name) {
                     self.mcp.call(name, &input, &mut || ui.interrupted())
                 } else {
@@ -769,6 +825,72 @@ mod tests {
         a.start("startup", &mut Log::default()).unwrap();
         a.prompt("hello", &mut Log::default()).unwrap();
         assert_eq!(a.messages[0].text(), "branch: mainhelloit is Tuesday");
+    }
+
+    #[test]
+    fn undo_restores_edited_files_and_removes_created_ones() {
+        let dir = std::env::temp_dir().join(format!("axio-undo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        let (a2, b2) = (a.display().to_string(), b.display().to_string());
+        let turn = Mutex::new(0);
+        let mut agent = agent(move |_, _| {
+            let mut t = turn.lock().unwrap();
+            *t += 1;
+            match *t {
+                1 => reply(
+                    vec![
+                        Block::ToolCall {
+                            id: "1".into(),
+                            name: "Edit".into(),
+                            input: json!({"file_path": a2, "old_string": "one", "new_string": "two"}),
+                        },
+                        Block::ToolCall {
+                            id: "2".into(),
+                            name: "Edit".into(),
+                            input: json!({"file_path": a2, "old_string": "two", "new_string": "three"}),
+                        },
+                        Block::ToolCall {
+                            id: "3".into(),
+                            name: "Write".into(),
+                            input: json!({"file_path": b2, "content": "new"}),
+                        },
+                    ],
+                    Stop::ToolUse,
+                    1,
+                ),
+                _ => reply(
+                    vec![Block::Text {
+                        text: "done".into(),
+                    }],
+                    Stop::EndTurn,
+                    1,
+                ),
+            }
+        });
+        agent.cwd = dir.clone();
+        agent.prompt("go", &mut Log::default()).unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "three\n");
+        let done = agent.undo().unwrap();
+        assert_eq!(done, [(b.clone(), false), (a.clone(), true)]);
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "one\n",
+            "back to before the turn"
+        );
+        assert!(!b.exists(), "created files are removed");
+        assert!(
+            agent
+                .messages
+                .last()
+                .unwrap()
+                .text()
+                .contains("undid the file changes")
+        );
+        assert!(agent.undo().is_err(), "only once");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
