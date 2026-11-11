@@ -41,6 +41,10 @@ Usage: axio [options] [prompt...]
        axio import   (review what other harnesses offer again)
        axio mcp list | login <name> | logout <name>
        axio auth list | set <provider> [field] | remove <provider>
+       axio profile [name]   (show or set the default profile)
+
+ax is the same as axio; axio-full, axio-min (or any axio-<profile>) start
+that profile.
 
 Options:
   -p, --print           Answer one prompt (argument or stdin) and exit
@@ -673,6 +677,26 @@ fn run() -> Result<ExitCode, String> {
         println!("{} item(s) from other harnesses in use", accepted.len());
         return Ok(ExitCode::SUCCESS);
     }
+    if all.first().is_some_and(|a| a == "profile") {
+        let home = context::home();
+        match all.get(1) {
+            Some(name) => println!(
+                "default profile is now {}",
+                profile::set_default(&home, name)?
+            ),
+            None => {
+                let current = settings::Settings::load(&home, None)?
+                    .profile
+                    .unwrap_or_else(|| profile::DEFAULT.into());
+                println!("default profile: {current}");
+                println!(
+                    "built in: minimal (min), standard, full; your own: ~/.axio/agent/profiles/<name>.json"
+                );
+                println!("one run: axio --profile <name>, or the axio-<name> / ax-<name> commands");
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     if all.first().is_some_and(|a| a == "auth") {
         auth::main(&all[1..], &context::home())?;
         return Ok(ExitCode::SUCCESS);
@@ -704,6 +728,11 @@ fn run() -> Result<ExitCode, String> {
     let profile_name = args
         .profile
         .clone()
+        .or_else(|| {
+            std::env::args()
+                .next()
+                .and_then(|a| profile::from_program(&a))
+        })
         .or_else(|| std::env::var("AXIO_PROFILE").ok())
         .or(config.profile.clone())
         .unwrap_or_else(|| profile::DEFAULT.into());
