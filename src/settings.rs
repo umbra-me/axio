@@ -47,6 +47,20 @@ impl Settings {
     }
 }
 
+/// Sets one key in `home/settings.json`, keeping the others.
+pub fn set(home: &Path, key: &str, value: serde_json::Value) -> Result<(), String> {
+    let path = home.join("settings.json");
+    let mut doc: serde_json::Map<String, serde_json::Value> = match std::fs::read_to_string(&path) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    doc.insert(key.into(), value);
+    std::fs::create_dir_all(home).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{:#}\n", serde_json::Value::Object(doc)))
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// The nearest ancestor holding `.git` or `.axio`, else `cwd` itself.
 pub fn project_root(cwd: &Path) -> PathBuf {
     cwd.ancestors()

@@ -62,29 +62,18 @@ the one binary. Your own go in
 
 ## Using what other harnesses already have
 
-On an interactive start, axio looks at Claude Code, Codex, Grok Build and Pi
-on this machine: their hooks, installed plugins, MCP servers and skills. When
-it finds something new or changed it lists each item with its version, the
-harness and its version, and whether it works as is, partly (and what is
-missing) or not at all, then asks: import everything that works, choose,
-later, or never ask. Accepted items are used where they are, so updates in the
-other harness carry over; answers are kept in `~/.axio/agent/imports.json`.
-`axio import` reviews everything again, `--no-import` skips it for one run,
-and `"importFromOtherHarnesses": "off"` in settings turns it off. Codex and
+`axio import` looks at Claude Code, Codex, Grok Build and Pi on this machine:
+their hooks, installed plugins, MCP servers and skills. It lists each item
+with its version, the harness and its version, and whether it works as is,
+partly (and what is missing) or not at all, then asks: import everything that
+works, choose, later, or never ask. Accepted items are used where they are, so
+updates in the other harness carry over; answers are kept in
+`~/.axio/agent/imports.json`.
+
+This is off by default. Accepting something sets
+`"importFromOtherHarnesses": "ask"`, so accepted items load and new ones are
+offered at start; set it to `"off"` (or pass `--no-import`) to stop. Codex and
 Grok keep MCP servers in TOML, which axio reads with a small built-in reader.
-
-## Keys
-
-`~/.axio/agent/auth.json` (readable only by you) holds provider keys and MCP
-sign-in tokens; environment variables win when both are set.
-
-```sh
-axio auth set anthropic             # prompts without echo; or pipe the key in
-axio auth set openrouter
-axio auth set local baseUrl         # an OpenAI-compatible server, used as local/<model>
-axio auth list                      # names and the last four characters only
-axio auth remove openrouter
-```
 
 ## Settings and trust
 
