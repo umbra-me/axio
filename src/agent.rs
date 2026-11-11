@@ -62,6 +62,7 @@ pub struct Agent {
 enum Event {
     Text(String),
     Thinking,
+    ThinkingText(String),
     ToolCall(String),
     ToolInput(String),
     Done(Result<Reply, String>),
@@ -148,6 +149,7 @@ impl Agent {
                 let _ = deltas.send(match d {
                     Delta::Text(t) => Event::Text(t.to_string()),
                     Delta::Thinking => Event::Thinking,
+                    Delta::ThinkingText(t) => Event::ThinkingText(t.to_string()),
                     Delta::ToolCall(n) => Event::ToolCall(n.to_string()),
                     Delta::ToolInput(p) => Event::ToolInput(p.to_string()),
                 });
@@ -164,6 +166,7 @@ impl Agent {
                 Ok(_) if !stream => {}
                 Ok(Event::Text(t)) => ui.delta(Delta::Text(&t)),
                 Ok(Event::Thinking) => ui.delta(Delta::Thinking),
+                Ok(Event::ThinkingText(t)) => ui.delta(Delta::ThinkingText(&t)),
                 Ok(Event::ToolCall(n)) => ui.delta(Delta::ToolCall(&n)),
                 Ok(Event::ToolInput(p)) => ui.delta(Delta::ToolInput(&p)),
                 Err(RecvTimeoutError::Timeout) => {}

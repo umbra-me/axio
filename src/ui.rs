@@ -33,6 +33,8 @@ pub struct Term {
     last_frame: Instant,
     frame: usize,
     tool: Option<(String, Value)>,
+    /// Summary of the model's current thinking, shown after the spinner.
+    thought: String,
     /// The tool call the model is writing now.
     writing: Option<Writing>,
     /// What the turn printed last, to put a blank line between text and tools.
@@ -61,6 +63,7 @@ impl Term {
             frame: 0,
             tool: None,
             writing: None,
+            thought: String::new(),
             last: Shown::Nothing,
         }
     }
@@ -99,6 +102,7 @@ impl Term {
     fn spin(&mut self, label: &str) {
         if self.spinner.as_ref().is_none_or(|(l, _)| l != label) {
             self.spinner = Some((label.to_string(), Instant::now()));
+            self.thought.clear();
         }
         self.tick(true);
     }
@@ -121,7 +125,11 @@ impl Term {
             String::new()
         };
         let width = term_width().saturating_sub(4);
-        let text: String = format!("{label}{time}").chars().take(width).collect();
+        let mut text: String = format!("{label}{time}").chars().take(width).collect();
+        let room = width.saturating_sub(text.chars().count() + 3);
+        if let Some(note) = latest_line(&self.thought, room) {
+            text.push_str(&format!(" · {note}"));
+        }
         eprint!(
             "\r\x1b[K{CYAN}{}{RESET} {DIM}{text}{RESET}",
             FRAMES[self.frame]
@@ -249,6 +257,24 @@ fn string_field(json: &str, key: &str) -> Option<String> {
     serde_json::from_str(&format!("\"{}\"", &rest[..end?])).ok()
 }
 
+/// The newest line of `text`, without markdown emphasis, fitted to `room`
+/// characters by keeping its end.
+fn latest_line(text: &str, room: usize) -> Option<String> {
+    let line = text.lines().rev().map(str::trim).find(|l| !l.is_empty())?;
+    let line = line.trim_start_matches('#').replace("**", "");
+    let line = line.trim();
+    let n = line.chars().count();
+    if room < 12 || line.is_empty() {
+        return None;
+    }
+    Some(if n <= room {
+        line.to_string()
+    } else {
+        let tail: String = line.chars().skip(n - (room - 1)).collect();
+        format!("…{tail}")
+    })
+}
+
 fn term_width() -> usize {
     static WIDTH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *WIDTH.get_or_init(term::width)
@@ -274,6 +300,23 @@ pub fn short_path(p: &str, cwd: &Path) -> String {
     }
 }
 
+/// Drops a leading `cd <working directory> &&`, which says nothing new.
+fn without_cd<'a>(command: &'a str, cwd: &Path) -> &'a str {
+    let dir = cwd.display().to_string();
+    let Some(rest) = command.trim_start().strip_prefix("cd ") else {
+        return command;
+    };
+    let rest = rest.trim_start();
+    let rest = [format!("'{dir}'"), format!("\"{dir}\""), dir]
+        .iter()
+        .find_map(|d| rest.strip_prefix(d.as_str()))
+        .map(str::trim_start);
+    match rest.and_then(|r| r.strip_prefix("&&").or_else(|| r.strip_prefix(';'))) {
+        Some(r) => r.trim_start(),
+        None => command,
+    }
+}
+
 fn clip(s: &str, n: usize) -> String {
     let first = s.lines().next().unwrap_or("");
     if first.chars().count() > n || s.lines().count() > 1 {
@@ -287,7 +330,7 @@ fn clip(s: &str, n: usize) -> String {
 pub fn tool_title(name: &str, input: &Value, cwd: &Path) -> (String, String) {
     let s = |k: &str| input[k].as_str().unwrap_or("");
     let detail = match name {
-        "Bash" => clip(s("command"), 90),
+        "Bash" => clip(without_cd(s("command"), cwd), 90),
         "Read" | "Write" | "Edit" => short_path(s("file_path"), cwd),
         "Grep" => format!(
             "{}{}",
@@ -412,7 +455,14 @@ impl Ui for Term {
                     let _ = io::stdout().flush();
                 }
             }
-            Delta::Thinking => self.spin("thinking"),
+            Delta::Thinking => {
+                self.spin("thinking");
+                self.thought.clear();
+            }
+            Delta::ThinkingText(t) => {
+                self.thought.push_str(t);
+                self.tick(false);
+            }
             Delta::ToolCall(name) => {
                 self.settle();
                 let w = Writing::new(name);
@@ -524,6 +574,14 @@ mod tests {
             "github · create_issue"
         );
         assert_eq!(tool_title("TodoWrite", &json!({}), cwd).0, "Plan");
+        let bash = |c: &str| tool_title("Bash", &json!({"command": c}), cwd).1;
+        assert_eq!(bash("cd /work/proj && ls -la"), "ls -la");
+        assert_eq!(bash("cd '/work/proj'; make"), "make");
+        assert_eq!(
+            bash("cd /work/proj/sub && make"),
+            "cd /work/proj/sub && make"
+        );
+        assert_eq!(bash("cd /work/proj"), "cd /work/proj");
     }
 
     #[test]
@@ -540,6 +598,20 @@ mod tests {
             string_field(r#"{"command": "ls \"a\""}"#, "command").as_deref(),
             Some(r#"ls "a""#)
         );
+    }
+
+    #[test]
+    fn thinking_note_keeps_the_newest_words() {
+        assert_eq!(
+            latest_line("**Planning**\n\nChecking the compiler", 40).as_deref(),
+            Some("Checking the compiler")
+        );
+        assert_eq!(
+            latest_line("abcdefghijklmnopqrstuvwxyz", 12).as_deref(),
+            Some("…pqrstuvwxyz")
+        );
+        assert_eq!(latest_line("anything", 5), None);
+        assert_eq!(latest_line("\n  \n", 40), None);
     }
 
     #[test]
