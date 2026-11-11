@@ -3,7 +3,8 @@
 A minimal, fast coding agent. One small Rust binary, no runtime, no daemon.
 
 ```sh
-cargo install --git https://github.com/umbra-me/axio --locked   # or: cargo install --path . --locked
+./install.sh               # from a checkout: axio, ax, axio-full, axio-min
+cargo install --git https://github.com/umbra-me/axio --locked   # just axio
 axio auth set anthropic     # or export ANTHROPIC_API_KEY=...
 axio                      # interactive
 axio -p "explain src/"    # one answer, then exit
@@ -46,7 +47,11 @@ A profile picks built-in modules, which plugins load, and defaults.
 | `sandbox` | Bash may write only in the project and temporary folders, and has no network unless `"sandboxNetwork": true`; Write and Edit follow the same limits. Seatbelt on macOS, bubblewrap on Linux. Hooks and MCP servers are not sandboxed |
 
 Choose one with `--profile`, `AXIO_PROFILE` or `"profile"` in settings;
-`/profile` shows the current one. Your own go in
+`/profile` shows the current one. `axio profile full` (or `min`, `standard`,
+or your own) makes it the default. The command name works too: `ax` is the
+same as `axio`, and `axio-full`, `axio-min` or any `axio-<profile>` /
+`ax-<profile>` start that profile, because `install.sh` links those names to
+the one binary. Your own go in
 `~/.axio/agent/profiles/<name>.json`:
 
 ```json
