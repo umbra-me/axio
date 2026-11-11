@@ -5,8 +5,8 @@ A minimal, fast coding agent. One small Rust binary, no runtime, no daemon.
 ```sh
 ./install.sh               # from a checkout: axio, ax, axio-full, axio-min
 cargo install --git https://github.com/umbra-me/axio --locked   # just axio
-axio auth set anthropic     # or export ANTHROPIC_API_KEY=...
-axio                      # interactive
+axio                      # interactive; asks for a key on first run
+axio auth set anthropic   # or set or change it here, or export ANTHROPIC_API_KEY
 axio -p "explain src/"    # one answer, then exit
 git diff | axio -p "review this"
 axio -c                   # continue the last session in this directory

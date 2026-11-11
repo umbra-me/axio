@@ -28,6 +28,8 @@ pub trait Ui {
         false
     }
     fn notice(&mut self, _text: &str) {}
+    /// The agent is waiting on the model; `label` says for what.
+    fn waiting(&mut self, _label: &str) {}
     /// A yes/no question for the user; without a terminal the answer is no.
     fn ask(&mut self, _question: &str) -> bool {
         false
@@ -117,6 +119,11 @@ impl Agent {
         stream: bool,
         ui: &mut dyn Ui,
     ) -> Result<Reply, String> {
+        ui.waiting(if stream {
+            "thinking"
+        } else {
+            "summarizing the conversation"
+        });
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         let (complete, model, system, effort, flag) = (

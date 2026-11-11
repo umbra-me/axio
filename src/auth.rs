@@ -110,6 +110,47 @@ fn get_from(path: Option<&Path>, env: &str, provider: &str, field: &str) -> Opti
         })
 }
 
+/// Whether `provider` lacks the key it needs. Providers axio has no
+/// built-in endpoint for treat their key as optional.
+pub fn missing_key(provider: &str) -> bool {
+    match provider {
+        "anthropic" => {
+            get("ANTHROPIC_API_KEY", provider, "apiKey").is_none()
+                && get("ANTHROPIC_AUTH_TOKEN", provider, "authToken").is_none()
+        }
+        "openai" | "openrouter" => {
+            let env = format!("{}_API_KEY", provider.to_uppercase());
+            get(&env, provider, "apiKey").is_none()
+        }
+        _ => false,
+    }
+}
+
+/// First run without a key: asks for one and saves it to auth.json.
+pub fn first_run(provider: &str, home: &Path) -> Result<(), String> {
+    let path = home.join("auth.json");
+    let env = format!("{}_API_KEY", provider.to_uppercase());
+    eprintln!("axio needs an API key for {provider}.");
+    eprintln!(
+        "Paste it below; it is saved to {} (readable only by you).\nOr press Enter, then set {env}.",
+        path.display()
+    );
+    let value = read_secret("API key: ", true)?;
+    if value.is_empty() {
+        return Err(format!(
+            "no key entered; set {env} or run `axio auth set {provider}`"
+        ));
+    }
+    let mut all = read(&path);
+    let entry = all
+        .entry(provider.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    entry["apiKey"] = Value::String(value);
+    write(&path, &all)?;
+    eprintln!("saved; `axio auth list` shows it and `axio auth remove {provider}` deletes it\n");
+    Ok(())
+}
+
 fn mask(v: &str) -> String {
     let tail: String = v
         .chars()
@@ -207,11 +248,13 @@ fn read_secret(prompt: &str, hidden: bool) -> Result<String, String> {
             .status();
     };
     if tty {
-        eprint!("{prompt}");
-        let _ = std::io::stderr().flush();
+        // Echo goes off before the prompt shows, so nothing typed or pasted
+        // right away is displayed.
         if hidden {
             stty("-echo");
         }
+        eprint!("{prompt}");
+        let _ = std::io::stderr().flush();
     }
     let mut line = String::new();
     let read = std::io::stdin().read_line(&mut line);
