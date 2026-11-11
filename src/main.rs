@@ -4,6 +4,7 @@ mod compact;
 mod context;
 mod editor;
 mod hooks;
+mod import;
 mod mcp;
 mod message;
 mod plan;
@@ -17,6 +18,7 @@ mod settings;
 mod skills;
 mod sse;
 mod term;
+mod toml_lite;
 mod tools;
 
 use agent::{Agent, Ui};
@@ -31,6 +33,7 @@ const USAGE: &str = "axio: a minimal coding agent
 
 Usage: axio [options] [prompt...]
        axio plugin install|list|update|remove ...
+       axio import   (review what other harnesses offer again)
 
 Options:
   -p, --print           Answer one prompt (argument or stdin) and exit
@@ -44,6 +47,7 @@ Options:
                         ~/.axio/agent/profiles/ (env AXIO_PROFILE)
       --trust           Trust this project's configuration without asking
       --no-project-config  Ignore this project's .axio/ and .mcp.json
+      --no-import       Skip hooks, plugins and servers from other harnesses
   -h, --help            Show this help
   -V, --version         Show the version
 
@@ -66,6 +70,7 @@ struct Args {
     trust: bool,
     profile: Option<String>,
     no_project_config: bool,
+    no_import: bool,
     prompt: Vec<String>,
 }
 
@@ -92,6 +97,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--trust" => a.trust = true,
             "--profile" => a.profile = Some(value(&arg)?),
             "--no-project-config" => a.no_project_config = true,
+            "--no-import" => a.no_import = true,
             "--" => a.prompt.extend(it.by_ref()),
             s if s.starts_with('-') && s.len() > 1 => return Err(format!("unknown option {s}")),
             _ => a.prompt.push(arg),
@@ -366,9 +372,26 @@ struct Sources<'a> {
     home: &'a std::path::Path,
     project: Option<&'a std::path::Path>,
     allowed: Option<&'a [String]>,
+    /// Accepted items from other harnesses, used in place.
+    imported: Vec<import::Item>,
 }
 
 impl Sources<'_> {
+    fn imported_plugins(&self) -> impl Iterator<Item = (&str, &std::path::Path, bool)> {
+        self.imported
+            .iter()
+            .filter_map(|i| match &i.kind {
+                import::Kind::Plugin { root, codex } => {
+                    Some((i.name.as_str(), root.as_path(), *codex))
+                }
+                _ => None,
+            })
+            .filter(|(name, _, _)| {
+                self.allowed
+                    .is_none_or(|a| a.iter().any(|n| n == "*" || n == name))
+            })
+    }
+
     fn plugins(&self, dir: std::path::PathBuf) -> Vec<plugins::Plugin> {
         plugins::list(&dir, self.allowed)
     }
@@ -387,6 +410,19 @@ impl Sources<'_> {
         if let Some(root) = self.project {
             add(root.join(".axio/settings.json"), root.join(".axio/plugins"))?;
         }
+        for i in &self.imported {
+            if let import::Kind::Hooks(file) = &i.kind {
+                h.add_file(file, None)?;
+            }
+        }
+        for (_, root, codex) in self.imported_plugins() {
+            let file = if codex {
+                root.join(".codex-plugin/hooks.json")
+            } else {
+                root.join("hooks/hooks.json")
+            };
+            h.add_file(&file, Some(root))?;
+        }
         Ok(h)
     }
 
@@ -404,6 +440,24 @@ impl Sources<'_> {
         if let Some(root) = self.project {
             add(root.join(".mcp.json"), root.join(".axio/plugins"))?;
         }
+        for i in &self.imported {
+            if let import::Kind::Mcp(entry) = &i.kind {
+                let source = std::path::PathBuf::from(format!("{} (imported)", i.harness));
+                c.add(
+                    &serde_json::json!({"mcpServers": {i.name.clone(): entry}}),
+                    None,
+                    &source,
+                );
+            }
+        }
+        for (_, root, codex) in self.imported_plugins() {
+            let file = if codex {
+                root.join(".codex-plugin/mcp.json")
+            } else {
+                root.join(".mcp.json")
+            };
+            c.add_file(&file, Some(root))?;
+        }
         Ok(c)
     }
 
@@ -420,6 +474,14 @@ impl Sources<'_> {
         lib.add_dir(self.home, None);
         for p in self.plugins(self.home.join("plugins")) {
             lib.add_dir(&p.root, Some(&p.name));
+        }
+        for i in &self.imported {
+            if let import::Kind::Skills(base) = &i.kind {
+                lib.add_dir(base, None);
+            }
+        }
+        for (name, root, _) in self.imported_plugins() {
+            lib.add_dir(root, Some(name));
         }
         lib
     }
@@ -456,6 +518,70 @@ fn help(lib: &skills::Library) -> String {
     s
 }
 
+/// Items from other harnesses to use this session. Asks about new or
+/// changed ones in interactive mode; `review` asks about everything again.
+fn imports(
+    home: &std::path::Path,
+    interactive: bool,
+    review: bool,
+) -> Result<Vec<import::Item>, String> {
+    let Some(user_home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return Ok(Vec::new());
+    };
+    let items = import::scan(&user_home);
+    let mut record = import::Record::load(home);
+    if review {
+        record.never = false;
+    }
+    let pending: Vec<&import::Item> = if review {
+        items.iter().collect()
+    } else {
+        record.pending(&items)
+    };
+    if interactive && !record.never && !pending.is_empty() {
+        let cache = std::cell::RefCell::new(std::collections::HashMap::new());
+        let versions = |h: &str| {
+            cache
+                .borrow_mut()
+                .entry(h.to_string())
+                .or_insert_with(|| import::harness_version(h, &user_home))
+                .clone()
+        };
+        eprint!("{}", import::render(&pending, &versions));
+        eprintln!("\n[a] import everything that works  [c] choose  [l] later  [n] never ask");
+        eprintln!(
+            "Turn this off any time: \"importFromOtherHarnesses\": \"off\" in {}",
+            home.join("settings.json").display()
+        );
+        let ask = |q: &str| -> Result<String, String> {
+            eprint!("{q}");
+            let _ = io::stderr().flush();
+            let mut a = String::new();
+            io::stdin().read_line(&mut a).map_err(|e| e.to_string())?;
+            Ok(a.trim().to_lowercase())
+        };
+        let usable = |i: &import::Item| !matches!(i.support, import::Support::No(_));
+        match ask("> ")?.as_str() {
+            "a" => pending.iter().for_each(|i| record.answer(i, usable(i))),
+            "c" => {
+                for i in &pending {
+                    let yes = usable(i)
+                        && matches!(
+                            ask(&format!("Use {} {} {}? [y/N] ", i.harness, i.label, i.name))?
+                                .as_str(),
+                            "y" | "yes"
+                        );
+                    record.answer(i, yes);
+                }
+            }
+            "n" => record.never = true,
+            _ => eprintln!("asking again next time; `axio import` reviews this any time"),
+        }
+        record.save(home)?;
+    }
+    Ok(record.accepted(&items).into_iter().cloned().collect())
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -468,6 +594,11 @@ fn main() -> ExitCode {
 
 fn run() -> Result<ExitCode, String> {
     let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.first().is_some_and(|a| a == "import") {
+        let accepted = imports(&context::home(), true, true)?;
+        println!("{} item(s) from other harnesses in use", accepted.len());
+        return Ok(ExitCode::SUCCESS);
+    }
     if all.first().is_some_and(|a| a == "plugin") {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         plugin_cli::main(&all[1..], &context::home(), &cwd)?;
@@ -488,10 +619,17 @@ fn run() -> Result<ExitCode, String> {
         .or(config.profile.clone())
         .unwrap_or_else(|| profile::DEFAULT.into());
     let profile = profile::load(&home, &profile_name)?;
+    let imported = if args.no_import || config.import_from_other_harnesses.as_deref() == Some("off")
+    {
+        Vec::new()
+    } else {
+        imports(&home, interactive, false)?
+    };
     let sources = Sources {
         home: &home,
         project: project.as_deref(),
         allowed: profile.plugins.as_deref(),
+        imported,
     };
     let library = sources.library();
     for shadowed in &library.shadowed {

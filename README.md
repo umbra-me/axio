@@ -52,6 +52,19 @@ Choose one with `--profile`, `AXIO_PROFILE` or `"profile"` in settings;
 
 `plugins` lists the plugin names to load (`"*"` for all, the default).
 
+## Using what other harnesses already have
+
+On an interactive start, axio looks at Claude Code, Codex, Grok Build and Pi
+on this machine: their hooks, installed plugins, MCP servers and skills. When
+it finds something new or changed it lists each item with its version, the
+harness and its version, and whether it works as is, partly (and what is
+missing) or not at all, then asks: import everything that works, choose,
+later, or never ask. Accepted items are used where they are, so updates in the
+other harness carry over; answers are kept in `~/.axio/agent/imports.json`.
+`axio import` reviews everything again, `--no-import` skips it for one run,
+and `"importFromOtherHarnesses": "off"` in settings turns it off. Codex and
+Grok keep MCP servers in TOML, which axio reads with a small built-in reader.
+
 ## Settings and trust
 
 `~/.axio/agent/settings.json` holds `model`, `effort` and `profile`. A

@@ -170,14 +170,15 @@ Turn this off any time: "importFromOtherHarnesses": "off" in ~/.axio/agent/setti
 - Imported items are used in place, never copied, so updates in the other
   harness carry over. axio records the path and version and asks again when
   either changes.
-- Answers are saved under `"imports"` in settings, so the prompt only lists new
-  or changed items. `/import` reopens it. `-p` mode never prompts and uses only
+- Answers are saved in `~/.axio/agent/imports.json` (built: a separate file, so
+  axio never rewrites the user's settings), so the prompt only lists new or
+  changed items. `axio import` reopens it (built as a subcommand, because the
+  prompt runs before the terminal editor starts). `-p` mode never prompts and uses only
   what was already accepted.
 - The setting `"importFromOtherHarnesses"` is `"ask"` by default, or `"off"`;
   `--no-import` turns it off for one run.
-- Codex and Grok keep MCP servers in TOML. Reading them needs either the `toml`
-  crate (a new dependency for the owner to approve) or a small reader for the
-  subset these files use; decided when this step is built.
+- Codex and Grok keep MCP servers in TOML. Built with a small reader for the
+  subset these files use (`src/toml_lite.rs`), so no dependency was added.
 
 ## Modules
 
