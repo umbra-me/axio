@@ -7,6 +7,7 @@ mod crypto;
 mod editor;
 mod hooks;
 mod import;
+mod markdown;
 mod mcp;
 mod message;
 mod oauth;
@@ -24,11 +25,11 @@ mod sse;
 mod term;
 mod toml_lite;
 mod tools;
+mod ui;
 mod web;
 
-use agent::{Agent, Ui};
-use provider::{Delta, Model, Stop, Usage};
-use serde_json::Value;
+use agent::Agent;
+use provider::Model;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -118,131 +119,6 @@ fn parse_args() -> Result<Option<Args>, String> {
         }
     }
     Ok(Some(a))
-}
-
-struct Term {
-    color: bool,
-    thinking: bool,
-    keys: Option<term::Keys>,
-    turn: Usage,
-}
-
-impl Term {
-    fn dim(&self, s: &str) -> String {
-        if self.color {
-            format!("\x1b[2m{s}\x1b[0m")
-        } else {
-            s.to_string()
-        }
-    }
-}
-
-impl Ui for Term {
-    fn delta(&mut self, d: Delta) {
-        match d {
-            Delta::Text(t) => {
-                self.thinking = false;
-                print!("{t}");
-                let _ = io::stdout().flush();
-            }
-            Delta::Thinking if !self.thinking => {
-                self.thinking = true;
-                eprintln!("{}", self.dim("thinking…"));
-            }
-            Delta::Thinking | Delta::ToolCall => {}
-        }
-    }
-
-    fn tool_start(&mut self, name: &str, input: &Value) {
-        let detail = match name {
-            "Bash" => input["command"].as_str().unwrap_or("").to_string(),
-            _ => input["file_path"].as_str().unwrap_or("").to_string(),
-        };
-        let first = detail.lines().next().unwrap_or("");
-        eprintln!("\n{}", self.dim(&format!("→ {name} {first}")));
-    }
-
-    fn tool_end(&mut self, result: &Result<String, String>) {
-        let (mark, text) = match result {
-            Ok(t) => ("✓", t),
-            Err(e) => ("✗", e),
-        };
-        let lines: Vec<&str> = text.lines().collect();
-        let shown = lines
-            .iter()
-            .rev()
-            .take(3)
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
-        let more = if lines.len() > 3 {
-            format!(" (+{} lines)", lines.len() - 3)
-        } else {
-            String::new()
-        };
-        eprintln!(
-            "{}",
-            self.dim(&format!("{mark}{more} {}", shown.join("\n  ")))
-        );
-    }
-
-    fn stopped(&mut self, stop: &Stop) {
-        println!();
-        match stop {
-            Stop::EndTurn | Stop::ToolUse => {}
-            Stop::MaxTokens => eprintln!("{}", self.dim("[stopped: output limit]")),
-            Stop::Refusal => eprintln!("{}", self.dim("[stopped: the model declined]")),
-            Stop::Other(r) => eprintln!("{}", self.dim(&format!("[stopped: {r}]"))),
-        }
-    }
-
-    fn usage(&mut self, u: Usage) {
-        self.turn.output += u.output;
-        self.turn.input = u.input;
-        self.turn.cache_read = u.cache_read;
-        self.turn.cache_write = u.cache_write;
-    }
-
-    fn interrupted(&mut self) -> bool {
-        self.keys.as_mut().is_some_and(|k| k.stop_requested())
-    }
-
-    fn ask(&mut self, question: &str) -> bool {
-        let Some(keys) = &mut self.keys else {
-            return false;
-        };
-        eprint!("\n{question} [y/N] ");
-        let _ = io::stderr().flush();
-        let yes = matches!(keys.next(), Some(term::Key::Char('y' | 'Y')));
-        eprintln!("{}", if yes { "yes" } else { "no" });
-        yes
-    }
-
-    fn notice(&mut self, text: &str) {
-        eprintln!("{}", self.dim(text));
-    }
-}
-
-fn tokens(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
-        _ => format!("{:.1}M", n as f64 / 1e6),
-    }
-}
-
-fn status(agent: &Agent, turn: &Usage) -> String {
-    let sent = turn.input + turn.cache_read + turn.cache_write;
-    let cached = (turn.cache_read * 100)
-        .checked_div(sent)
-        .map(|p| format!(" · {p}% cached"))
-        .unwrap_or_default();
-    format!(
-        "context {}/{} · {} out{cached}",
-        tokens(agent.context),
-        tokens(agent.model.context_window()),
-        tokens(turn.output)
-    )
 }
 
 fn history_path() -> std::path::PathBuf {
@@ -516,19 +392,34 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 }
 
 fn help(lib: &skills::Library) -> String {
-    let mut s = String::from(
-        "/new  start a new session\n/profile  show the profile, modules and plugins\n/compact  summarize the conversation now\n/model [provider/model]  show or switch the model\n/session  show the session file\n/help  this list\n/quit  exit",
-    );
+    let mut rows: Vec<(String, String)> = [
+        ("/new", "start a new session"),
+        ("/model [provider/model]", "show or switch the model"),
+        ("/compact", "summarize the conversation now"),
+        ("/profile", "show the profile, modules and plugins"),
+        ("/session", "show the session file"),
+        ("/help", "this list"),
+        ("/quit", "exit (or Ctrl-D)"),
+    ]
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .into();
     for c in &lib.commands {
-        s.push_str(&format!("\n/{}  {}", c.name, c.description));
+        rows.push((format!("/{}", c.name), c.description.clone()));
     }
     for k in lib.skills.iter().filter(|k| k.invocable) {
-        s.push_str(&format!(
-            "\n/{}  {} (skill)",
-            k.name,
-            k.description.chars().take(80).collect::<String>()
-        ));
+        let about: String = k.description.chars().take(70).collect();
+        rows.push((format!("/{}", k.name), format!("{about} (skill)")));
     }
+    let width = rows
+        .iter()
+        .map(|(a, _)| a.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut s: String = rows
+        .iter()
+        .map(|(a, b)| format!("  {a:width$}  {b}\n"))
+        .collect();
+    s.push_str("\n  Enter sends · Alt-Enter or a trailing \\ adds a line · Up/Down history · Esc stops a turn");
     s
 }
 
@@ -832,12 +723,12 @@ fn run() -> Result<ExitCode, String> {
     }
     agent.set_tools(profile.modules, started);
 
-    let mut term = Term {
-        color: io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
-        thinking: false,
-        keys: None,
-        turn: Usage::default(),
-    };
+    let no_color = std::env::var_os("NO_COLOR").is_some();
+    let mut term = ui::Term::new(
+        &cwd,
+        io::stderr().is_terminal() && !no_color,
+        io::stdout().is_terminal() && !no_color,
+    );
 
     let mut prompt = args.prompt.join(" ");
     if args.print || !io::stdin().is_terminal() {
@@ -864,24 +755,34 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if auth::missing_key(&agent.model.provider) {
+        auth::first_run(&agent.model.provider, &home)?;
+    }
     let _raw = term::RawMode::enter().ok_or("could not configure the terminal (stty failed)")?;
     term.keys = Some(term::Keys::spawn());
     agent.start(source, &mut term)?;
     eprintln!(
-        "{}",
+        "{} {}",
+        term.paint("\x1b[1m", "axio"),
         term.dim(&format!(
-            "axio {} · {} · {} · Esc stops a turn · /quit to exit",
-            env!("CARGO_PKG_VERSION"),
-            agent.model,
-            profile.name
+            "{} · {} · {}",
+            agent.model.id,
+            profile.name,
+            ui::short_path(
+                &cwd.display().to_string(),
+                std::path::Path::new("/nonexistent")
+            )
         ))
     );
-    if !agent.messages.is_empty() {
-        eprintln!(
-            "{}",
-            term.dim(&format!("resumed {} messages", agent.messages.len()))
-        );
-    }
+    let resumed = if agent.messages.is_empty() {
+        String::new()
+    } else {
+        format!("resumed {} messages · ", agent.messages.len())
+    };
+    eprintln!(
+        "{}",
+        term.dim(&format!("{resumed}Esc stops a turn · /help · Ctrl-D exits"))
+    );
     let mut editor = editor::Editor::default();
     editor.history = load_history();
     loop {
@@ -948,14 +849,21 @@ fn run() -> Result<ExitCode, String> {
                     }
                     None => input.to_string(),
                 };
-                term.turn = Usage::default();
-                term.thinking = false;
+                term.begin_turn();
                 match agent.prompt(&text, &mut term) {
                     Ok(()) => {}
-                    Err(e) if e == agent::ABORTED => eprintln!("\n{}", term.dim("[stopped]")),
-                    Err(e) => eprintln!("\naxio: {e}"),
+                    Err(e) if e == agent::ABORTED => {
+                        agent::Ui::notice(&mut term, "stopped");
+                    }
+                    Err(e) => {
+                        agent::Ui::notice(&mut term, "");
+                        eprintln!("{}", term.paint("\x1b[31m", &format!("axio: {e}")));
+                    }
                 }
-                eprintln!("{}", term.dim(&status(&agent, &term.turn)));
+                eprintln!(
+                    "{}",
+                    term.status(agent.context, agent.model.context_window())
+                );
             }
         }
     }
