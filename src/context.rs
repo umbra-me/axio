@@ -85,6 +85,10 @@ pub fn mentions(prompt: &str, cwd: &Path) -> Vec<(Block, String)> {
         let Ok(meta) = std::fs::metadata(&path) else {
             continue;
         };
+        // Devices and pipes report no size and may never end.
+        if !meta.is_dir() && !meta.is_file() {
+            continue;
+        }
         let text = |t: String| Block::Text { text: t };
         if meta.is_dir() {
             let mut entries: Vec<String> = std::fs::read_dir(&path)
@@ -243,6 +247,10 @@ mod tests {
             mentions("@src/a.rs @src/a.rs", &dir).len(),
             1,
             "each file once"
+        );
+        assert!(
+            mentions("@/dev/null @/dev/zero", &dir).is_empty(),
+            "devices are skipped"
         );
         std::fs::write(dir.join("Screen shot.PNG"), [0x89, b'P', b'N', b'G']).unwrap();
         let got = mentions(r"see @Screen\ shot.PNG", &dir);

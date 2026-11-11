@@ -30,6 +30,8 @@ pub enum Key {
     Esc,
     Paste(String),
     Ctrl(char),
+    /// A sequence axio has no use for, such as an F-key.
+    Other,
 }
 
 /// Reads one key, pulling bytes from `next` (which waits up to the given time
@@ -84,13 +86,15 @@ fn escape(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
             Some(b'D') => Key::Left,
             Some(b'H') => Key::Home,
             Some(b'F') => Key::End,
-            _ => Key::Esc,
+            _ => Key::Other,
         },
         b'\r' | b'\n' => Key::AltEnter,
         b'b' => Key::WordLeft,
         b'f' => Key::WordRight,
         0x7f => Key::AltBackspace,
-        _ => Key::Esc,
+        // A second Esc is still Esc; anything else (Alt+key) is not.
+        0x1b => Key::Esc,
+        _ => Key::Other,
     }
 }
 
@@ -100,7 +104,7 @@ fn csi(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
         match next(Some(ESC_WAIT)) {
             Some(b @ 0x40..=0x7e) => break b,
             Some(b) => params.push(b as char),
-            None => return Key::Esc,
+            None => return Key::Other,
         }
     };
     match (params.as_str(), fin) {
@@ -114,7 +118,8 @@ fn csi(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
         (_, b'F') | ("4" | "8", b'~') => Key::End,
         ("3", b'~') => Key::Delete,
         ("200", b'~') => paste(next),
-        _ => Key::Esc,
+        // F-keys, Shift-Tab, focus events and the like: never a stop.
+        _ => Key::Other,
     }
 }
 
@@ -399,6 +404,11 @@ mod tests {
     #[test]
     fn lone_escape_is_a_key() {
         assert_eq!(keys(b"\x1b"), [Key::Esc]);
+        assert_eq!(
+            keys(b"\x1b[Z\x1b[15~\x1bd\x1b[I\x1bOP"),
+            [Key::Other, Key::Other, Key::Other, Key::Other, Key::Other],
+            "Shift-Tab, F5, Alt-d, focus-in and F1 are not Esc"
+        );
     }
 
     #[test]
