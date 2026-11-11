@@ -77,9 +77,7 @@ Grok keep MCP servers in TOML, which axio reads with a small built-in reader.
 
 ## Settings and trust
 
-`~/.axio/agent/settings.json` holds `model`, `effort`, `fast` and `profile`.
-`fast: true` (or `--fast`, or `/fast` in a session) turns on Anthropic fast
-mode: up to 2.5x faster output at twice the price, on models that offer it.
+`~/.axio/agent/settings.json` holds `model`, `effort` and `profile`.
 `/effort <level>` changes reasoning effort for the session. A
 project's `.axio/settings.json` overrides them, but project configuration
 (`.axio/`, `.mcp.json`) can make axio run programs, so it loads only after you

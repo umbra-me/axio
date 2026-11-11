@@ -10,8 +10,6 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     pub model: Option<String>,
     pub effort: Option<String>,
-    /// Faster output at a higher price (Anthropic fast mode).
-    pub fast: Option<bool>,
     pub profile: Option<String>,
     pub import_from_other_harnesses: Option<String>,
     /// Lets sandboxed commands reach the network.
@@ -32,7 +30,6 @@ impl Settings {
         Settings {
             model: over.model.or(self.model),
             effort: over.effort.or(self.effort),
-            fast: over.fast.or(self.fast),
             profile: over.profile.or(self.profile),
             import_from_other_harnesses: over
                 .import_from_other_harnesses
