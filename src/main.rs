@@ -66,7 +66,8 @@ Options:
 
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
-Esc or Ctrl-C stops a running turn, Ctrl-D exits. @path attaches a file.
+Esc or Ctrl-C stops a running turn, Enter during one sends what you typed to
+the model at its next step, Ctrl-D exits. @path attaches a file.
 Commands: /new, /undo, /output, /compact, /model <model>, /effort <level>,
 /session, /help, /quit, plus your own
 
@@ -983,6 +984,12 @@ fn run() -> Result<ExitCode, String> {
                     "{}",
                     term.status(agent.context, agent.model.context_window())
                 );
+                let left = term.take_queued();
+                if !left.is_empty() {
+                    prompt = left.join("\n");
+                    println!();
+                    println!("{}{prompt}", editor::PROMPT);
+                }
             }
         }
     }

@@ -178,6 +178,7 @@ is skipped.
 | Alt-Enter, or `\` then Enter | new line |
 | Up / Down | move between lines, then through history |
 | Esc or Ctrl-C | stop the running turn (a running command is killed) |
+| Enter while a turn runs | send what you typed to the model at its next step, or as the next prompt if the turn ends first |
 | Ctrl-C twice, or Ctrl-D, on an empty line | exit |
 | Ctrl-A / Ctrl-E, Alt-B / Alt-F, Ctrl-W, Ctrl-U, Ctrl-K | usual line editing |
 | Tab | complete a `/command`, or a path after `@` |

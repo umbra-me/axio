@@ -30,6 +30,10 @@ pub trait Ui {
     fn notice(&mut self, _text: &str) {}
     /// The agent is waiting on the model; `label` says for what.
     fn waiting(&mut self, _label: &str) {}
+    /// Messages the user sent while the turn ran, for the model now.
+    fn steered(&mut self) -> Vec<String> {
+        Vec::new()
+    }
     /// A yes/no question for the user; without a terminal the answer is no.
     fn ask(&mut self, _question: &str) -> bool {
         false
@@ -461,6 +465,11 @@ impl Agent {
             }
             // Images a Read returned follow the results they belong to.
             results.append(&mut images);
+            for text in ui.steered() {
+                results.push(Block::Text {
+                    text: format!("[The user wrote this while you were working:]\n{text}"),
+                });
+            }
             self.push(Message::User { content: results })?;
             if stopped {
                 return Err(ABORTED.into());
@@ -850,6 +859,36 @@ mod tests {
         a.start("startup", &mut Log::default()).unwrap();
         a.prompt("hello", &mut Log::default()).unwrap();
         assert_eq!(a.messages[0].text(), "branch: mainhelloit is Tuesday");
+    }
+
+    #[test]
+    fn messages_sent_mid_turn_reach_the_model_with_the_results() {
+        struct Steer(Vec<String>, Log);
+        impl Ui for Steer {
+            fn tool_start(&mut self, n: &str, i: &Value) {
+                self.1.tool_start(n, i)
+            }
+            fn delta(&mut self, _: Delta) {}
+            fn tool_end(&mut self, _: &Result<String, String>) {}
+            fn stopped(&mut self, _: &Stop) {}
+            fn usage(&mut self, _: Usage) {}
+            fn steered(&mut self) -> Vec<String> {
+                std::mem::take(&mut self.0)
+            }
+        }
+        let mut a = bash_then_echo("echo hi");
+        let mut ui = Steer(vec!["use printf instead".into()], Log::default());
+        a.prompt("go", &mut ui).unwrap();
+        let Message::User { content } = &a.messages[2] else {
+            panic!()
+        };
+        assert!(matches!(&content[0], Block::ToolResult { .. }));
+        assert_eq!(
+            content[1],
+            Block::Text {
+                text: "[The user wrote this while you were working:]\nuse printf instead".into()
+            }
+        );
     }
 
     #[test]
