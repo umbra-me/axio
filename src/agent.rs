@@ -410,7 +410,13 @@ impl Agent {
             _ => None,
         };
         let mut result = match refusal {
-            Some(r) => Err(r),
+            Some(r) => {
+                // Show refused calls too, so the user sees what was asked.
+                ui.tool_start(name, &input);
+                let r = Err(r);
+                ui.tool_end(&r);
+                r
+            }
             None => {
                 ui.tool_start(name, &input);
                 let r = if self.mcp.owns(name) {
@@ -543,10 +549,16 @@ mod tests {
                 r#"echo '{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"read-only day"}}'"#,
             ),
         );
-        a.prompt("go", &mut Log::default()).unwrap();
+        let mut log = Log::default();
+        a.prompt("go", &mut log).unwrap();
         assert_eq!(
             a.messages.last().unwrap().text(),
             "blocked by a hook: read-only day"
+        );
+        assert_eq!(
+            log.events[..2],
+            ["tool Bash", "ok false"],
+            "refused calls are shown"
         );
 
         let mut a = bash_then_echo("echo 42");

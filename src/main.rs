@@ -667,6 +667,9 @@ fn run() -> Result<ExitCode, String> {
     };
     if let Some(path) = resume {
         agent.messages = session::load(&path)?;
+        // No reply has measured the context yet; estimate it so a long
+        // resumed session can still compact before its first prompt.
+        agent.context = compact::estimate_tokens(&agent.messages);
         agent.session = Some(session::Session::open(path)?);
     } else if !args.no_session {
         agent.session = Some(session::Session::create(&sessions, &cwd)?);
