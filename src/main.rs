@@ -3,6 +3,7 @@ mod compact;
 mod context;
 mod editor;
 mod hooks;
+mod mcp;
 mod message;
 mod provider;
 mod session;
@@ -369,6 +370,27 @@ fn load_hooks(
     Ok(h)
 }
 
+/// MCP servers from `~/.axio/agent/mcp.json` and plugins, then a trusted
+/// project's `.mcp.json` and plugins.
+fn load_mcp(
+    home: &std::path::Path,
+    project: Option<&std::path::Path>,
+) -> Result<mcp::Config, String> {
+    let mut c = mcp::Config::default();
+    let mut add = |file: std::path::PathBuf, plugins: std::path::PathBuf| {
+        c.add_file(&file, None)?;
+        for (file, root) in mcp::plugin_server_files(&plugins) {
+            c.add_file(&file, Some(&root))?;
+        }
+        Ok::<_, String>(())
+    };
+    add(home.join("mcp.json"), home.join("plugins"))?;
+    if let Some(root) = project {
+        add(root.join(".mcp.json"), root.join(".axio/plugins"))?;
+    }
+    Ok(c)
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -424,6 +446,17 @@ fn run() -> Result<ExitCode, String> {
     agent.hooks = load_hooks(&home, project.as_deref(), &cwd)?;
     for skipped in &agent.hooks.skipped {
         eprintln!("axio: skipped hook: {skipped}");
+    }
+    let servers = load_mcp(&home, project.as_deref())?;
+    for skipped in &servers.skipped {
+        eprintln!("axio: skipped MCP server: {skipped}");
+    }
+    if !servers.servers.is_empty() {
+        let started = mcp::Mcp::start(&servers, &cwd);
+        for failed in &started.failed {
+            eprintln!("axio: MCP server failed to start: {failed}");
+        }
+        agent.set_mcp(started);
     }
 
     let mut term = Term {

@@ -1,5 +1,6 @@
 use crate::compact;
 use crate::hooks::{self, Event as Hook, Hooks, Permission};
+use crate::mcp::Mcp;
 use crate::message::{Block, Message};
 use crate::provider::{self, Delta, Model, Reply, Request, Stop, Usage};
 use crate::session::Session;
@@ -48,6 +49,7 @@ pub struct Agent {
     /// Context size after the latest reply, in tokens.
     pub context: u64,
     pub hooks: Hooks,
+    mcp: Arc<Mcp>,
     tools: Vec<ToolSpec>,
     complete: Arc<Complete>,
 }
@@ -70,9 +72,17 @@ impl Agent {
             session: None,
             context: 0,
             hooks: Hooks::default(),
+            mcp: Arc::default(),
             tools: tools::specs(),
             complete: Arc::new(provider::complete),
         }
+    }
+
+    /// Adds the tools of started MCP servers.
+    pub fn set_mcp(&mut self, mcp: Mcp) {
+        self.tools = tools::specs();
+        self.tools.extend(mcp.specs.iter().cloned());
+        self.mcp = Arc::new(mcp);
     }
 
     /// Compaction starts at 85% of the window, or AXIO_COMPACT_AT tokens.
@@ -391,7 +401,11 @@ impl Agent {
             Some(r) => Err(r),
             None => {
                 ui.tool_start(name, &input);
-                let r = tools::run(name, &input, &self.cwd, &mut || ui.interrupted());
+                let r = if self.mcp.owns(name) {
+                    self.mcp.call(name, &input, &mut || ui.interrupted())
+                } else {
+                    tools::run(name, &input, &self.cwd, &mut || ui.interrupted())
+                };
                 ui.tool_end(&r);
                 r
             }
