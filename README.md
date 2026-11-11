@@ -136,10 +136,19 @@ axio starts MCP servers listed in `~/.axio/agent/mcp.json`, in plugins'
 ```
 
 Their tools appear as `mcp__<server>__<tool>`, so hooks can match them with
-`mcp__github__.*`. Servers run over stdio for the session; a server that
+`mcp__github__.*`. Local servers run over stdio for the session; a server that
 exits is restarted on its next call, and Esc cancels a running call. `timeout`
-(milliseconds, default ten minutes) bounds each call. HTTP and SSE servers are
-listed as skipped for now.
+(milliseconds, default ten minutes) bounds each call.
+
+Remote servers use streamable HTTP:
+
+```json
+{"mcpServers": {"tracker": {"type": "http", "url": "https://mcp.example.com/mcp",
+                            "headers": {"Authorization": "Bearer ${TRACKER_TOKEN}"}}}}
+```
+
+`${VAR}` in `url` and `headers` comes from the environment. Servers that need
+an OAuth sign-in are reported as such; the older SSE transport is skipped.
 
 ## Keys
 
