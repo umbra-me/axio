@@ -51,8 +51,8 @@ impl Session {
         self.write_line(&json!({"type": "message", "message": m}))
     }
 
-    pub fn compaction(&mut self, keep_from: usize, summary: &str) -> Result<(), String> {
-        self.write_line(&json!({"type": "compaction", "keep_from": keep_from, "summary": summary}))
+    pub fn compaction(&mut self, summary: &str) -> Result<(), String> {
+        self.write_line(&json!({"type": "compaction", "summary": summary}))
     }
 
     fn write_line(&mut self, v: &Value) -> Result<(), String> {
@@ -79,10 +79,9 @@ pub fn load(path: &Path) -> Result<Vec<Message>, String> {
                 }
             }
             Some("compaction") => {
-                if let (Some(keep_from), Some(summary)) =
-                    (v["keep_from"].as_u64(), v["summary"].as_str())
-                {
-                    compact::apply(&mut messages, keep_from as usize, summary);
+                if let Some(summary) = v["summary"].as_str() {
+                    close_open_calls(&mut messages, None);
+                    compact::apply(&mut messages, summary);
                 }
             }
             _ => {}
@@ -218,17 +217,14 @@ mod tests {
         assert!(matches!(&content[0], Block::ToolResult { id, is_error: true, .. } if id == "t1"));
         assert_eq!(content[1], Block::Text { text: "two".into() });
 
-        s.compaction(2, "did one").unwrap();
+        s.compaction("did one").unwrap();
         let compacted = load(&path).unwrap();
-        assert_eq!(compacted.len(), 2);
+        assert_eq!(compacted.len(), 1);
         let Message::User { content } = &compacted[0] else {
             panic!()
         };
-        assert!(
-            content.iter().all(|b| matches!(b, Block::Text { .. })),
-            "orphaned result dropped"
-        );
-        assert!(compacted[0].text().contains("did one") && compacted[0].text().ends_with("two"));
+        assert!(content.iter().all(|b| matches!(b, Block::Text { .. })));
+        assert!(compacted[0].text().contains("two") && compacted[0].text().contains("did one"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

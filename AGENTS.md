@@ -31,7 +31,7 @@ cargo test --locked
 
 - `src/main.rs`: arguments, terminal output, interactive loop
 - `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor
-- `src/compact.rs`: keep-tail compaction (retained turns lose thinking blocks)
+- `src/compact.rs`: compaction to recent user requests plus a summary
 - `src/agent.rs`: the turn loop (model, tools, repeat)
 - `src/provider/`: Anthropic Messages and OpenAI-compatible chat completions
 - `src/tools.rs`: read, write, edit, bash
