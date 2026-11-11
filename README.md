@@ -179,8 +179,11 @@ is skipped.
 | Esc or Ctrl-C | stop the running turn (a running command is killed) |
 | Ctrl-C twice, or Ctrl-D, on an empty line | exit |
 | Ctrl-A / Ctrl-E, Alt-B / Alt-F, Ctrl-W, Ctrl-U, Ctrl-K | usual line editing |
-| Tab | complete a `/command` |
+| Tab | complete a `/command`, or a path after `@` |
 | Ctrl-R | search prompt history (Enter takes the match, Esc cancels) |
+
+`@path` in a prompt attaches that file (up to 256 KB) or a directory listing,
+so the model does not have to read it first.
 
 Commands: `/new`, `/undo` (put back the files the last turn wrote or edited),
 `/compact`, `/model [provider/model]`, `/effort [level]`, `/profile`,

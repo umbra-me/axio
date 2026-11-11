@@ -26,6 +26,8 @@ pub struct Editor {
     draft: String,
     /// Slash command names, without the slash, for Tab completion.
     pub commands: Vec<String>,
+    /// Where `@path` completion looks.
+    pub cwd: Option<std::path::PathBuf>,
     search: Option<Search>,
 }
 
@@ -35,6 +37,41 @@ struct Search {
     hit: Option<usize>,
     /// The text being edited before the search began.
     saved: String,
+}
+
+/// Completes `partial`, a path relative to `cwd`: the whole name when one
+/// entry matches (with `/` for a directory, a space for a file), else the
+/// part all matches share. Hidden entries only when asked for with a dot.
+fn complete_path(cwd: &std::path::Path, partial: &str) -> Option<String> {
+    let (dir, prefix) = match partial.rsplit_once('/') {
+        Some((d, p)) => (format!("{d}/"), p),
+        None => (String::new(), partial),
+    };
+    let mut names: Vec<(String, bool)> = std::fs::read_dir(cwd.join(&dir))
+        .ok()?
+        .flatten()
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                e.path().is_dir(),
+            )
+        })
+        .filter(|(n, _)| n.starts_with(prefix) && (prefix.starts_with('.') || !n.starts_with('.')))
+        .collect();
+    names.sort();
+    match names.as_slice() {
+        [] => None,
+        [(name, is_dir)] => Some(format!("{dir}{name}{}", if *is_dir { "/" } else { " " })),
+        [(first, _), rest @ ..] => {
+            let shared: String = first
+                .chars()
+                .enumerate()
+                .take_while(|(i, c)| rest.iter().all(|(n, _)| n.chars().nth(*i) == Some(*c)))
+                .map(|(_, c)| c)
+                .collect();
+            Some(format!("{dir}{shared}"))
+        }
+    }
 }
 
 impl Editor {
@@ -130,6 +167,22 @@ impl Editor {
     /// Completes a slash command name at the end of the line: the whole
     /// name when one matches, else the part all matches share.
     fn complete(&mut self) {
+        let start = self.buf[..self.cursor]
+            .iter()
+            .rposition(|c| c.is_whitespace())
+            .map_or(0, |i| i + 1);
+        let word: String = self.buf[start..self.cursor].iter().collect();
+        if let Some(partial) = word.strip_prefix('@') {
+            if let Some(done) = self
+                .cwd
+                .as_deref()
+                .and_then(|cwd| complete_path(cwd, partial))
+            {
+                self.buf.splice(start + 1..self.cursor, done.chars());
+                self.cursor = start + 1 + done.chars().count();
+            }
+            return;
+        }
         let text = self.text();
         let Some(prefix) = text.strip_prefix('/') else {
             return;
@@ -464,6 +517,37 @@ mod tests {
         e.handle(Key::End);
         e.handle(Key::Char('!'));
         assert_eq!(e.text(), "git status!", "other keys accept and then apply");
+    }
+
+    #[test]
+    fn tab_completes_mentioned_paths() {
+        let dir = std::env::temp_dir().join(format!("axio-complete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        for f in ["src/main.rs", "src/markdown.rs", ".hidden"] {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        let mut e = Editor {
+            cwd: Some(dir.clone()),
+            ..Editor::default()
+        };
+        e.handle(Key::Paste("look at @sr".into()));
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "look at @src/");
+        e.handle(Key::Char('m'));
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(
+            e.text(),
+            "look at @src/ma",
+            "shared part of main.rs and markdown.rs"
+        );
+        e.handle(Key::Char('i'));
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "look at @src/main.rs ");
+        e.set("@.h");
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "@.hidden ");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

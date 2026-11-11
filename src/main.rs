@@ -64,8 +64,8 @@ Options:
   -V, --version         Show the version
 
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
-completes a /command, Up/Down walk history, Ctrl-R searches it, Esc or Ctrl-C
-stops a running turn, Ctrl-D exits.
+completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
+Esc or Ctrl-C stops a running turn, Ctrl-D exits. @path attaches a file.
 Commands: /new, /undo, /compact, /model <model>, /effort <level>, /session, /help,
 /quit, plus your own
 
@@ -809,6 +809,7 @@ fn run() -> Result<ExitCode, String> {
     }
     let mut editor = editor::Editor::default();
     editor.history = load_history();
+    editor.cwd = Some(cwd.clone());
     editor.commands = BUILTIN_COMMANDS
         .iter()
         .map(|c| c.to_string())

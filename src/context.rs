@@ -12,6 +12,67 @@ Read a file before you edit it. Prefer Edit over Write for changes to existing f
 
 Project instructions: AGENTS.md (or CLAUDE.md) files apply to the directory tree that contains them. The ones from the filesystem root down to the working directory are included below. When you work in another directory, check for AGENTS.md files there. Deeper files win over shallower ones, and the user's direct instructions win over all of them.";
 
+/// Files and directories the prompt names as `@path`, as text blocks for
+/// the model, each with a short note for the user.
+pub fn mentions(prompt: &str, cwd: &Path) -> Vec<(String, String)> {
+    const MAX_BYTES: u64 = 256 * 1024;
+    let mut seen = Vec::new();
+    let mut out = Vec::new();
+    for word in prompt.split_whitespace() {
+        let Some(name) = word.strip_prefix('@') else {
+            continue;
+        };
+        let name = name.trim_end_matches([',', '.', ';', ':', '!', '?', ')', ']', '"', '\'']);
+        if name.is_empty() || seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        let path = crate::tools::resolve(cwd, name);
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            let mut entries: Vec<String> = std::fs::read_dir(&path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| {
+                    let slash = if e.path().is_dir() { "/" } else { "" };
+                    format!("{}{slash}", e.file_name().to_string_lossy())
+                })
+                .collect();
+            entries.sort();
+            let n = entries.len();
+            entries.truncate(200);
+            out.push((
+                format!(
+                    "<directory path=\"{name}\">\n{}\n</directory>",
+                    entries.join("\n")
+                ),
+                format!("attached {name}/ · {n} entries"),
+            ));
+        } else if meta.len() > MAX_BYTES {
+            out.push((
+                format!(
+                    "[{name} is {} KB, too large to attach; read the parts you need]",
+                    meta.len() / 1024
+                ),
+                format!("{name} is too large to attach; the model was told to read it"),
+            ));
+        } else if let Ok(text) = std::fs::read_to_string(&path) {
+            let lines = text.lines().count();
+            out.push((
+                format!("<file path=\"{name}\">\n{text}\n</file>"),
+                format!(
+                    "attached {name} · {lines} line{}",
+                    if lines == 1 { "" } else { "s" }
+                ),
+            ));
+        }
+    }
+    out
+}
+
 /// The directory holding axio's settings, sessions and global AGENTS.md.
 pub fn home() -> PathBuf {
     if let Some(dir) = std::env::var_os("AXIO_HOME") {
@@ -95,6 +156,27 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mentions_attach_files_and_directories() {
+        let dir = std::env::temp_dir().join(format!("axio-mentions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+        let got = mentions(
+            "look at @src/a.rs, then @src and @missing.rs or mail me@x.y",
+            &dir,
+        );
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].0, "<file path=\"src/a.rs\">\nfn a() {}\n\n</file>");
+        assert_eq!(got[0].1, "attached src/a.rs · 1 line");
+        assert_eq!(got[1].0, "<directory path=\"src\">\na.rs\n</directory>");
+        assert!(
+            mentions("@src/a.rs @src/a.rs", &dir).len() == 1,
+            "each file once"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn converts_days_to_dates() {
