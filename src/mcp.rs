@@ -25,6 +25,31 @@ pub struct ServerConfig {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub timeout: Duration,
+    /// Set for servers reached over streamable HTTP instead of a process.
+    pub url: Option<String>,
+    pub headers: Vec<(String, String)>,
+}
+
+/// `${VAR}` from the environment, so tokens stay out of config files.
+fn expand_env(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("${") {
+        out.push_str(&rest[..i]);
+        match rest[i..].find('}') {
+            Some(end) => {
+                let name = &rest[i + 2..i + end];
+                out.push_str(&std::env::var(name).unwrap_or_default());
+                rest = &rest[i + end + 1..];
+            }
+            None => {
+                out.push_str(&rest[i..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Servers from `{"mcpServers": {...}}` documents. Entries axio cannot run
@@ -56,17 +81,38 @@ impl Config {
             if s["disabled"] == true || s["enabled"] == false {
                 continue;
             }
-            let kind = s["type"].as_str().unwrap_or("stdio");
-            let Some(command) = s["command"].as_str().filter(|_| kind == "stdio") else {
-                let why = if s.get("url").is_some() || kind != "stdio" {
-                    "HTTP and SSE servers are not supported yet"
-                } else {
-                    "it has no command"
-                };
-                self.skipped
-                    .push(format!("{}: {name}: {why}", source.display()));
-                continue;
+            let kind = s["type"].as_str().unwrap_or(if s.get("url").is_some() {
+                "http"
+            } else {
+                "stdio"
+            });
+            let url = match kind {
+                "http" | "streamable-http" => match s["url"].as_str() {
+                    Some(u) => Some(expand_env(&expand(u, root))),
+                    None => {
+                        self.skipped
+                            .push(format!("{}: {name}: it has no url", source.display()));
+                        continue;
+                    }
+                },
+                "stdio" => None,
+                other => {
+                    let why = if other == "sse" {
+                        "the older SSE transport is not supported; use the server's streamable HTTP endpoint".to_string()
+                    } else {
+                        format!("unknown transport {other}")
+                    };
+                    self.skipped
+                        .push(format!("{}: {name}: {why}", source.display()));
+                    continue;
+                }
             };
+            let command = s["command"].as_str().unwrap_or("");
+            if url.is_none() && command.is_empty() {
+                self.skipped
+                    .push(format!("{}: {name}: it has no command", source.display()));
+                continue;
+            }
             if self.servers.iter().any(|x| &x.name == name) {
                 self.skipped.push(format!(
                     "{}: {name}: a server with this name is already configured",
@@ -93,6 +139,13 @@ impl Config {
                 timeout: s["timeout"]
                     .as_u64()
                     .map_or(CALL_TIMEOUT, Duration::from_millis),
+                headers: s["headers"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(k, v)| Some((k.clone(), expand_env(v.as_str()?))))
+                    .collect(),
+                url,
             });
         }
     }
@@ -112,14 +165,14 @@ impl Config {
 
 type Pending = Arc<Mutex<HashMap<u64, Sender<Result<Value, String>>>>>;
 
-struct Connection {
+struct StdioConn {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Pending,
     next_id: u64,
 }
 
-impl Drop for Connection {
+impl Drop for StdioConn {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -133,8 +186,8 @@ fn send(stdin: &Mutex<ChildStdin>, msg: &Value) -> Result<(), String> {
         .map_err(|e| format!("server closed its input: {e}"))
 }
 
-impl Connection {
-    fn spawn(cfg: &ServerConfig, cwd: &Path) -> Result<Connection, String> {
+impl StdioConn {
+    fn spawn(cfg: &ServerConfig, cwd: &Path) -> Result<StdioConn, String> {
         let mut child = Command::new(&cfg.command)
             .args(&cfg.args)
             .envs(cfg.env.iter().map(|(k, v)| (k, v)))
@@ -158,7 +211,9 @@ impl Connection {
                     continue;
                 };
                 if msg.get("method").is_some() {
-                    answer_server_request(&msg, &reader_stdin, &cwd);
+                    if let Some(reply) = answer_server_request(&msg, &cwd) {
+                        let _ = send(&reader_stdin, &reply);
+                    }
                     continue;
                 }
                 let Some(id) = msg["id"].as_u64() else {
@@ -179,7 +234,7 @@ impl Connection {
                 }
             }
         });
-        Ok(Connection {
+        Ok(StdioConn {
             child,
             stdin,
             pending,
@@ -203,6 +258,184 @@ impl Connection {
         Ok((id, rx))
     }
 
+    fn notify(&self, method: &str, params: Value) -> Result<(), String> {
+        send(
+            &self.stdin,
+            &json!({"jsonrpc": "2.0", "method": method, "params": params}),
+        )
+    }
+}
+
+/// A streamable HTTP server: every message is a POST; replies come back as
+/// JSON or as an event stream that may carry the server's own requests first.
+struct HttpConn {
+    url: String,
+    headers: Vec<(String, String)>,
+    session: Arc<Mutex<Option<String>>>,
+    initialized: bool,
+    next_id: u64,
+    cwd: PathBuf,
+}
+
+const SIGN_IN: &str = "the server needs a sign-in (OAuth), which axio does not support yet; set an Authorization header with a token instead";
+
+fn http_post(
+    url: &str,
+    headers: &[(String, String)],
+    session: &Mutex<Option<String>>,
+    initialized: bool,
+    msg: &Value,
+) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut req = agent
+        .post(url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream");
+    if initialized {
+        req = req.header("mcp-protocol-version", PROTOCOL);
+    }
+    if let Some(id) = session.lock().ok().and_then(|s| s.clone()) {
+        req = req.header("mcp-session-id", &id);
+    }
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = req
+        .send(msg.to_string())
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    if let Some(id) = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        && let Ok(mut s) = session.lock()
+    {
+        *s = Some(id.to_string());
+    }
+    match resp.status().as_u16() {
+        200..=299 => Ok(resp),
+        401 | 403 => Err(SIGN_IN.into()),
+        code => {
+            let body = resp.into_body().read_to_string().unwrap_or_default();
+            Err(format!(
+                "{url} returned {code}: {}",
+                body.trim().chars().take(300).collect::<String>()
+            ))
+        }
+    }
+}
+
+impl HttpConn {
+    fn start(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<(u64, Receiver<Result<Value, String>>), String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let (tx, rx) = mpsc::channel();
+        let (url, headers, session, initialized, cwd) = (
+            self.url.clone(),
+            self.headers.clone(),
+            self.session.clone(),
+            self.initialized,
+            self.cwd.clone(),
+        );
+        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        std::thread::spawn(move || {
+            let result = (|| {
+                let resp = http_post(&url, &headers, &session, initialized, &msg)?;
+                let kind = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                let outcome = |m: &Value| match m.get("error") {
+                    Some(e) => Err(e["message"].as_str().unwrap_or("error").to_string()),
+                    None => Ok(m["result"].clone()),
+                };
+                if !kind.starts_with("text/event-stream") {
+                    let body = resp
+                        .into_body()
+                        .read_to_string()
+                        .map_err(|e| e.to_string())?;
+                    let m: Value =
+                        serde_json::from_str(&body).map_err(|e| format!("bad reply: {e}"))?;
+                    return outcome(&m);
+                }
+                let mut answer = None;
+                let reader = BufReader::new(resp.into_body().into_reader());
+                crate::sse::read(reader, |data| {
+                    let Ok(m) = serde_json::from_str::<Value>(data) else {
+                        return Ok(true);
+                    };
+                    if m.get("method").is_some() {
+                        if let Some(reply) = answer_server_request(&m, &cwd) {
+                            http_post(&url, &headers, &session, true, &reply)?;
+                        }
+                        return Ok(true);
+                    }
+                    if m["id"].as_u64() == Some(id) {
+                        answer = Some(outcome(&m));
+                        return Ok(false);
+                    }
+                    Ok(true)
+                })?;
+                answer
+                    .unwrap_or_else(|| Err("the server closed the stream without replying".into()))
+            })();
+            let _ = tx.send(result);
+        });
+        Ok((id, rx))
+    }
+
+    fn notify(&self, method: &str, params: Value) -> Result<(), String> {
+        let msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
+        http_post(
+            &self.url,
+            &self.headers,
+            &self.session,
+            self.initialized,
+            &msg,
+        )
+        .map(|_| ())
+    }
+}
+
+enum Connection {
+    Stdio(StdioConn),
+    Http(HttpConn),
+}
+
+impl Connection {
+    fn open(cfg: &ServerConfig, cwd: &Path) -> Result<Connection, String> {
+        Ok(match &cfg.url {
+            Some(url) => Connection::Http(HttpConn {
+                url: url.clone(),
+                headers: cfg.headers.clone(),
+                session: Arc::default(),
+                initialized: false,
+                next_id: 1,
+                cwd: cwd.to_path_buf(),
+            }),
+            None => Connection::Stdio(StdioConn::spawn(cfg, cwd)?),
+        })
+    }
+
+    fn start(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<(u64, Receiver<Result<Value, String>>), String> {
+        match self {
+            Connection::Stdio(c) => c.start(method, params),
+            Connection::Http(c) => c.start(method, params),
+        }
+    }
+
     fn request(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
         let (_, rx) = self.start(method, params)?;
         rx.recv_timeout(timeout)
@@ -210,21 +443,40 @@ impl Connection {
     }
 
     fn notify(&self, method: &str, params: Value) -> Result<(), String> {
-        send(
-            &self.stdin,
-            &json!({"jsonrpc": "2.0", "method": method, "params": params}),
-        )
+        match self {
+            Connection::Stdio(c) => c.notify(method, params),
+            Connection::Http(c) => c.notify(method, params),
+        }
+    }
+
+    /// After `initialize`: HTTP requests then carry the protocol version.
+    fn initialized(&mut self) {
+        if let Connection::Http(c) = self {
+            c.initialized = true;
+        }
     }
 
     fn alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        match self {
+            Connection::Stdio(c) => matches!(c.child.try_wait(), Ok(None)),
+            Connection::Http(_) => true,
+        }
+    }
+
+    /// Stops waiting for a request the user cancelled.
+    fn forget(&self, id: u64) {
+        if let Connection::Stdio(c) = self
+            && let Ok(mut p) = c.pending.lock()
+        {
+            p.remove(&id);
+        }
     }
 }
 
 /// Requests a server makes of axio: ping and roots are answered, the rest
 /// get "method not found".
-fn answer_server_request(msg: &Value, stdin: &Mutex<ChildStdin>, cwd: &Path) {
-    let Some(id) = msg.get("id") else { return };
+fn answer_server_request(msg: &Value, cwd: &Path) -> Option<Value> {
+    let id = msg.get("id")?;
     let reply = match msg["method"].as_str() {
         Some("ping") => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
         Some("roots/list") => json!({"jsonrpc": "2.0", "id": id, "result": {"roots": [
@@ -234,7 +486,7 @@ fn answer_server_request(msg: &Value, stdin: &Mutex<ChildStdin>, cwd: &Path) {
             json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "method not found"}})
         }
     };
-    let _ = send(stdin, &reply);
+    Some(reply)
 }
 
 struct Server {
@@ -246,13 +498,14 @@ struct Server {
 
 impl Server {
     fn connect(&mut self, cwd: &Path) -> Result<Vec<Value>, String> {
-        let mut conn = Connection::spawn(&self.config, cwd)?;
+        let mut conn = Connection::open(&self.config, cwd)?;
         conn.request(
             "initialize",
             json!({"protocolVersion": PROTOCOL, "capabilities": {"roots": {}},
                    "clientInfo": {"name": "axio", "version": env!("CARGO_PKG_VERSION")}}),
             START_TIMEOUT,
         )?;
+        conn.initialized();
         conn.notify("notifications/initialized", json!({}))?;
         let mut tools = Vec::new();
         let mut cursor = Value::Null;
@@ -420,9 +673,7 @@ impl Mcp {
                         "notifications/cancelled",
                         json!({"requestId": id, "reason": reason}),
                     );
-                    if let Ok(mut p) = conn.pending.lock() {
-                        p.remove(&id);
-                    }
+                    conn.forget(id);
                     return Err(reason);
                 }
             }
@@ -530,7 +781,8 @@ mod tests {
                 "stub server": {"command": exe.display().to_string(),
                                 "args": ["--exact", "mcp::tests::stub_server", "--nocapture", "--quiet", "--test-threads=1"],
                                 "env": {"AXIO_MCP_STUB": "1"}, "timeout": 2000},
-                "remote": {"type": "http", "url": "https://example.invalid/mcp"},
+                "remote": {"type": "http", "url": "http://127.0.0.1:9/mcp"},
+                "old": {"type": "sse", "url": "http://127.0.0.1:9/sse"},
                 "off": {"command": "x", "disabled": true},
                 "missing": {"command": "/nonexistent/axio-mcp-server"}
             }}),
@@ -548,19 +800,23 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["missing", "stub server"]
+            ["missing", "remote", "stub server"]
         );
+        assert_eq!(c.servers[1].url.as_deref(), Some("http://127.0.0.1:9/mcp"));
         assert_eq!(
             c.skipped,
-            ["mcp.json: remote: HTTP and SSE servers are not supported yet"]
+            [
+                "mcp.json: old: the older SSE transport is not supported; use the server's streamable HTTP endpoint"
+            ]
         );
     }
 
     #[test]
     fn lists_and_calls_tools_across_pages() {
         let mcp = Mcp::start(&config(), &std::env::temp_dir());
-        assert_eq!(mcp.failed.len(), 1);
+        assert_eq!(mcp.failed.len(), 2);
         assert!(mcp.failed[0].starts_with("missing: could not start"));
+        assert!(mcp.failed[1].starts_with("remote: could not reach"));
         let names: Vec<&str> = mcp.specs.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
@@ -621,5 +877,151 @@ mod tests {
         assert_eq!(first.len(), NAME_LIMIT);
         let second = tool_name("s", &long, std::slice::from_ref(&first));
         assert!(second.len() <= NAME_LIMIT && second.ends_with("_2") && second != first);
+    }
+
+    /// A minimal streamable HTTP MCP server on a random local port. It
+    /// replies with JSON or an event stream, sends a ping of its own before
+    /// the tools list, insists on its session id, and refuses calls without
+    /// the right Authorization header.
+    fn http_server(token: &'static str) -> (String, Arc<Mutex<Vec<Value>>>) {
+        use std::io::Read as _;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let seen: Arc<Mutex<Vec<Value>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut headers = HashMap::new();
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    loop {
+                        line.clear();
+                        reader.read_line(&mut line).unwrap();
+                        let Some((k, v)) = line.trim_end().split_once(": ") else {
+                            break;
+                        };
+                        headers.insert(k.to_ascii_lowercase(), v.to_string());
+                    }
+                    let len: usize = headers
+                        .get("content-length")
+                        .map_or(0, |l| l.parse().unwrap());
+                    let mut body = vec![0; len];
+                    reader.read_exact(&mut body).unwrap();
+                    let msg: Value = serde_json::from_slice(&body).unwrap();
+                    log.lock().unwrap().push(msg.clone());
+                    let mut out = stream;
+                    let reply = |out: &mut std::net::TcpStream,
+                                 status: &str,
+                                 kind: &str,
+                                 extra: &str,
+                                 body: &str| {
+                        write!(out, "HTTP/1.1 {status}\r\ncontent-type: {kind}\r\n{extra}content-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    };
+                    if headers.get("authorization").map(String::as_str) != Some(token) {
+                        return reply(&mut out, "401 Unauthorized", "text/plain", "", "sign in");
+                    }
+                    let method = msg["method"].as_str().unwrap_or("");
+                    if method != "initialize"
+                        && headers.get("mcp-session-id").map(String::as_str) != Some("s1")
+                    {
+                        return reply(
+                            &mut out,
+                            "400 Bad Request",
+                            "text/plain",
+                            "",
+                            "missing session",
+                        );
+                    }
+                    let id = msg["id"].clone();
+                    let rpc = |result: Value| {
+                        json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+                    };
+                    match method {
+                        "initialize" => reply(
+                            &mut out,
+                            "200 OK",
+                            "application/json",
+                            "mcp-session-id: s1\r\n",
+                            &rpc(
+                                json!({"protocolVersion": PROTOCOL, "capabilities": {"tools": {}}}),
+                            ),
+                        ),
+                        "tools/list" => {
+                            let ping = json!({"jsonrpc": "2.0", "id": "srv-1", "method": "ping"});
+                            let tools = rpc(
+                                json!({"tools": [{"name": "add", "inputSchema": {"type": "object"}}]}),
+                            );
+                            reply(
+                                &mut out,
+                                "200 OK",
+                                "text/event-stream",
+                                "",
+                                &format!("data: {ping}\n\ndata: {tools}\n\n"),
+                            );
+                        }
+                        "tools/call" => {
+                            let a = &msg["params"]["arguments"];
+                            let sum = a["a"].as_i64().unwrap_or(0) + a["b"].as_i64().unwrap_or(0);
+                            reply(
+                                &mut out,
+                                "200 OK",
+                                "application/json",
+                                "",
+                                &rpc(
+                                    json!({"content": [{"type": "text", "text": sum.to_string()}]}),
+                                ),
+                            );
+                        }
+                        _ if msg.get("id").is_none() || msg.get("result").is_some() => {
+                            reply(&mut out, "202 Accepted", "text/plain", "", "")
+                        }
+                        _ => reply(&mut out, "404 Not Found", "text/plain", "", ""),
+                    }
+                });
+            }
+        });
+        (url, seen)
+    }
+
+    #[test]
+    fn speaks_streamable_http_with_sessions_and_headers() {
+        let (url, seen) = http_server("Bearer t0k");
+        // SAFETY: test-only; no other test reads this variable.
+        unsafe { std::env::set_var("AXIO_TEST_MCP_TOKEN", "t0k") };
+        let mut c = Config::default();
+        c.add(
+            &json!({"mcpServers": {
+                "calc": {"type": "http", "url": url, "headers": {"Authorization": "Bearer ${AXIO_TEST_MCP_TOKEN}"}},
+                "locked": {"url": url}
+            }}),
+            None,
+            Path::new("mcp.json"),
+        );
+        let mcp = Mcp::start(&c, &std::env::temp_dir());
+        assert_eq!(mcp.failed, [format!("locked: {SIGN_IN}")]);
+        assert_eq!(
+            mcp.specs
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            ["mcp__calc__add"]
+        );
+        assert_eq!(
+            mcp.call("mcp__calc__add", &json!({"a": 2, "b": 3}), &mut || false),
+            Ok("5".into())
+        );
+        let log = seen.lock().unwrap();
+        assert!(
+            log.iter()
+                .any(|m| m["id"] == "srv-1" && m.get("result").is_some()),
+            "the server's ping was answered over a POST"
+        );
+        assert!(
+            log.iter()
+                .any(|m| m["method"] == "notifications/initialized")
+        );
     }
 }

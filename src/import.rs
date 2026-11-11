@@ -109,14 +109,36 @@ fn hook_support(doc: &Value) -> Support {
 }
 
 /// Converts an MCP entry from any harness to axio's shape, or says why not.
-fn mcp_entry(v: &Value) -> Result<Value, String> {
-    if v.get("url").is_some()
-        || matches!(v["type"].as_str(), Some("http" | "sse" | "streamable-http"))
-    {
-        return Err("HTTP and SSE servers are not supported yet".into());
+/// Returns a note when it works only in part.
+fn mcp_entry(v: &Value) -> Result<(Value, Option<String>), String> {
+    let kind = v["type"].as_str().unwrap_or(if v.get("url").is_some() {
+        "http"
+    } else {
+        "stdio"
+    });
+    match kind {
+        "sse" => Err("uses the older SSE transport, which axio does not support".into()),
+        "http" | "streamable-http" => {
+            if v.get("auth").is_some() || v.get("oauth").is_some() {
+                return Err("needs an OAuth sign-in, which axio does not support yet".into());
+            }
+            let url = v["url"].as_str().ok_or("has no url")?;
+            let headers = v.get("headers").cloned().unwrap_or(json!({}));
+            let note = (headers.as_object().is_none_or(|h| h.is_empty()))
+                .then(|| "HTTP server: works unless it needs an OAuth sign-in".to_string());
+            Ok((
+                json!({"type": "http", "url": url, "headers": headers}),
+                note,
+            ))
+        }
+        _ => {
+            let command = v["command"].as_str().ok_or("has no command")?;
+            Ok((
+                json!({"command": command, "args": v["args"].clone(), "env": v["env"].clone()}),
+                None,
+            ))
+        }
     }
-    let command = v["command"].as_str().ok_or("has no command")?;
-    Ok(json!({"command": command, "args": v["args"].clone(), "env": v["env"].clone()}))
 }
 
 fn mcp_items(harness: &'static str, servers: Option<&serde_json::Map<String, Value>>) -> Vec<Item> {
@@ -127,7 +149,8 @@ fn mcp_items(harness: &'static str, servers: Option<&serde_json::Map<String, Val
         .map(|(name, v)| {
             let fingerprint = fnv(v.to_string().as_bytes());
             let (kind, support) = match mcp_entry(v) {
-                Ok(entry) => (Kind::Mcp(entry), Support::Works),
+                Ok((entry, None)) => (Kind::Mcp(entry), Support::Works),
+                Ok((entry, Some(note))) => (Kind::Mcp(entry), Support::Partly(note)),
                 Err(why) => (Kind::Unusable, Support::No(why)),
             };
             Item {
@@ -179,7 +202,11 @@ fn plugin_support(root: &Path, codex: bool) -> Support {
     if let Some(m) = &mcp {
         for (name, v) in m["mcpServers"].as_object().into_iter().flatten() {
             match mcp_entry(v) {
-                Ok(_) => works.push("MCP"),
+                Ok((_, None)) => works.push("MCP"),
+                Ok((_, Some(note))) => {
+                    works.push("MCP");
+                    notes.push(format!("MCP server {name}: {note}"));
+                }
                 Err(why) => notes.push(format!("MCP server {name}: {why}")),
             }
         }
@@ -647,7 +674,9 @@ mod tests {
         );
         assert_eq!(
             line(&items, "Claude Code", "figma"),
-            Support::Partly("MCP server figma: HTTP and SSE servers are not supported yet".into())
+            Support::Partly(
+                "MCP server figma: HTTP server: works unless it needs an OAuth sign-in".into()
+            )
         );
         assert!(
             matches!(line(&items, "Claude Code", "lsp"), Support::No(n) if n.starts_with("has nothing axio uses"))
@@ -655,7 +684,7 @@ mod tests {
         assert_eq!(line(&items, "Claude Code", "browse"), Support::Works);
         assert_eq!(
             line(&items, "Claude Code", "web"),
-            Support::No("HTTP and SSE servers are not supported yet".into())
+            Support::Partly("HTTP server: works unless it needs an OAuth sign-in".into())
         );
         assert_eq!(line(&items, "Claude Code", "charon"), Support::Works);
         assert_eq!(
