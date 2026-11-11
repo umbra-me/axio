@@ -31,6 +31,7 @@ cargo test --locked
 
 - `src/main.rs`: arguments, terminal output, interactive loop
 - `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor
+- `src/skills.rs`: skills, slash commands and the small frontmatter reader
 - `src/mcp.rs`: MCP stdio client (tests run the test binary as a stub server)
 - `src/hooks.rs`: hook loading, matching, running and merging replies
 - `src/settings.rs`: settings files and project trust
