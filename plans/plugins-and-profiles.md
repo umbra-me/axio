@@ -1,6 +1,6 @@
 # Plugins, modules and profiles
 
-Status: proposal for owner approval, 2026-11-12.
+Status: approved by the owner on 2026-11-12, with the decisions recorded at the end.
 
 ## Goal
 
@@ -35,8 +35,8 @@ axio follows Codex and Grok: plugins are bundles, code runs out of process.
    `Read`, `Write`, `Edit`, `Bash` with `file_path`, `old_string`,
    `new_string`, `replace_all`, `command`, `timeout`. Hooks written for Claude
    Code, Codex and Grok then match axio's tools unchanged, and models already
-   know these shapes. Sessions keep loading: names are only matched at call
-   time.
+   know these shapes. Older sessions keep loading: their recorded calls stay as
+   they were, and only new calls use the new names.
 2. **Settings in JSON.** `~/.axio/agent/settings.json` and `.axio/settings.json`
    (project, trusted only). JSON keeps the dependency list at serde, serde_json
    and ureq.
@@ -132,6 +132,53 @@ terminal; in `-p` mode it denies. Environment: `AXIO_PROJECT_DIR`,
   and sends the result as the prompt. Plugin commands are also reachable as
   `/plugin:name`.
 
+## Importing from other harnesses
+
+axio looks for hooks, plugins, MCP servers and skills that other agent
+harnesses on the machine already use, and offers them once.
+
+| Harness | Where it looks |
+|---|---|
+| Claude Code | `~/.claude/settings.json` (hooks), `~/.claude/plugins/installed_plugins.json` (plugins with versions), `~/.claude.json` (MCP servers), `~/.claude/skills/` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/config.toml` (`mcp_servers`, `plugins`) |
+| Grok Build | `~/.grok/hooks/*.json`, `~/.grok/config.toml` (`mcp_servers`), `~/.grok/skills/` |
+| Pi | `~/.pi/agent/mcp.json`, `~/.pi/agent/skills/`; extensions are listed but cannot run (TypeScript) |
+
+When something new is found, axio shows a prompt before the first turn:
+
+```
+Found in other harnesses on this machine:
+
+Claude Code 2.1.322
+  plugin  superpowers 5.1.0          works as is
+  plugin  figma 1.4.2                works as is (MCP over HTTP: not supported yet, skipped)
+  mcp     browse                     works as is
+Codex 0.61.0
+  hooks   ~/.codex/hooks.json        3 of 4 events work; PermissionRequest has no axio event
+  mcp     node_repl                  works as is
+Pi 0.42.1
+  ext     background-terminals       cannot run: TypeScript extension
+
+[a] import everything that works  [c] choose  [l] later  [n] never ask
+Turn this off any time: "importFromOtherHarnesses": "off" in ~/.axio/agent/settings.json
+```
+
+- Each line names the item, its version (from the plugin manifest or the
+  harness's installed-plugins record), the harness and its version (from its
+  version file or `--version`), and how axio's support differs: works as is,
+  partly (which events, tools or transports are missing), or not at all (why).
+- Imported items are used in place, never copied, so updates in the other
+  harness carry over. axio records the path and version and asks again when
+  either changes.
+- Answers are saved under `"imports"` in settings, so the prompt only lists new
+  or changed items. `/import` reopens it. `-p` mode never prompts and uses only
+  what was already accepted.
+- The setting `"importFromOtherHarnesses"` is `"ask"` by default, or `"off"`;
+  `--no-import` turns it off for one run.
+- Codex and Grok keep MCP servers in TOML. Reading them needs either the `toml`
+  crate (a new dependency for the owner to approve) or a small reader for the
+  subset these files use; decided when this step is built.
+
 ## Modules
 
 Built into axio, switched on by profiles:
@@ -160,7 +207,7 @@ every profile benefits.
 | Profile | Modules | Notes |
 |---|---|---|
 | `minimal` | none | Pi-sized: four tools, plugins on, no permission prompts |
-| `standard` | search, plan, background | the default |
+| `standard` | search, plan, background | the default (owner decision) |
 | `full` | all, sandbox on, `ask` for destructive Bash | for unattended or unfamiliar repos |
 
 Choose with `axio --profile <name>`, `"profile"` in settings, or `/profile`.
@@ -175,13 +222,14 @@ Choose with `axio --profile <name>`, `"profile"` in settings, or `/profile`.
 4. Skills and commands.
 5. Profiles and the `search`, `plan` and `background` modules.
 6. `axio plugin install | list | remove | update`.
+7. Importing from other harnesses.
 
 Each step is its own PR with tests; the core stays dependency-free.
 
-## Questions for the owner
+## Owner decisions (2026-11-12)
 
-1. Rename the built-in tools to Claude Code's names (recommended), or keep the
-   lowercase ones and map names only for hooks?
-2. Import hooks, plugins and MCP servers from `~/.claude` automatically (Grok
-   does), behind a setting, or not at all?
-3. Default profile: `standard` (recommended) or `minimal`?
+1. Rename the built-in tools to Claude Code's names: yes.
+2. Use hooks, plugins and MCP servers from other harnesses: optional, offered
+   through the prompt above (with versions and differences), and switchable
+   off.
+3. Default profile: `standard`.
