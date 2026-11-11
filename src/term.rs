@@ -254,6 +254,35 @@ impl Drop for RawMode {
     }
 }
 
+/// Columns a character takes in a terminal: 2 for wide East Asian
+/// characters and most emoji, 0 for combining marks, else 1.
+pub fn char_width(c: char) -> usize {
+    match c as u32 {
+        0x0300..=0x036F | 0x200B..=0x200F | 0xFE00..=0xFE0F => 0,
+        0x1100..=0x115F
+        | 0x2E80..=0x303E
+        | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1F64F
+        | 0x1F680..=0x1F6FF
+        | 0x1F900..=0x1F9FF
+        | 0x20000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
+/// Columns `s` takes in a terminal.
+pub fn text_width(s: &str) -> usize {
+    s.chars().map(char_width).sum()
+}
+
 pub fn width() -> usize {
     ioctl_width()
         .or_else(|| stty(&["size"]).and_then(|s| s.split_whitespace().nth(1)?.parse().ok()))

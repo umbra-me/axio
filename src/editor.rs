@@ -146,17 +146,14 @@ impl Editor {
             [] => {}
             [one] => self.set(&format!("/{one} ")),
             [first, rest @ ..] => {
-                let mut common = first.len();
-                for m in rest {
-                    common = common.min(
-                        first
-                            .bytes()
-                            .zip(m.bytes())
-                            .take_while(|(a, b)| a == b)
-                            .count(),
-                    );
-                }
-                self.set(&format!("/{}", &first[..common]));
+                // Compare characters, so the prefix never ends inside one.
+                let shared: String = first
+                    .chars()
+                    .enumerate()
+                    .take_while(|(i, c)| rest.iter().all(|m| m.chars().nth(*i) == Some(*c)))
+                    .map(|(_, c)| c)
+                    .collect();
+                self.set(&format!("/{shared}"));
             }
         }
     }
@@ -243,7 +240,8 @@ impl Editor {
             }
             Key::Ctrl('i') => self.complete(),
             Key::Char(c) => self.insert(&c.to_string()),
-            Key::Paste(s) => self.insert(&s),
+            // Tabs would render at a width the layout cannot know.
+            Key::Paste(s) => self.insert(&s.replace('\t', "    ")),
             Key::AltEnter => self.insert("\n"),
             Key::Enter => {
                 if self.cursor == self.buf.len() && self.buf.last() == Some(&'\\') {
@@ -314,11 +312,15 @@ impl Editor {
                 None if s.query.is_empty() => String::new(),
                 None => "no match".into(),
             };
+            let mut used = 0;
             let line: String = format!("search history: {}  › {found}", s.query)
                 .chars()
-                .take(width.max(4) - 1)
+                .take_while(|c| {
+                    used += crate::term::char_width(*c);
+                    used < width.max(4)
+                })
                 .collect();
-            let col = line.chars().count();
+            let col = crate::term::text_width(&line);
             return Layout {
                 text: line,
                 cursor_row: 0,
@@ -331,6 +333,13 @@ impl Editor {
         let (mut row, mut col) = (0, PROMPT.chars().count());
         let mut cursor = (row, col);
         for (i, c) in self.buf.iter().enumerate() {
+            let w = crate::term::char_width(*c);
+            // Wrap first, so a cursor on the wrapped character sits on the new row.
+            if *c != '\n' && col + w > width {
+                out.push('\n');
+                row += 1;
+                col = 0;
+            }
             if i == self.cursor {
                 cursor = (row, col);
             }
@@ -341,13 +350,8 @@ impl Editor {
                 col = CONTINUATION.len();
                 continue;
             }
-            if col == width {
-                out.push('\n');
-                row += 1;
-                col = 0;
-            }
             out.push(*c);
-            col += 1;
+            col += w;
         }
         if self.cursor == self.buf.len() {
             cursor = (row, col);
@@ -402,6 +406,27 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_characters_take_two_columns() {
+        let mut e = Editor::default();
+        e.handle(Key::Paste("日本語".into()));
+        // "› " is 2 columns, so at width 7 the third character wraps.
+        let l = e.layout(7);
+        assert_eq!(l.text, "› 日本\n語");
+        assert_eq!((l.cursor_row, l.cursor_col, l.end_row), (1, 2, 1));
+        e.handle(Key::Home);
+        e.handle(Key::Right);
+        e.handle(Key::Right);
+        let l = e.layout(7);
+        assert_eq!(
+            (l.cursor_row, l.cursor_col),
+            (1, 0),
+            "cursor on a wrapped character is on its row"
+        );
+        e.handle(Key::Paste("\tx".into()));
+        assert!(e.text().contains("    x"), "pasted tabs become spaces");
+    }
 
     #[test]
     fn ctrl_r_searches_history_newest_first() {
@@ -459,6 +484,10 @@ mod tests {
         e.set("plain");
         e.handle(Key::Ctrl('i'));
         assert_eq!(e.text(), "plain");
+        e.commands = ["café", "cafè"].map(String::from).into();
+        e.set("/ca");
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "/caf", "stops before characters that differ");
     }
 
     fn typed(e: &mut Editor, s: &str) {

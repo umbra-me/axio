@@ -37,6 +37,8 @@ pub struct Term {
     last_frame: Instant,
     frame: usize,
     tool: Option<(String, Value)>,
+    /// Where an Edit's old text began, read before it ran.
+    edit_at: Option<usize>,
     /// Summary of the model's current thinking, shown after the spinner.
     thought: String,
     /// The tool call the model is writing now.
@@ -69,6 +71,7 @@ impl Term {
             last_frame: Instant::now(),
             frame: 0,
             tool: None,
+            edit_at: None,
             writing: None,
             thought: String::new(),
             last: Shown::Nothing,
@@ -76,11 +79,7 @@ impl Term {
     }
 
     pub fn paint(&self, code: &str, s: &str) -> String {
-        if self.color {
-            format!("{code}{s}{RESET}")
-        } else {
-            s.to_string()
-        }
+        paint(self.color, code, s)
     }
 
     pub fn dim(&self, s: &str) -> String {
@@ -133,8 +132,8 @@ impl Term {
             String::new()
         };
         let width = term_width().saturating_sub(4);
-        let mut text: String = format!("{label}{time}").chars().take(width).collect();
-        let room = width.saturating_sub(text.chars().count() + 3);
+        let mut text = fit(&format!("{label}{time}"), width);
+        let room = width.saturating_sub(term::text_width(&text) + 3);
         if let Some(note) = latest_line(&self.thought, room) {
             text.push_str(&format!(" · {note}"));
         }
@@ -214,16 +213,25 @@ impl Term {
 /// Progress on a tool call whose input is still streaming.
 struct Writing {
     name: String,
-    json: String,
+    /// The start of the input, where the short fields named in the label
+    /// are; the rest is only counted, so a large file costs no rescans.
+    head: String,
+    bytes: usize,
+    fields: serde_json::Map<String, Value>,
     lines: usize,
     escaped: bool,
 }
+
+/// How much of a tool call's input to search for the label's fields.
+const LABEL_HEAD: usize = 4096;
 
 impl Writing {
     fn new(name: &str) -> Writing {
         Writing {
             name: name.to_string(),
-            json: String::new(),
+            head: String::new(),
+            bytes: 0,
+            fields: serde_json::Map::new(),
             lines: 0,
             escaped: false,
         }
@@ -238,26 +246,30 @@ impl Writing {
                 self.escaped = c == '\\';
             }
         }
-        self.json.push_str(part);
+        self.bytes += part.len();
+        if self.head.len() < LABEL_HEAD {
+            self.head.push_str(part);
+            for key in ["file_path", "command", "pattern", "url"] {
+                if !self.fields.contains_key(key)
+                    && let Some(v) = string_field(&self.head, key)
+                {
+                    self.fields.insert(key.into(), Value::String(v));
+                }
+            }
+        }
     }
 
     /// "Write src/main.rs · 212 lines", from what has arrived so far.
     fn label(&self, cwd: &Path) -> String {
-        let mut input = serde_json::Map::new();
-        for key in ["file_path", "command", "pattern", "url"] {
-            if let Some(v) = string_field(&self.json, key) {
-                input.insert(key.into(), Value::String(v));
-            }
-        }
-        let (title, detail) = tool_title(&self.name, &Value::Object(input), cwd);
+        let (title, detail) = tool_title(&self.name, &Value::Object(self.fields.clone()), cwd);
         let mut s = format!("writing {title}");
         if !detail.is_empty() {
             s.push_str(&format!(" {detail}"));
         }
         if self.lines > 0 {
             s.push_str(&format!(" · {} lines", self.lines + 1));
-        } else if self.json.len() >= 1024 {
-            s.push_str(&format!(" · {:.1} KB", self.json.len() as f64 / 1024.0));
+        } else if self.bytes >= 1024 {
+            s.push_str(&format!(" · {:.1} KB", self.bytes as f64 / 1024.0));
         }
         s
     }
@@ -285,21 +297,44 @@ fn string_field(json: &str, key: &str) -> Option<String> {
 }
 
 /// The newest line of `text`, without markdown emphasis, fitted to `room`
-/// characters by keeping its end.
+/// columns by keeping its end.
 fn latest_line(text: &str, room: usize) -> Option<String> {
     let line = text.lines().rev().map(str::trim).find(|l| !l.is_empty())?;
     let line = line.trim_start_matches('#').replace("**", "");
     let line = line.trim();
-    let n = line.chars().count();
     if room < 12 || line.is_empty() {
         return None;
     }
-    Some(if n <= room {
-        line.to_string()
-    } else {
-        let tail: String = line.chars().skip(n - (room - 1)).collect();
-        format!("…{tail}")
-    })
+    Some(fit_tail(line, room))
+}
+
+/// The start of `s` that fits in `cols` terminal columns.
+fn fit(s: &str, cols: usize) -> String {
+    let mut used = 0;
+    s.chars()
+        .take_while(|c| {
+            used += term::char_width(*c);
+            used <= cols
+        })
+        .collect()
+}
+
+/// `s`, or `…` and as much of its end as fits in `cols` columns.
+fn fit_tail(s: &str, cols: usize) -> String {
+    if term::text_width(s) <= cols {
+        return s.to_string();
+    }
+    let mut used = 1;
+    let mut tail: Vec<char> = s
+        .chars()
+        .rev()
+        .take_while(|c| {
+            used += term::char_width(*c);
+            used <= cols
+        })
+        .collect();
+    tail.reverse();
+    format!("…{}", tail.into_iter().collect::<String>())
 }
 
 /// Where a resumed session left off: the last prompt and the end of the
@@ -345,9 +380,10 @@ fn term_width() -> usize {
 }
 
 pub fn tokens(n: u64) -> String {
+    // Bands end where one decimal would round up into the next unit.
     match n {
         0..1_000 => n.to_string(),
-        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
+        1_000..999_950 => format!("{:.1}k", n as f64 / 1e3),
         _ => format!("{:.1}M", n as f64 / 1e6),
     }
 }
@@ -357,8 +393,12 @@ pub fn short_path(p: &str, cwd: &Path) -> String {
     let path = Path::new(p);
     match path.strip_prefix(cwd) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
-        _ => match std::env::var("HOME") {
-            Ok(home) if p.starts_with(&home) => format!("~{}", &p[home.len()..]),
+        _ => match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+            Some(home) if path.starts_with(&home) => match path.strip_prefix(&home) {
+                Ok(rest) if rest.as_os_str().is_empty() => "~".into(),
+                Ok(rest) => format!("~/{}", rest.display()),
+                Err(_) => p.to_string(),
+            },
             _ => p.to_string(),
         },
     }
@@ -418,22 +458,19 @@ pub fn tool_title(name: &str, input: &Value, cwd: &Path) -> (String, String) {
     (title, detail)
 }
 
-/// Result lines under a tool header, already coloured when `color` is set.
 /// Whole changed lines with their numbers and one line of context, found
 /// by locating `new_string` in the edited file.
-fn edit_diff(input: &Value, after: &str, color: bool) -> Option<Vec<String>> {
-    let paint = |code: &str, s: &str| {
-        if color {
-            format!("{code}{s}{RESET}")
-        } else {
-            s.to_string()
-        }
-    };
+/// `at` is where `old_string` began before the edit, when known; the new
+/// text starts there afterwards.
+fn edit_diff(input: &Value, after: &str, at: Option<usize>, color: bool) -> Option<Vec<String>> {
+    let paint = |code: &str, s: &str| paint(color, code, s);
     let (old, new) = (input["old_string"].as_str()?, input["new_string"].as_str()?);
     if new.is_empty() {
         return None;
     }
-    let start = after.find(new)?;
+    let start = at
+        .filter(|&i| after.get(i..).is_some_and(|rest| rest.starts_with(new)))
+        .or_else(|| after.find(new))?;
     let end = start + new.len();
     let line_start = after[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = after[end..].find('\n').map_or(after.len(), |i| end + i);
@@ -483,7 +520,8 @@ fn edit_diff(input: &Value, after: &str, color: bool) -> Option<Vec<String>> {
             ));
             break;
         }
-        if std::mem::take(&mut gap) {
+        // A gap marker only between shown lines, never above the first.
+        if std::mem::take(&mut gap) && !out.is_empty() {
             out.push(paint(DIM, &format!("{:>width$}   ⋮", "")));
         }
         let code = match sign {
@@ -551,21 +589,26 @@ fn line_diff(a: &[&str], b: &[&str]) -> Vec<Op> {
     ops
 }
 
+/// `s` in colour `code`, or plain when colour is off.
+fn paint(color: bool, code: &str, s: &str) -> String {
+    if color {
+        format!("{code}{s}{RESET}")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Result lines under a tool header, already coloured when `color` is set.
 pub fn tool_lines(
     name: &str,
     input: &Value,
     result: &Result<String, String>,
-    // For Edit: the file after the change, to number the lines.
-    after: Option<&str>,
+    // For Edit: the file after the change, to number the lines, and where
+    // the old text began.
+    after: Option<(&str, Option<usize>)>,
     color: bool,
 ) -> Vec<String> {
-    let paint = |code: &str, s: &str| {
-        if color {
-            format!("{code}{s}{RESET}")
-        } else {
-            s.to_string()
-        }
-    };
+    let paint = |code: &str, s: &str| paint(color, code, s);
     let text = match result {
         // A command's output is still output; only its status is the failure.
         Err(e) if name == "Bash" => {
@@ -608,7 +651,7 @@ pub fn tool_lines(
         "Edit" => {
             let numbered = after
                 .filter(|_| input["replace_all"] != true)
-                .and_then(|a| edit_diff(input, a, color));
+                .and_then(|(a, at)| edit_diff(input, a, at, color));
             if let Some(lines) = numbered {
                 return lines;
             }
@@ -629,11 +672,20 @@ pub fn tool_lines(
         }
         "TodoWrite" => text
             .lines()
-            .map(|l| match l.get(..3) {
-                Some("[x]") => paint(GREEN, &format!("✓ {}", &l[4..])),
-                Some("[>]") => paint(&format!("{BOLD}{YELLOW}"), &format!("▸ {}", &l[4..])),
-                Some("[ ]") => paint(DIM, &format!("○ {}", &l[4..])),
-                _ => paint(DIM, l),
+            .map(|l| {
+                let item = |mark: &str| {
+                    l.strip_prefix(mark)
+                        .map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
+                };
+                if let Some(rest) = item("[x]") {
+                    paint(GREEN, &format!("✓ {rest}"))
+                } else if let Some(rest) = item("[>]") {
+                    paint(&format!("{BOLD}{YELLOW}"), &format!("▸ {rest}"))
+                } else if let Some(rest) = item("[ ]") {
+                    paint(DIM, &format!("○ {rest}"))
+                } else {
+                    paint(DIM, l)
+                }
             })
             .collect(),
         "Grep" | "Glob" => {
@@ -715,6 +767,12 @@ impl Ui for Term {
                 format!(" {}", self.dim(&detail))
             }
         );
+        self.edit_at = (name == "Edit")
+            .then(|| {
+                let file = std::fs::read_to_string(input["file_path"].as_str()?).ok()?;
+                file.find(input["old_string"].as_str()?)
+            })
+            .flatten();
         self.tool = Some((name.to_string(), input.clone()));
         let label = if detail.is_empty() {
             title
@@ -734,7 +792,9 @@ impl Ui for Term {
                     .and_then(|p| std::fs::read_to_string(p).ok())
             })
             .flatten();
-        for line in tool_lines(&name, &input, result, after.as_deref(), self.color) {
+        let at = self.edit_at.take();
+        let view = after.as_deref().map(|a| (a, at));
+        for line in tool_lines(&name, &input, result, view, self.color) {
             eprintln!("  {line}");
         }
     }
@@ -793,6 +853,34 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn review_fixes_for_small_helpers() {
+        assert_eq!(tokens(999_949), "999.9k");
+        assert_eq!(tokens(999_960), "1.0M");
+        assert_eq!(
+            tool_lines(
+                "TodoWrite",
+                &json!({}),
+                &Ok("[x]\n[x]é\n[>] go".into()),
+                None,
+                false
+            ),
+            ["✓ ", "✓ é", "▸ go"],
+            "short or unusual lines do not panic"
+        );
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = home.to_string_lossy().trim_end_matches('/').to_string();
+            assert_eq!(
+                short_path(&format!("{home}x/notes.md"), Path::new("/nowhere")),
+                format!("{home}x/notes.md")
+            );
+            assert_eq!(
+                short_path(&format!("{home}/a.md"), Path::new("/nowhere")),
+                "~/a.md"
+            );
+        }
+    }
+
+    #[test]
     fn titles_are_short_and_relative() {
         let cwd = Path::new("/work/proj");
         assert_eq!(
@@ -816,6 +904,30 @@ mod tests {
             "cd /work/proj/sub && make"
         );
         assert_eq!(bash("cd /work/proj"), "cd /work/proj");
+    }
+
+    #[test]
+    fn large_tool_input_is_not_rescanned() {
+        let mut w = Writing::new("Write");
+        w.push(r#"{"file_path": "/w/big.txt", "content": ""#);
+        let chunk = "x".repeat(1000) + "\\n";
+        let started = Instant::now();
+        for _ in 0..20_000 {
+            w.push(&chunk);
+            w.label(Path::new("/w"));
+        }
+        assert!(
+            w.head.len() < LABEL_HEAD + chunk.len(),
+            "only the head is kept"
+        );
+        assert_eq!(
+            w.label(Path::new("/w")),
+            "writing Write big.txt · 20001 lines"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "20 MB in small pieces stays cheap"
+        );
     }
 
     #[test]
@@ -863,6 +975,13 @@ mod tests {
     }
 
     #[test]
+    fn fitting_counts_columns_not_characters() {
+        assert_eq!(fit("日本語abc", 5), "日本");
+        assert_eq!(fit_tail("abc日本語", 5), "…本語");
+        assert_eq!(fit_tail("short", 5), "short");
+    }
+
+    #[test]
     fn thinking_note_keeps_the_newest_words() {
         assert_eq!(
             latest_line("**Planning**\n\nChecking the compiler", 40).as_deref(),
@@ -889,7 +1008,7 @@ mod tests {
             "new_string": "def f(n=1):\n    \"\"\"Doc.\n\n    More.\n    \"\"\"\n    return n"
         });
         assert_eq!(
-            tool_lines("Edit", &input, &Ok("ok".into()), Some(after), false),
+            tool_lines("Edit", &input, &Ok("ok".into()), Some((after, None)), false),
             [
                 "1   x",
                 "2 - def f():",
@@ -904,11 +1023,39 @@ mod tests {
     }
 
     #[test]
+    fn no_gap_marker_above_the_first_line() {
+        let after = "a\n\nb\nc\nD\n";
+        let input = json!({"old_string": "b\nc\nd", "new_string": "b\nc\nD"});
+        assert_eq!(
+            tool_lines("Edit", &input, &Ok("ok".into()), Some((after, None)), false),
+            ["4   c", "5 - d", "5 + D"]
+        );
+    }
+
+    #[test]
+    fn edit_diff_anchors_where_the_edit_happened() {
+        // `}` also closes the earlier block; the edit was the second one.
+        let after = "fn a() {\n}\nfn b() {\n}\n";
+        let input = json!({"old_string": "    todo!();\n}", "new_string": "}"});
+        let at = Some("fn a() {\n}\nfn b() {\n".len());
+        assert_eq!(
+            tool_lines("Edit", &input, &Ok("ok".into()), Some((after, at)), false),
+            ["3   fn b() {", "4 -     todo!();", "4   }"]
+        );
+    }
+
+    #[test]
     fn edits_show_numbered_lines_with_context() {
         let after = "fn main() {\n    let x = 2;\n    println!(\"{x}\");\n}\n";
         let input = json!({"old_string": "1", "new_string": "2"});
         assert_eq!(
-            tool_lines("Edit", &input, &Ok("edited".into()), Some(after), false),
+            tool_lines(
+                "Edit",
+                &input,
+                &Ok("edited".into()),
+                Some((after, None)),
+                false
+            ),
             [
                 "1   fn main() {",
                 "2 -     let x = 1;",
@@ -919,7 +1066,13 @@ mod tests {
         let added = json!({"old_string": "}", "new_string": "    done();\n}"});
         let after = "fn f() {\n    done();\n}";
         assert_eq!(
-            tool_lines("Edit", &added, &Ok("edited".into()), Some(after), false),
+            tool_lines(
+                "Edit",
+                &added,
+                &Ok("edited".into()),
+                Some((after, None)),
+                false
+            ),
             ["1   fn f() {", "2 +     done();", "3   }"]
         );
     }
