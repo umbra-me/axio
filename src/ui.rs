@@ -341,8 +341,7 @@ pub fn recap(messages: &[crate::message::Message]) -> Vec<String> {
 }
 
 fn term_width() -> usize {
-    static WIDTH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *WIDTH.get_or_init(term::width)
+    term::width()
 }
 
 pub fn tokens(n: u64) -> String {
