@@ -108,6 +108,8 @@ impl Reply {
 pub enum Delta<'a> {
     Text(&'a str),
     Thinking,
+    /// Readable summary text of the model's thinking, as it streams.
+    ThinkingText(&'a str),
     /// A tool call started; its name.
     ToolCall(&'a str),
     /// A piece of the tool call's JSON input as it streams.

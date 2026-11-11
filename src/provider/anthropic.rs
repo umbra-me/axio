@@ -52,7 +52,29 @@ fn body(req: &Request) -> Value {
     if let Some(effort) = req.effort {
         body["output_config"] = json!({ "effort": effort });
     }
+    if summarizes_thinking(&req.model.id) {
+        // Summaries cost nothing extra and let the interface show progress;
+        // without them current models stream thinking as empty text.
+        body["thinking"] = json!({"type": "adaptive", "display": "summarized"});
+    }
     body
+}
+
+/// Models that take adaptive thinking with a display setting.
+fn summarizes_thinking(id: &str) -> bool {
+    [
+        "fable",
+        "mythos",
+        "opus-5",
+        "sonnet-5",
+        "haiku-5",
+        "opus-4-6",
+        "opus-4-7",
+        "opus-4-8",
+        "sonnet-4-6",
+    ]
+    .iter()
+    .any(|m| id.contains(m))
 }
 
 fn message(m: &Message) -> Value {
@@ -160,7 +182,10 @@ pub(crate) fn parse_stream<R: BufRead>(
                         on(Delta::ToolInput(part));
                     }
                     Some(Building::Opaque(v)) => match d["type"].as_str() {
-                        Some("thinking_delta") => append(v, "thinking", &d["thinking"]),
+                        Some("thinking_delta") => {
+                            on(Delta::ThinkingText(d["thinking"].as_str().unwrap_or("")));
+                            append(v, "thinking", &d["thinking"])
+                        }
                         Some("signature_delta") => append(v, "signature", &d["signature"]),
                         _ => {}
                     },
@@ -303,6 +328,8 @@ data: {"type":"message_stop"}
 
     #[test]
     fn effort_reaches_the_body() {
+        assert!(summarizes_thinking("claude-opus-5-5"));
+        assert!(!summarizes_thinking("claude-haiku-4-5"));
         super::super::with_request(false, |r| {
             assert!(body(r).get("output_config").is_none());
             let b = body(&Request {

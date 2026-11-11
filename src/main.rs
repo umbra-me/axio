@@ -63,8 +63,9 @@ Options:
   -h, --help            Show this help
   -V, --version         Show the version
 
-Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Up/Down
-walk history, Esc or Ctrl-C stops a running turn, Ctrl-D exits.
+Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
+completes a /command, Up/Down walk history, Esc or Ctrl-C stops a running
+turn, Ctrl-D exits.
 Commands: /new, /compact, /model <model>, /effort <level>, /session, /help,
 /quit, plus your own
 
@@ -400,6 +401,10 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
             .ok_or_else(|| format!("unknown command /{name}; /help lists them")),
     )
 }
+
+const BUILTIN_COMMANDS: [&str; 9] = [
+    "new", "model", "effort", "compact", "profile", "session", "help", "quit", "exit",
+];
 
 fn help(lib: &skills::Library) -> String {
     let mut rows: Vec<(String, String)> = [
@@ -796,6 +801,18 @@ fn run() -> Result<ExitCode, String> {
     );
     let mut editor = editor::Editor::default();
     editor.history = load_history();
+    editor.commands = BUILTIN_COMMANDS
+        .iter()
+        .map(|c| c.to_string())
+        .chain(library.commands.iter().map(|c| c.name.clone()))
+        .chain(
+            library
+                .skills
+                .iter()
+                .filter(|k| k.invocable)
+                .map(|k| k.name.clone()),
+        )
+        .collect();
     loop {
         if prompt.is_empty() {
             println!();

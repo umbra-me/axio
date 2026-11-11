@@ -24,6 +24,8 @@ pub struct Editor {
     pub history: Vec<String>,
     browsing: Option<usize>,
     draft: String,
+    /// Slash command names, without the slash, for Tab completion.
+    pub commands: Vec<String>,
 }
 
 impl Editor {
@@ -116,8 +118,43 @@ impl Editor {
         self.set(&text);
     }
 
+    /// Completes a slash command name at the end of the line: the whole
+    /// name when one matches, else the part all matches share.
+    fn complete(&mut self) {
+        let text = self.text();
+        let Some(prefix) = text.strip_prefix('/') else {
+            return;
+        };
+        if self.cursor != self.buf.len() || prefix.contains(char::is_whitespace) {
+            return;
+        }
+        let matches: Vec<&String> = self
+            .commands
+            .iter()
+            .filter(|c| c.starts_with(prefix))
+            .collect();
+        match matches.as_slice() {
+            [] => {}
+            [one] => self.set(&format!("/{one} ")),
+            [first, rest @ ..] => {
+                let mut common = first.len();
+                for m in rest {
+                    common = common.min(
+                        first
+                            .bytes()
+                            .zip(m.bytes())
+                            .take_while(|(a, b)| a == b)
+                            .count(),
+                    );
+                }
+                self.set(&format!("/{}", &first[..common]));
+            }
+        }
+    }
+
     pub fn handle(&mut self, key: Key) -> Outcome {
         match key {
+            Key::Ctrl('i') => self.complete(),
             Key::Char(c) => self.insert(&c.to_string()),
             Key::Paste(s) => self.insert(&s),
             Key::AltEnter => self.insert("\n"),
@@ -260,6 +297,26 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_completes_slash_commands() {
+        let mut e = Editor {
+            commands: ["compact", "commit", "help"].map(String::from).into(),
+            ..Editor::default()
+        };
+        e.handle(Key::Paste("/h".into()));
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "/help ");
+        e.set("/co");
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "/com");
+        e.handle(Key::Char('p'));
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "/compact ");
+        e.set("plain");
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "plain");
+    }
 
     fn typed(e: &mut Editor, s: &str) {
         for c in s.chars() {

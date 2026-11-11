@@ -172,8 +172,11 @@ fn block(trimmed: &str) -> (String, usize, &'static str) {
 /// Whether every inline span in `s` is closed, so it can render alone.
 fn balanced(s: &str) -> bool {
     let even = |c: char| s.matches(c).count().is_multiple_of(2);
+    let doubles = s.matches("**").count();
+    let singles = s.matches('*').count() - 2 * doubles;
     even('`')
-        && even('*')
+        && doubles.is_multiple_of(2)
+        && singles.is_multiple_of(2)
         && s.matches('[').count() == s.matches(']').count()
         && s.matches('(').count() == s.matches(')').count()
 }
@@ -286,6 +289,13 @@ mod tests {
         );
         assert_eq!(inline("snake_case_name"), "snake_case_name");
         assert_eq!(inline("unclosed `tick"), "unclosed `tick");
+    }
+
+    #[test]
+    fn holds_bold_until_it_closes() {
+        let mut md = Markdown::new(true);
+        assert_eq!(md.push("The two are **191 "), "The two are ");
+        assert_eq!(md.push("and 353**: done"), "\x1b[1m191 and 353\x1b[22m: ");
     }
 
     #[test]
