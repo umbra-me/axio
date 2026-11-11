@@ -26,7 +26,7 @@ pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, Strin
         &headers,
         &body(req),
     )?;
-    parse_stream(reader, on)
+    parse_stream(reader, req, on)
 }
 
 fn body(req: &Request) -> Value {
@@ -62,7 +62,12 @@ fn push_message(out: &mut Vec<Value>, m: &Message) {
             let mut text = String::new();
             for b in content {
                 match b {
-                    Block::Text { text: t } => text.push_str(t),
+                    Block::Text { text: t } => {
+                        if !text.is_empty() {
+                            text.push_str("\n\n");
+                        }
+                        text.push_str(t)
+                    }
                     Block::ToolResult { id, output, .. } => out.push(json!({
                         "role": "tool", "tool_call_id": id, "content": output,
                     })),
@@ -107,13 +112,18 @@ struct Call {
     args: String,
 }
 
-fn parse_stream<R: BufRead>(reader: R, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
+fn parse_stream<R: BufRead>(
+    reader: R,
+    req: &Request,
+    on: &mut dyn FnMut(Delta),
+) -> Result<Reply, String> {
     let mut text = String::new();
     let mut calls: Vec<Call> = Vec::new();
     let mut stop = None;
     let mut usage = Usage::default();
 
     sse::read(reader, |data| {
+        req.check()?;
         if data == "[DONE]" {
             return Ok(false);
         }
@@ -204,7 +214,9 @@ data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}
 data: [DONE]
 
 "#;
-        let reply = parse_stream(stream.as_bytes(), &mut |_| {}).unwrap();
+        let reply =
+            super::super::with_request(false, |r| parse_stream(stream.as_bytes(), r, &mut |_| {}))
+                .unwrap();
         assert_eq!(reply.stop, Stop::ToolUse);
         assert_eq!(reply.usage.output, 3);
         assert_eq!(

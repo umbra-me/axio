@@ -8,6 +8,7 @@ const MAX_LINES: usize = 2000;
 const MAX_BYTES: usize = 50 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
+#[derive(Clone)]
 pub struct ToolSpec {
     pub name: &'static str,
     pub description: &'static str,
@@ -73,8 +74,17 @@ pub fn specs() -> Vec<ToolSpec> {
     ]
 }
 
+/// Ends the output of a command the user stopped.
+pub const STOPPED: &str = "[stopped by the user]";
+
 /// Runs a tool call. `Err` becomes an error result the model sees.
-pub fn run(name: &str, input: &Value, cwd: &Path) -> Result<String, String> {
+/// `stop` is polled while a command runs.
+pub fn run(
+    name: &str,
+    input: &Value,
+    cwd: &Path,
+    stop: &mut dyn FnMut() -> bool,
+) -> Result<String, String> {
     if let Value::String(raw) = input {
         return Err(format!("tool input was not valid JSON: {raw}"));
     }
@@ -82,7 +92,7 @@ pub fn run(name: &str, input: &Value, cwd: &Path) -> Result<String, String> {
         "read" => read(cwd, input),
         "write" => write(cwd, input),
         "edit" => edit(cwd, input),
-        "bash" => bash(cwd, input),
+        "bash" => bash(cwd, input, stop),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -179,7 +189,7 @@ fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
     }
 }
 
-fn bash(cwd: &Path, input: &Value) -> Result<String, String> {
+fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<String, String> {
     let command = str_arg(input, "command")?;
     let timeout = Duration::from_secs(input["timeout"].as_u64().unwrap_or(DEFAULT_TIMEOUT_SECS));
     let mut cmd = Command::new("bash");
@@ -219,6 +229,7 @@ fn bash(cwd: &Path, input: &Value) -> Result<String, String> {
     let started = Instant::now();
     let mut out = Vec::new();
     let mut timed_out = false;
+    let mut stopped = false;
     let status = loop {
         while let Ok(chunk) = rx.try_recv() {
             out.extend_from_slice(&chunk);
@@ -226,8 +237,9 @@ fn bash(cwd: &Path, input: &Value) -> Result<String, String> {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break Some(status);
         }
-        if started.elapsed() >= timeout {
-            timed_out = true;
+        if started.elapsed() >= timeout || stop() {
+            timed_out = started.elapsed() >= timeout;
+            stopped = !timed_out;
             kill(&mut child);
             break child.wait().ok();
         }
@@ -240,6 +252,9 @@ fn bash(cwd: &Path, input: &Value) -> Result<String, String> {
     }
 
     let mut text = tail(&String::from_utf8_lossy(&out));
+    if stopped {
+        return Err(format!("{text}\n{STOPPED}"));
+    }
     if timed_out {
         text.push_str(&format!("\n[killed after {}s]", timeout.as_secs()));
         return Err(text);
@@ -308,24 +323,28 @@ mod tests {
             "write",
             &json!({"path": "a/b.txt", "content": "one\ntwo\ntwo\n"}),
             &dir,
+            &mut || false,
         )
         .unwrap();
         let dup = run(
             "edit",
             &json!({"path": "a/b.txt", "old_text": "two", "new_text": "2"}),
             &dir,
+            &mut || false,
         );
         assert!(dup.unwrap_err().contains("matches 2 times"));
         run(
             "edit",
             &json!({"path": "a/b.txt", "old_text": "one\n", "new_text": "1\n"}),
             &dir,
+            &mut || false,
         )
         .unwrap();
         let out = run(
             "read",
             &json!({"path": "a/b.txt", "offset": 2, "limit": 1}),
             &dir,
+            &mut || false,
         )
         .unwrap();
         assert_eq!(
@@ -339,14 +358,19 @@ mod tests {
     fn bash_reports_exit_codes_and_timeouts() {
         let dir = tmp();
         assert_eq!(
-            run("bash", &json!({"command": "echo hi; echo err >&2"}), &dir)
-                .unwrap()
-                .lines()
-                .count(),
+            run(
+                "bash",
+                &json!({"command": "echo hi; echo err >&2"}),
+                &dir,
+                &mut || false
+            )
+            .unwrap()
+            .lines()
+            .count(),
             2
         );
         assert!(
-            run("bash", &json!({"command": "exit 3"}), &dir)
+            run("bash", &json!({"command": "exit 3"}), &dir, &mut || false)
                 .unwrap_err()
                 .ends_with("[exit code 3]")
         );
@@ -355,6 +379,7 @@ mod tests {
             "bash",
             &json!({"command": "sleep 5 | cat", "timeout": 1}),
             &dir,
+            &mut || false,
         )
         .unwrap_err();
         assert!(err.contains("killed after 1s"));
@@ -363,8 +388,36 @@ mod tests {
     }
 
     #[test]
+    fn bash_stops_when_asked() {
+        let dir = tmp();
+        let started = Instant::now();
+        let mut polls = 0;
+        let err = run(
+            "bash",
+            &json!({"command": "echo begun; sleep 5"}),
+            &dir,
+            &mut || {
+                polls += 1;
+                polls > 20
+            },
+        )
+        .unwrap_err();
+        assert!(err.ends_with(STOPPED), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn rejects_unparsed_input() {
-        assert!(run("read", &Value::String("{\"pa".into()), Path::new(".")).is_err());
+        assert!(
+            run(
+                "read",
+                &Value::String("{\"pa".into()),
+                Path::new("."),
+                &mut || false
+            )
+            .is_err()
+        );
     }
 
     #[test]

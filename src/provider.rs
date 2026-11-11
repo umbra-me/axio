@@ -1,6 +1,7 @@
 use crate::message::{Block, Message};
 use crate::tools::ToolSpec;
 use std::io::{BufReader, Read};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod anthropic;
 pub mod openai;
@@ -40,6 +41,20 @@ impl Model {
     }
 }
 
+impl Model {
+    /// The model's context window in tokens; AXIO_CONTEXT_WINDOW overrides it.
+    pub fn context_window(&self) -> u64 {
+        if let Some(n) = env("AXIO_CONTEXT_WINDOW").and_then(|v| v.parse().ok()) {
+            return n;
+        }
+        match self.id.as_str() {
+            id if id.starts_with("claude-haiku-4") || id.starts_with("claude-3") => 200_000,
+            id if id.starts_with("claude-") => 1_000_000,
+            _ => 128_000,
+        }
+    }
+}
+
 impl std::fmt::Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.provider, self.id)
@@ -60,6 +75,14 @@ pub struct Usage {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+impl Usage {
+    /// Tokens the next request starts from: everything sent plus this reply.
+    pub fn context(&self) -> u64 {
+        self.input + self.cache_read + self.cache_write + self.output
+    }
 }
 
 #[derive(Debug)]
@@ -94,6 +117,18 @@ pub struct Request<'a> {
     pub messages: &'a [Message],
     pub tools: &'a [ToolSpec],
     pub effort: Option<&'a str>,
+    /// Set when the user stops the turn; streams check it between events.
+    pub cancel: &'a AtomicBool,
+}
+
+impl Request<'_> {
+    pub(crate) fn check(&self) -> Result<(), String> {
+        if self.cancel.load(Ordering::Relaxed) {
+            Err(crate::agent::ABORTED.into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
@@ -138,6 +173,20 @@ pub(crate) fn post_stream(
 }
 
 #[cfg(test)]
+pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) -> T {
+    let model = Model::parse("claude-test");
+    let cancel = AtomicBool::new(cancelled);
+    f(&Request {
+        model: &model,
+        system: "",
+        messages: &[],
+        tools: &[],
+        effort: None,
+        cancel: &cancel,
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -151,5 +200,8 @@ mod tests {
         );
         assert_eq!(Model::parse("gpt-6").provider, "openai");
         assert_eq!(Model::parse(DEFAULT_MODEL).id, "claude-opus-5-5");
+        assert_eq!(Model::parse(DEFAULT_MODEL).context_window(), 1_000_000);
+        assert_eq!(Model::parse("claude-haiku-4-5").context_window(), 200_000);
+        assert_eq!(Model::parse("openai/gpt-x").context_window(), 128_000);
     }
 }
