@@ -31,6 +31,7 @@ cargo test --locked
 
 - `src/main.rs`: arguments, terminal output, interactive loop
 - `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor
+- `src/import.rs`, `src/toml_lite.rs`: offers from other harnesses, and the TOML subset they need
 - `src/plugin_cli.rs`: `axio plugin install | list | update | remove`
 - `src/profile.rs`, `src/plugins.rs`: profiles and plugin folders
 - `src/search.rs`, `src/plan.rs`, `src/background.rs`: the built-in modules
