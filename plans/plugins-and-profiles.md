@@ -175,8 +175,9 @@ Turn this off any time: "importFromOtherHarnesses": "off" in ~/.axio/agent/setti
   changed items. `axio import` reopens it (built as a subcommand, because the
   prompt runs before the terminal editor starts). `-p` mode never prompts and uses only
   what was already accepted.
-- The setting `"importFromOtherHarnesses"` is `"ask"` by default, or `"off"`;
-  `--no-import` turns it off for one run.
+- The setting `"importFromOtherHarnesses"` is `"off"` by default (owner,
+  2026-11-12): `axio import` runs the review and sets it to `"ask"` once
+  something is accepted. `--no-import` turns it off for one run.
 - Codex and Grok keep MCP servers in TOML. Built with a small reader for the
   subset these files use (`src/toml_lite.rs`), so no dependency was added.
 

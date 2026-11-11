@@ -69,16 +69,7 @@ pub fn canonical(name: &str) -> &str {
 pub fn set_default(home: &Path, name: &str) -> Result<String, String> {
     let name = canonical(name);
     load(home, name)?;
-    let path = home.join("settings.json");
-    let mut doc: serde_json::Map<String, Value> = match std::fs::read_to_string(&path) {
-        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display()))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    doc.insert("profile".into(), Value::String(name.into()));
-    std::fs::create_dir_all(home).map_err(|e| e.to_string())?;
-    std::fs::write(&path, format!("{:#}\n", Value::Object(doc)))
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::settings::set(home, "profile", Value::String(name.into()))?;
     Ok(name.to_string())
 }
 

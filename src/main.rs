@@ -38,7 +38,7 @@ const USAGE: &str = "axio: a minimal coding agent
 
 Usage: axio [options] [prompt...]
        axio plugin install|list|update|remove ...
-       axio import   (review what other harnesses offer again)
+       axio import   (use hooks, plugins and MCP servers from other harnesses)
        axio mcp list | login <name> | logout <name>
        axio auth list | set <provider> [field] | remove <provider>
        axio profile [name]   (show or set the default profile)
@@ -673,8 +673,22 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode, String> {
     let all: Vec<String> = std::env::args().skip(1).collect();
     if all.first().is_some_and(|a| a == "import") {
-        let accepted = imports(&context::home(), true, true)?;
-        println!("{} item(s) from other harnesses in use", accepted.len());
+        let home = context::home();
+        let accepted = imports(&home, true, true)?;
+        // Scanning is off until the user opts in; accepting something
+        // turns it on so those items load and new ones are offered.
+        if !accepted.is_empty() {
+            settings::set(&home, "importFromOtherHarnesses", serde_json::json!("ask"))?;
+        }
+        println!(
+            "{} item(s) from other harnesses in use{}",
+            accepted.len(),
+            if accepted.is_empty() {
+                ""
+            } else {
+                "; axio now checks for new ones at start"
+            }
+        );
         return Ok(ExitCode::SUCCESS);
     }
     if all.first().is_some_and(|a| a == "profile") {
@@ -737,7 +751,8 @@ fn run() -> Result<ExitCode, String> {
         .or(config.profile.clone())
         .unwrap_or_else(|| profile::DEFAULT.into());
     let profile = profile::load(&home, &profile_name)?;
-    let imported = if args.no_import || config.import_from_other_harnesses.as_deref() == Some("off")
+    // Off unless the user opted in with `axio import` or the setting.
+    let imported = if args.no_import || config.import_from_other_harnesses.as_deref() != Some("ask")
     {
         Vec::new()
     } else {
