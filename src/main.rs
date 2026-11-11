@@ -1,4 +1,5 @@
 mod agent;
+mod auth;
 mod background;
 mod compact;
 mod context;
@@ -39,6 +40,7 @@ Usage: axio [options] [prompt...]
        axio plugin install|list|update|remove ...
        axio import   (review what other harnesses offer again)
        axio mcp list | login <name> | logout <name>
+       axio auth list | set <provider> [field] | remove <provider>
 
 Options:
   -p, --print           Answer one prompt (argument or stdin) and exit
@@ -60,9 +62,10 @@ Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Up/Down
 walk history, Esc or Ctrl-C stops a running turn, Ctrl-D exits.
 Commands: /new, /compact, /model <model>, /session, /help, /quit, plus your own
 
-Credentials come from the environment: ANTHROPIC_API_KEY or
-ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY. Any other provider
-name reads <NAME>_BASE_URL and <NAME>_API_KEY.";
+Credentials come from the environment (ANTHROPIC_API_KEY or
+ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY, <NAME>_BASE_URL and
+<NAME>_API_KEY for other providers) or from ~/.axio/agent/auth.json, which
+`axio auth set <provider>` writes.";
 
 #[derive(Default)]
 struct Args {
@@ -668,6 +671,10 @@ fn run() -> Result<ExitCode, String> {
     if all.first().is_some_and(|a| a == "import") {
         let accepted = imports(&context::home(), true, true)?;
         println!("{} item(s) from other harnesses in use", accepted.len());
+        return Ok(ExitCode::SUCCESS);
+    }
+    if all.first().is_some_and(|a| a == "auth") {
+        auth::main(&all[1..], &context::home())?;
         return Ok(ExitCode::SUCCESS);
     }
     if all.first().is_some_and(|a| a == "plugin") {

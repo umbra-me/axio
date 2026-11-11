@@ -1,28 +1,25 @@
 //! OAuth sign-in for remote MCP servers, as the MCP authorization spec
 //! describes: discover the authorization server from the 401, register as a
 //! client, sign in through the browser with PKCE, and keep the token fresh.
-//! Tokens live in `~/.axio/agent/mcp-auth.json`, readable only by the user.
+//! Tokens live in the `mcp` section of `~/.axio/agent/auth.json`.
 
 use crate::crypto::{base64url, random, sha256};
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PROTOCOL: &str = "2025-06-18";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
-static STORE: OnceLock<PathBuf> = OnceLock::new();
-
-/// Where tokens are kept; set once at startup.
+/// Where tokens are kept: the `mcp` section of `auth.json`.
 pub fn set_home(home: &Path) {
-    let _ = STORE.set(home.join("mcp-auth.json"));
+    crate::auth::set_home(home);
 }
 
 fn store_path() -> Option<&'static PathBuf> {
-    STORE.get()
+    crate::auth::path()
 }
 
 fn now() -> u64 {
@@ -40,32 +37,11 @@ fn agent() -> ureq::Agent {
 }
 
 fn load(path: &Path) -> Map<String, Value> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+    crate::auth::section(path, "mcp")
 }
 
 fn save(path: &Path, all: &Map<String, Value>) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut f = options
-        .open(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    }
-    writeln!(f, "{:#}", Value::Object(all.clone())).map_err(|e| e.to_string())
+    crate::auth::set_section(path, "mcp", all.clone())
 }
 
 fn encode(s: &str) -> String {
@@ -598,7 +574,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(home.join("mcp-auth.json"))
+            let mode = std::fs::metadata(home.join("auth.json"))
                 .unwrap()
                 .permissions()
                 .mode();
@@ -611,7 +587,7 @@ mod tests {
             after.call("mcp__remote__whoami", &json!({}), &mut || false),
             Ok("signed in".into())
         );
-        let stored = load(&home.join("mcp-auth.json"));
+        let stored = load(&home.join("auth.json"));
         assert_eq!(
             stored[&url]["access_token"], "at2",
             "the expired token was refreshed"

@@ -4,7 +4,7 @@ A minimal, fast coding agent. One small Rust binary, no runtime, no daemon.
 
 ```sh
 cargo install --git https://github.com/umbra-me/axio --locked   # or: cargo install --path . --locked
-export ANTHROPIC_API_KEY=...
+axio auth set anthropic     # or export ANTHROPIC_API_KEY=...
 axio                      # interactive
 axio -p "explain src/"    # one answer, then exit
 git diff | axio -p "review this"
@@ -67,6 +67,19 @@ other harness carry over; answers are kept in `~/.axio/agent/imports.json`.
 `axio import` reviews everything again, `--no-import` skips it for one run,
 and `"importFromOtherHarnesses": "off"` in settings turns it off. Codex and
 Grok keep MCP servers in TOML, which axio reads with a small built-in reader.
+
+## Keys
+
+`~/.axio/agent/auth.json` (readable only by you) holds provider keys and MCP
+sign-in tokens; environment variables win when both are set.
+
+```sh
+axio auth set anthropic             # prompts without echo; or pipe the key in
+axio auth set openrouter
+axio auth set local baseUrl         # an OpenAI-compatible server, used as local/<model>
+axio auth list                      # names and the last four characters only
+axio auth remove openrouter
+```
 
 ## Settings and trust
 
@@ -158,7 +171,7 @@ axio mcp logout tracker
 
 Sign-in follows the MCP authorization spec (protected-resource discovery,
 dynamic client registration, PKCE, resource indicators). Tokens are kept in
-`~/.axio/agent/mcp-auth.json`, readable only by you. The older SSE transport
+the `mcp` section of `~/.axio/agent/auth.json`. The older SSE transport
 is skipped.
 
 ## Keys
