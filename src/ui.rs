@@ -650,6 +650,7 @@ pub fn tool_lines(
     let count = |s: &str| s.lines().count();
     let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
     match name {
+        "Read" if text.starts_with("[image") => vec![paint(DIM, "looked at the image")],
         "Read" => vec![paint(DIM, &format!("read {}", plural(count(text), "line")))],
         "Write" => vec![paint(
             DIM,

@@ -423,8 +423,10 @@ impl Agent {
             let mut results = Vec::new();
             let mut stopped = false;
             let mut hook_stop: Option<String> = None;
+            let mut images = Vec::new();
             for (id, name, input) in calls {
                 stopped = stopped || ui.interrupted();
+                let input_path = input["file_path"].as_str().map(String::from);
                 // A reply cut off at max_tokens can end inside a tool call.
                 let result = if stopped {
                     Err("not run: the user stopped the turn".into())
@@ -442,12 +444,23 @@ impl Agent {
                     Ok(o) => (o, false),
                     Err(e) => (e, true),
                 };
+                if name == "Read" && !is_error && output.starts_with("[image") {
+                    let path = input_path.as_deref().unwrap_or_default();
+                    match crate::context::image_block(&tools::resolve(&self.cwd, path)) {
+                        Ok((block, _)) => images.push(block),
+                        Err(e) => images.push(Block::Text {
+                            text: format!("[{path}: {e}]"),
+                        }),
+                    }
+                }
                 results.push(Block::ToolResult {
                     id,
                     output,
                     is_error,
                 });
             }
+            // Images a Read returned follow the results they belong to.
+            results.append(&mut images);
             self.push(Message::User { content: results })?;
             if stopped {
                 return Err(ABORTED.into());
@@ -837,6 +850,47 @@ mod tests {
         a.start("startup", &mut Log::default()).unwrap();
         a.prompt("hello", &mut Log::default()).unwrap();
         assert_eq!(a.messages[0].text(), "branch: mainhelloit is Tuesday");
+    }
+
+    #[test]
+    fn reading_an_image_shows_it_to_the_model() {
+        let dir = std::env::temp_dir().join(format!("axio-read-image-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shot.png"), b"\x89PNG").unwrap();
+        let turn = Mutex::new(0);
+        let mut agent = agent(move |_, _| {
+            let mut t = turn.lock().unwrap();
+            *t += 1;
+            match *t {
+                1 => reply(
+                    vec![Block::ToolCall {
+                        id: "1".into(),
+                        name: "Read".into(),
+                        input: json!({"file_path": "shot.png"}),
+                    }],
+                    Stop::ToolUse,
+                    1,
+                ),
+                _ => reply(vec![Block::Text { text: "red".into() }], Stop::EndTurn, 1),
+            }
+        });
+        agent.cwd = dir.clone();
+        agent.prompt("look", &mut Log::default()).unwrap();
+        let Message::User { content } = &agent.messages[2] else {
+            panic!()
+        };
+        assert!(
+            matches!(&content[0], Block::ToolResult { output, is_error: false, .. } if output.starts_with("[image, 1 KB"))
+        );
+        assert_eq!(
+            content[1],
+            Block::Image {
+                media_type: "image/png".into(),
+                data: "iVBORw==".into()
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

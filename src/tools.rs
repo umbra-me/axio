@@ -102,7 +102,7 @@ pub fn specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "Read".into(),
-            description: "Read a text file. Output is cut at 2000 lines or 50KB; use offset and limit to page through larger files.".into(),
+            description: "Read a text file, or look at an image (PNG, JPEG, GIF or WebP). Text is cut at 2000 lines or 50KB; use offset and limit to page through larger files.".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -199,7 +199,23 @@ pub(crate) fn resolve(cwd: &Path, path: &str) -> PathBuf {
 
 fn read(cwd: &Path, input: &Value) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "file_path")?);
+    if crate::context::image_type(&path).is_some() {
+        // The agent attaches the image itself after the tool results.
+        let kb = std::fs::metadata(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            .len()
+            .div_ceil(1024);
+        return Ok(format!(
+            "[image, {kb} KB: shown to you after the tool results]"
+        ));
+    }
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes[..bytes.len().min(8192)].contains(&0) {
+        return Err(format!(
+            "{} is a binary file; inspect it with a command such as file or xxd",
+            path.display()
+        ));
+    }
     let text = String::from_utf8_lossy(&bytes);
     let offset = input["offset"].as_u64().unwrap_or(1).max(1) as usize;
     let limit = input["limit"].as_u64().map(|n| n as usize);
@@ -505,6 +521,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn read_refuses_binary_files() {
+        let dir = std::env::temp_dir().join(format!("axio-binary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.bin"), [0u8, 1, 2, 0]).unwrap();
+        let err = read(&dir, &json!({"file_path": "a.bin"})).unwrap_err();
+        assert!(err.contains("is a binary file"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
