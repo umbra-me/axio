@@ -25,6 +25,26 @@ pub fn image_type(path: &Path) -> Option<&'static str> {
     })
 }
 
+/// An image file as a block for the model, and its size in KB.
+pub fn image_block(path: &Path) -> Result<(Block, usize), String> {
+    // Base64 grows a file by a third, and the API takes images up to 5 MB.
+    const MAX_IMAGE_BYTES: usize = 3_750_000;
+    let media_type = image_type(path).ok_or("not a PNG, JPEG, GIF or WebP image")?;
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("the image is too large to show (up to 3.7 MB)".into());
+    }
+    let kb = bytes.len().div_ceil(1024);
+    let data = crate::crypto::base64(&bytes);
+    Ok((
+        Block::Image {
+            media_type: media_type.into(),
+            data,
+        },
+        kb,
+    ))
+}
+
 /// Words split on whitespace, where a backslash keeps the next character
 /// (as terminals escape spaces in dropped file paths).
 fn words(text: &str) -> Vec<String> {
@@ -50,8 +70,6 @@ fn words(text: &str) -> Vec<String> {
 /// for the model, each with a short note for the user.
 pub fn mentions(prompt: &str, cwd: &Path) -> Vec<(Block, String)> {
     const MAX_BYTES: u64 = 256 * 1024;
-    // Base64 grows a file by a third, and the API takes images up to 5 MB.
-    const MAX_IMAGE_BYTES: u64 = 3_750_000;
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for word in words(prompt) {
@@ -88,21 +106,10 @@ pub fn mentions(prompt: &str, cwd: &Path) -> Vec<(Block, String)> {
                 )),
                 format!("attached {name}/ · {n} entries"),
             ));
-        } else if let Some(media_type) = image_type(&path) {
-            if meta.len() > MAX_IMAGE_BYTES {
-                out.push((
-                    text(format!("[{name} is an image too large to attach]")),
-                    format!("{name} is too large to attach (images up to 3.7 MB)"),
-                ));
-            } else if let Ok(bytes) = std::fs::read(&path) {
-                let kb = bytes.len().div_ceil(1024);
-                out.push((
-                    Block::Image {
-                        media_type: media_type.into(),
-                        data: crate::crypto::base64(&bytes),
-                    },
-                    format!("attached {name} · image, {kb} KB"),
-                ));
+        } else if image_type(&path).is_some() {
+            match image_block(&path) {
+                Ok((block, kb)) => out.push((block, format!("attached {name} · image, {kb} KB"))),
+                Err(e) => out.push((text(format!("[{name}: {e}]")), format!("{name}: {e}"))),
             }
         } else if meta.len() > MAX_BYTES {
             out.push((
