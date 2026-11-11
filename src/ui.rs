@@ -302,6 +302,44 @@ fn latest_line(text: &str, room: usize) -> Option<String> {
     })
 }
 
+/// Where a resumed session left off: the last prompt and the end of the
+/// last reply, as dim lines.
+pub fn recap(messages: &[crate::message::Message]) -> Vec<String> {
+    use crate::message::{Block, Message};
+    let prompt = messages.iter().rev().find_map(|m| match m {
+        Message::User { content } => content.iter().find_map(|b| match b {
+            Block::Text { text }
+                if !text.starts_with('[') && !text.starts_with(crate::compact::SUMMARY_MARK) =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        }),
+        Message::Assistant { .. } => None,
+    });
+    let reply = messages.iter().rev().find_map(|m| match m {
+        Message::Assistant { .. } => Some(m.text()).filter(|t| !t.trim().is_empty()),
+        Message::User { .. } => None,
+    });
+    let mut out = Vec::new();
+    if let Some(p) = prompt {
+        out.push(format!("› {}", clip(p.trim(), 100)));
+    }
+    if let Some(r) = reply {
+        let lines: Vec<&str> = r
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        let start = lines.len().saturating_sub(3);
+        if start > 0 {
+            out.push("  …".into());
+        }
+        out.extend(lines[start..].iter().map(|l| format!("  {}", clip(l, 100))));
+    }
+    out
+}
+
 fn term_width() -> usize {
     static WIDTH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *WIDTH.get_or_init(term::width)
@@ -795,6 +833,34 @@ mod tests {
             string_field(r#"{"command": "ls \"a\""}"#, "command").as_deref(),
             Some(r#"ls "a""#)
         );
+    }
+
+    #[test]
+    fn recap_shows_the_last_prompt_and_reply_end() {
+        use crate::message::{Block, Message};
+        let messages = vec![
+            Message::user_text("first ask"),
+            Message::Assistant {
+                content: vec![Block::Text {
+                    text: "one\ntwo\n\nthree\nfour".into(),
+                }],
+            },
+            Message::user_text("fix the tests\nplease"),
+            Message::Assistant { content: vec![] },
+            Message::User {
+                content: vec![Block::ToolResult {
+                    id: "1".into(),
+                    output: "x".into(),
+                    is_error: false,
+                }],
+            },
+            Message::user_text(crate::compact::INTERRUPTED),
+        ];
+        assert_eq!(
+            recap(&messages),
+            ["› fix the tests…", "  …", "  two", "  three", "  four"]
+        );
+        assert!(recap(&[]).is_empty());
     }
 
     #[test]
