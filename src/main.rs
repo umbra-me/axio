@@ -2,11 +2,13 @@ mod agent;
 mod background;
 mod compact;
 mod context;
+mod crypto;
 mod editor;
 mod hooks;
 mod import;
 mod mcp;
 mod message;
+mod oauth;
 mod plan;
 mod plugin_cli;
 mod plugins;
@@ -36,6 +38,7 @@ const USAGE: &str = "axio: a minimal coding agent
 Usage: axio [options] [prompt...]
        axio plugin install|list|update|remove ...
        axio import   (review what other harnesses offer again)
+       axio mcp list | login <name> | logout <name>
 
 Options:
   -p, --print           Answer one prompt (argument or stdin) and exit
@@ -73,6 +76,8 @@ struct Args {
     profile: Option<String>,
     no_project_config: bool,
     no_import: bool,
+    /// `axio mcp …`, run after configuration loads.
+    mcp_command: Option<Vec<String>>,
     prompt: Vec<String>,
 }
 
@@ -584,6 +589,70 @@ fn imports(
     Ok(record.accepted(&items).into_iter().cloned().collect())
 }
 
+/// `axio mcp list | login <name> | logout <name>`.
+fn mcp_command(sub: &[String], servers: &mcp::Config) -> Result<(), String> {
+    let find = |name: &str| {
+        servers
+            .servers
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("no MCP server named {name}; `axio mcp list` shows them"))
+    };
+    let remote = |name: &str| -> Result<String, String> {
+        find(name)?
+            .url
+            .clone()
+            .ok_or_else(|| format!("{name} is a local server; only HTTP servers sign in"))
+    };
+    match sub
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["list"] | [] => {
+            for s in &servers.servers {
+                let how = match &s.url {
+                    Some(url) => format!(
+                        "{url}{}",
+                        if oauth::signed_in(url) {
+                            " (signed in)"
+                        } else {
+                            ""
+                        }
+                    ),
+                    None => [s.command.as_str()]
+                        .into_iter()
+                        .chain(s.args.iter().map(String::as_str))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                };
+                println!("{}  {how}", s.name);
+            }
+            for skipped in &servers.skipped {
+                println!("skipped: {skipped}");
+            }
+            Ok(())
+        }
+        ["login", name] => {
+            let url = remote(name)?;
+            oauth::login(&url, &oauth::open_browser)?;
+            println!("signed in to {name}");
+            Ok(())
+        }
+        ["logout", name] => {
+            let url = remote(name)?;
+            if oauth::logout(&url)? {
+                println!("signed out of {name}");
+            } else {
+                println!("{name} was not signed in");
+            }
+            Ok(())
+        }
+        _ => Err("usage: axio mcp list | login <name> | logout <name>".into()),
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -606,11 +675,22 @@ fn run() -> Result<ExitCode, String> {
         plugin_cli::main(&all[1..], &context::home(), &cwd)?;
         return Ok(ExitCode::SUCCESS);
     }
-    let Some(args) = parse_args()? else {
-        return Ok(ExitCode::SUCCESS);
+    let args = if all.first().is_some_and(|a| a == "mcp") {
+        Args {
+            mcp_command: Some(all[1..].to_vec()),
+            print: true,
+            no_session: true,
+            ..Args::default()
+        }
+    } else {
+        let Some(args) = parse_args()? else {
+            return Ok(ExitCode::SUCCESS);
+        };
+        args
     };
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let home = context::home();
+    oauth::set_home(&home);
     let interactive = !args.print && io::stdin().is_terminal();
     let project = trusted_project(&home, &cwd, &args, interactive)?;
     let config = settings::Settings::load(&home, project.as_deref())?;
@@ -681,6 +761,10 @@ fn run() -> Result<ExitCode, String> {
         eprintln!("axio: skipped hook: {skipped}");
     }
     let servers = sources.mcp()?;
+    if let Some(sub) = &args.mcp_command {
+        mcp_command(sub, &servers)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     for skipped in &servers.skipped {
         eprintln!("axio: skipped MCP server: {skipped}");
     }

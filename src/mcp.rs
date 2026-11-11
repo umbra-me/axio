@@ -277,7 +277,11 @@ struct HttpConn {
     cwd: PathBuf,
 }
 
-const SIGN_IN: &str = "the server needs a sign-in (OAuth), which axio does not support yet; set an Authorization header with a token instead";
+const SIGN_IN: &str = "the server needs a sign-in";
+
+fn sign_in_hint(name: &str) -> String {
+    format!("{SIGN_IN}: run `axio mcp login {name}` (or set an Authorization header)")
+}
 
 fn http_post(
     url: &str,
@@ -290,22 +294,42 @@ fn http_post(
         .http_status_as_error(false)
         .build()
         .into();
-    let mut req = agent
-        .post(url)
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream");
-    if initialized {
-        req = req.header("mcp-protocol-version", PROTOCOL);
+    let send = |token: Option<&str>| {
+        let mut req = agent
+            .post(url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+        if initialized {
+            req = req.header("mcp-protocol-version", PROTOCOL);
+        }
+        if let Some(id) = session.lock().ok().and_then(|s| s.clone()) {
+            req = req.header("mcp-session-id", &id);
+        }
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        if let Some(t) = token {
+            req = req.header("authorization", &format!("Bearer {t}"));
+        }
+        req.send(msg.to_string())
+            .map_err(|e| format!("could not reach {url}: {e}"))
+    };
+    // A stored sign-in supplies the token unless the config sets its own.
+    let own = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+    let token = if own {
+        None
+    } else {
+        crate::oauth::bearer(url, false)
+    };
+    let mut resp = send(token.as_deref())?;
+    if resp.status().as_u16() == 401
+        && token.is_some()
+        && let Some(fresh) = crate::oauth::bearer(url, true)
+    {
+        resp = send(Some(&fresh))?;
     }
-    if let Some(id) = session.lock().ok().and_then(|s| s.clone()) {
-        req = req.header("mcp-session-id", &id);
-    }
-    for (k, v) in headers {
-        req = req.header(k, v);
-    }
-    let resp = req
-        .send(msg.to_string())
-        .map_err(|e| format!("could not reach {url}: {e}"))?;
     if let Some(id) = resp
         .headers()
         .get("mcp-session-id")
@@ -498,6 +522,12 @@ struct Server {
 
 impl Server {
     fn connect(&mut self, cwd: &Path) -> Result<Vec<Value>, String> {
+        let name = self.config.name.clone();
+        self.handshake(cwd)
+            .map_err(|e| if e == SIGN_IN { sign_in_hint(&name) } else { e })
+    }
+
+    fn handshake(&mut self, cwd: &Path) -> Result<Vec<Value>, String> {
         let mut conn = Connection::open(&self.config, cwd)?;
         conn.request(
             "initialize",
@@ -659,7 +689,15 @@ impl Mcp {
         let started = Instant::now();
         let result = loop {
             match rx.recv_timeout(Duration::from_millis(20)) {
-                Ok(r) => break r?,
+                Ok(r) => {
+                    break r.map_err(|e| {
+                        if e == SIGN_IN {
+                            sign_in_hint(&server.config.name)
+                        } else {
+                            e
+                        }
+                    })?;
+                }
                 Err(RecvTimeoutError::Disconnected) => return Err("the server exited".into()),
                 Err(RecvTimeoutError::Timeout) => {
                     let reason = if stop() {
@@ -1001,7 +1039,7 @@ mod tests {
             Path::new("mcp.json"),
         );
         let mcp = Mcp::start(&c, &std::env::temp_dir());
-        assert_eq!(mcp.failed, [format!("locked: {SIGN_IN}")]);
+        assert_eq!(mcp.failed, [format!("locked: {}", sign_in_hint("locked"))]);
         assert_eq!(
             mcp.specs
                 .iter()

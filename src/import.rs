@@ -119,13 +119,11 @@ fn mcp_entry(v: &Value) -> Result<(Value, Option<String>), String> {
     match kind {
         "sse" => Err("uses the older SSE transport, which axio does not support".into()),
         "http" | "streamable-http" => {
-            if v.get("auth").is_some() || v.get("oauth").is_some() {
-                return Err("needs an OAuth sign-in, which axio does not support yet".into());
-            }
             let url = v["url"].as_str().ok_or("has no url")?;
             let headers = v.get("headers").cloned().unwrap_or(json!({}));
-            let note = (headers.as_object().is_none_or(|h| h.is_empty()))
-                .then(|| "HTTP server: works unless it needs an OAuth sign-in".to_string());
+            let note = (headers.as_object().is_none_or(|h| h.is_empty())).then(|| {
+                "HTTP server: if it needs a sign-in, run `axio mcp login <name>`".to_string()
+            });
             Ok((
                 json!({"type": "http", "url": url, "headers": headers}),
                 note,
@@ -675,7 +673,8 @@ mod tests {
         assert_eq!(
             line(&items, "Claude Code", "figma"),
             Support::Partly(
-                "MCP server figma: HTTP server: works unless it needs an OAuth sign-in".into()
+                "MCP server figma: HTTP server: if it needs a sign-in, run `axio mcp login <name>`"
+                    .into()
             )
         );
         assert!(
@@ -684,7 +683,9 @@ mod tests {
         assert_eq!(line(&items, "Claude Code", "browse"), Support::Works);
         assert_eq!(
             line(&items, "Claude Code", "web"),
-            Support::Partly("HTTP server: works unless it needs an OAuth sign-in".into())
+            Support::Partly(
+                "HTTP server: if it needs a sign-in, run `axio mcp login <name>`".into()
+            )
         );
         assert_eq!(line(&items, "Claude Code", "charon"), Support::Works);
         assert_eq!(

@@ -36,6 +36,7 @@ cargo test --locked
 - `src/profile.rs`, `src/plugins.rs`: profiles and plugin folders
 - `src/search.rs`, `src/plan.rs`, `src/background.rs`, `src/web.rs`, `src/sandbox.rs`: the built-in modules
 - `src/skills.rs`: skills, slash commands and the small frontmatter reader
+- `src/oauth.rs`, `src/crypto.rs`: MCP sign-in, and the SHA-256/base64url/random it needs
 - `src/mcp.rs`: MCP stdio client (tests run the test binary as a stub server)
 - `src/hooks.rs`: hook loading, matching, running and merging replies
 - `src/settings.rs`: settings files and project trust
