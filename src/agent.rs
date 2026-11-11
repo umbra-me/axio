@@ -4,7 +4,7 @@ use crate::mcp::Mcp;
 use crate::message::{Block, Message};
 use crate::provider::{self, Delta, Model, Reply, Request, Stop, Usage};
 use crate::session::Session;
-use crate::tools::{self, ToolSpec};
+use crate::tools::{self, Modules, ToolSpec};
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,6 +49,9 @@ pub struct Agent {
     /// Context size after the latest reply, in tokens.
     pub context: u64,
     pub hooks: Hooks,
+    pub modules: Modules,
+    /// Fraction of the context window at which compaction starts.
+    pub compact_ratio: f64,
     mcp: Arc<Mcp>,
     tools: Vec<ToolSpec>,
     complete: Arc<Complete>,
@@ -72,15 +75,18 @@ impl Agent {
             session: None,
             context: 0,
             hooks: Hooks::default(),
+            modules: Modules::default(),
+            compact_ratio: 0.85,
             mcp: Arc::default(),
             tools: tools::specs(),
             complete: Arc::new(provider::complete),
         }
     }
 
-    /// Adds the tools of started MCP servers.
-    pub fn set_mcp(&mut self, mcp: Mcp) {
-        self.tools = tools::specs();
+    /// The core tools, the profile's modules and started MCP servers' tools.
+    pub fn set_tools(&mut self, modules: Modules, mcp: Mcp) {
+        self.modules = modules;
+        self.tools = tools::specs_for(modules);
         self.tools.extend(mcp.specs.iter().cloned());
         self.mcp = Arc::new(mcp);
     }
@@ -90,7 +96,7 @@ impl Agent {
         std::env::var("AXIO_COMPACT_AT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(self.model.context_window() / 100 * 85)
+            .unwrap_or((self.model.context_window() as f64 * self.compact_ratio) as u64)
     }
 
     fn push(&mut self, m: Message) -> Result<(), String> {
@@ -284,6 +290,12 @@ impl Agent {
     fn run_turn(&mut self, ui: &mut dyn Ui) -> Result<(), String> {
         let mut continuations = 0;
         loop {
+            if self.modules.background {
+                for note in crate::background::finished() {
+                    ui.notice(&note);
+                    self.push(Message::user_text(note))?;
+                }
+            }
             let reply = self.call(
                 &self.system,
                 self.messages.clone(),
@@ -404,7 +416,9 @@ impl Agent {
                 let r = if self.mcp.owns(name) {
                     self.mcp.call(name, &input, &mut || ui.interrupted())
                 } else {
-                    tools::run(name, &input, &self.cwd, &mut || ui.interrupted())
+                    tools::run_with(self.modules, name, &input, &self.cwd, &mut || {
+                        ui.interrupted()
+                    })
                 };
                 ui.tool_end(&r);
                 r

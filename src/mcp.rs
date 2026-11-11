@@ -110,20 +110,6 @@ impl Config {
     }
 }
 
-/// Plugin folders with a `.mcp.json`.
-pub fn plugin_server_files(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<(PathBuf, PathBuf)> = entries
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .map(|p| (p.join(".mcp.json"), p))
-        .filter(|(f, _)| f.is_file())
-        .collect();
-    found.sort();
-    found
-}
-
 type Pending = Arc<Mutex<HashMap<u64, Sender<Result<Value, String>>>>>;
 
 struct Connection {
