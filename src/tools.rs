@@ -187,7 +187,7 @@ fn str_arg<'a>(input: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing string argument: {key}"))
 }
 
-fn resolve(cwd: &Path, path: &str) -> PathBuf {
+pub(crate) fn resolve(cwd: &Path, path: &str) -> PathBuf {
     let expanded = match path.strip_prefix("~/") {
         Some(rest) => std::env::var_os("HOME")
             .map(|h| Path::new(&h).join(rest))

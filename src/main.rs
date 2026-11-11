@@ -66,7 +66,7 @@ Options:
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command, Up/Down walk history, Ctrl-R searches it, Esc or Ctrl-C
 stops a running turn, Ctrl-D exits.
-Commands: /new, /compact, /model <model>, /effort <level>, /session, /help,
+Commands: /new, /undo, /compact, /model <model>, /effort <level>, /session, /help,
 /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
@@ -402,13 +402,14 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
     )
 }
 
-const BUILTIN_COMMANDS: [&str; 9] = [
-    "new", "model", "effort", "compact", "profile", "session", "help", "quit", "exit",
+const BUILTIN_COMMANDS: [&str; 10] = [
+    "new", "undo", "model", "effort", "compact", "profile", "session", "help", "quit", "exit",
 ];
 
 fn help(lib: &skills::Library) -> String {
     let mut rows: Vec<(String, String)> = [
         ("/new", "start a new session"),
+        ("/undo", "put back the files the last turn wrote or edited"),
         ("/model [provider/model]", "show or switch the model"),
         ("/effort [level]", "show or set reasoning effort"),
         ("/compact", "summarize the conversation now"),
@@ -847,6 +848,16 @@ fn run() -> Result<ExitCode, String> {
                 Err(e) => eprintln!("axio: {e}"),
             },
             ("/model", "") => eprintln!("{}", term.dim(&model_line(&agent))),
+            ("/undo", _) => match agent.undo() {
+                Ok(done) => {
+                    for (path, restored) in done {
+                        let what = if restored { "restored" } else { "removed" };
+                        let path = ui::short_path(&path.display().to_string(), &cwd);
+                        eprintln!("{}", term.dim(&format!("{what} {path}")));
+                    }
+                }
+                Err(e) => eprintln!("{}", term.dim(&e)),
+            },
             ("/effort", "") => eprintln!(
                 "{}",
                 term.dim(&format!(
