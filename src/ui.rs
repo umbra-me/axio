@@ -26,6 +26,10 @@ pub struct Term {
     pub keys: Option<term::Keys>,
     pub turn: Usage,
     pub turn_started: Instant,
+    /// Totals for the whole session, for the summary on exit.
+    pub turns: u32,
+    pub total_out: u64,
+    started: Instant,
     cwd: PathBuf,
     md: Markdown,
     spinner: Option<(String, Instant)>,
@@ -55,6 +59,9 @@ impl Term {
             keys: None,
             turn: Usage::default(),
             turn_started: Instant::now(),
+            turns: 0,
+            total_out: 0,
+            started: Instant::now(),
             cwd: cwd.to_path_buf(),
             md: Markdown::new(color_out),
             spinner: None,
@@ -83,6 +90,7 @@ impl Term {
     pub fn begin_turn(&mut self) {
         self.turn = Usage::default();
         self.turn_started = Instant::now();
+        self.turns += 1;
         self.md.reset();
         self.last = Shown::Nothing;
     }
@@ -163,6 +171,25 @@ impl Term {
             print!("{rest}");
             let _ = io::stdout().flush();
         }
+    }
+
+    /// One dim line on exit: what the session did and how to come back.
+    pub fn farewell(&self, session: Option<&Path>) -> String {
+        let secs = self.started.elapsed().as_secs();
+        let time = match secs {
+            0..60 => format!("{secs}s"),
+            60..3600 => format!("{}m {}s", secs / 60, secs % 60),
+            _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
+        };
+        let turns = match self.turns {
+            1 => "1 turn".to_string(),
+            n => format!("{n} turns"),
+        };
+        let mut s = format!("{turns} · {} out · {time}", tokens(self.total_out));
+        if session.is_some() && self.turns > 0 {
+            s.push_str(" · `axio -c` continues this session");
+        }
+        self.dim(&s)
     }
 
     /// The dim line after a turn: context, output, cache and time.
@@ -355,10 +382,64 @@ pub fn tool_title(name: &str, input: &Value, cwd: &Path) -> (String, String) {
 }
 
 /// Result lines under a tool header, already coloured when `color` is set.
+/// Whole changed lines with their numbers and one line of context, found
+/// by locating `new_string` in the edited file.
+fn edit_diff(input: &Value, after: &str, color: bool) -> Option<Vec<String>> {
+    let paint = |code: &str, s: &str| {
+        if color {
+            format!("{code}{s}{RESET}")
+        } else {
+            s.to_string()
+        }
+    };
+    let (old, new) = (input["old_string"].as_str()?, input["new_string"].as_str()?);
+    if new.is_empty() {
+        return None;
+    }
+    let start = after.find(new)?;
+    let end = start + new.len();
+    let line_start = after[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = after[end..].find('\n').map_or(after.len(), |i| end + i);
+    let (prefix, suffix) = (&after[line_start..start], &after[end..line_end]);
+    let first = after[..line_start].matches('\n').count() + 1;
+    let old_full = format!("{prefix}{old}{suffix}");
+    let new_full = &after[line_start..line_end];
+    let old_lines: Vec<&str> = old_full.lines().collect();
+    let new_lines: Vec<&str> = new_full.lines().collect();
+    let last = first + old_lines.len().max(new_lines.len());
+    let width = last.to_string().len();
+    let all: Vec<&str> = after.lines().collect();
+    let mut out = Vec::new();
+    if first > 1 {
+        out.push(paint(
+            DIM,
+            &format!("{:>width$}   {}", first - 1, all[first - 2]),
+        ));
+    }
+    for (sign, code, lines) in [("-", RED, &old_lines), ("+", GREEN, &new_lines)] {
+        for (i, l) in lines.iter().take(8).enumerate() {
+            out.push(paint(code, &format!("{:>width$} {sign} {l}", first + i)));
+        }
+        if lines.len() > 8 {
+            out.push(paint(
+                DIM,
+                &format!("{:>width$}   … {} more", "", lines.len() - 8),
+            ));
+        }
+    }
+    let next = first + new_lines.len();
+    if let Some(l) = all.get(next - 1) {
+        out.push(paint(DIM, &format!("{next:>width$}   {l}")));
+    }
+    Some(out)
+}
+
 pub fn tool_lines(
     name: &str,
     input: &Value,
     result: &Result<String, String>,
+    // For Edit: the file after the change, to number the lines.
+    after: Option<&str>,
     color: bool,
 ) -> Vec<String> {
     let paint = |code: &str, s: &str| {
@@ -391,6 +472,12 @@ pub fn tool_lines(
             ),
         )],
         "Edit" => {
+            let numbered = after
+                .filter(|_| input["replace_all"] != true)
+                .and_then(|a| edit_diff(input, a, color));
+            if let Some(lines) = numbered {
+                return lines;
+            }
             let mut out = Vec::new();
             for (sign, code, key) in [("-", RED, "old_string"), ("+", GREEN, "new_string")] {
                 let lines: Vec<&str> = input[key].as_str().unwrap_or("").lines().collect();
@@ -506,7 +593,14 @@ impl Ui for Term {
     fn tool_end(&mut self, result: &Result<String, String>) {
         self.unspin();
         let (name, input) = self.tool.take().unwrap_or_default();
-        for line in tool_lines(&name, &input, result, self.color) {
+        let after = (name == "Edit" && result.is_ok())
+            .then(|| {
+                input["file_path"]
+                    .as_str()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+            })
+            .flatten();
+        for line in tool_lines(&name, &input, result, after.as_deref(), self.color) {
             eprintln!("  {line}");
         }
     }
@@ -524,6 +618,7 @@ impl Ui for Term {
 
     fn usage(&mut self, u: Usage) {
         self.turn.output += u.output;
+        self.total_out += u.output;
         self.turn.input = u.input;
         self.turn.cache_read = u.cache_read;
         self.turn.cache_write = u.cache_write;
@@ -615,14 +710,35 @@ mod tests {
     }
 
     #[test]
+    fn edits_show_numbered_lines_with_context() {
+        let after = "fn main() {\n    let x = 2;\n    println!(\"{x}\");\n}\n";
+        let input = json!({"old_string": "1", "new_string": "2"});
+        assert_eq!(
+            tool_lines("Edit", &input, &Ok("edited".into()), Some(after), false),
+            [
+                "1   fn main() {",
+                "2 -     let x = 1;",
+                "2 +     let x = 2;",
+                "3       println!(\"{x}\");"
+            ]
+        );
+        let added = json!({"old_string": "}", "new_string": "    done();\n}"});
+        let after = "fn f() {\n    done();\n}";
+        assert_eq!(
+            tool_lines("Edit", &added, &Ok("edited".into()), Some(after), false),
+            ["1   fn f() {", "2 - }", "2 +     done();", "3 + }"]
+        );
+    }
+
+    #[test]
     fn results_are_summarized() {
         let edit = json!({"old_string": "a\nb", "new_string": "c"});
         assert_eq!(
-            tool_lines("Edit", &edit, &Ok("edited x".into()), false),
+            tool_lines("Edit", &edit, &Ok("edited x".into()), None, false),
             ["- a", "- b", "+ c"]
         );
         assert_eq!(
-            tool_lines("Read", &json!({}), &Ok("1\n2\n3".into()), false),
+            tool_lines("Read", &json!({}), &Ok("1\n2\n3".into()), None, false),
             ["read 3 lines"]
         );
         assert_eq!(
@@ -630,6 +746,7 @@ mod tests {
                 "TodoWrite",
                 &json!({}),
                 &Ok("[x] one\n[>] two\n[ ] three".into()),
+                None,
                 false
             ),
             ["✓ one", "▸ two", "○ three"]
@@ -639,11 +756,11 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(
-            tool_lines("Bash", &json!({}), &Ok(long), false),
+            tool_lines("Bash", &json!({}), &Ok(long), None, false),
             ["… 6 lines above", "7", "8", "9", "10"]
         );
         assert_eq!(
-            tool_lines("Bash", &json!({}), &Ok(String::new()), false),
+            tool_lines("Bash", &json!({}), &Ok(String::new()), None, false),
             ["(no output)"]
         );
         assert_eq!(
@@ -651,6 +768,7 @@ mod tests {
                 "Bash",
                 &json!({}),
                 &Err("boom\n[exit code 1]".into()),
+                None,
                 false
             ),
             ["✗ boom", "✗ [exit code 1]"]
