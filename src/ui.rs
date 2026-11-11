@@ -625,6 +625,11 @@ impl Ui for Term {
     }
 
     fn interrupted(&mut self) -> bool {
+        if self.tool.is_some()
+            && let Some(line) = crate::tools::latest_output_line()
+        {
+            self.thought = line;
+        }
         self.tick(false);
         self.keys.as_mut().is_some_and(|k| k.stop_requested())
     }
