@@ -53,6 +53,7 @@ Options:
                         openai/<id>, openrouter/<vendor>/<id> (env AXIO_MODEL)
   -e, --effort <level>  low, medium, high, xhigh or max (env AXIO_EFFORT)
   -c, --continue        Continue the most recent session in this directory
+  -r, --resume          Pick one of this directory's recent sessions
   -s, --session <file>  Continue a session file
       --no-session      Do not save this session
       --profile <name>  minimal, standard (default), full or one in
@@ -80,6 +81,7 @@ struct Args {
     model: Option<String>,
     effort: Option<String>,
     resume_latest: bool,
+    pick_session: bool,
     session: Option<PathBuf>,
     no_session: bool,
     trust: bool,
@@ -109,6 +111,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "-m" | "--model" => a.model = Some(value(&arg)?),
             "-e" | "--effort" => a.effort = Some(value(&arg)?),
             "-c" | "--continue" => a.resume_latest = true,
+            "-r" | "--resume" => a.pick_session = true,
             "-s" | "--session" => a.session = Some(value(&arg)?.into()),
             "--no-session" => a.no_session = true,
             "--trust" => a.trust = true,
@@ -121,6 +124,54 @@ fn parse_args() -> Result<Option<Args>, String> {
         }
     }
     Ok(Some(a))
+}
+
+/// Lists this directory's recent sessions and reads which to continue.
+fn pick_session(dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let recent = session::recent(dir, 10);
+    if recent.is_empty() {
+        return Err("no saved sessions in this directory".into());
+    }
+    let now = std::time::SystemTime::now();
+    for (i, s) in recent.iter().enumerate() {
+        let secs = now.duration_since(s.modified).map_or(0, |d| d.as_secs());
+        let age = match secs {
+            0..60 => "just now".to_string(),
+            60..3600 => format!("{}m ago", secs / 60),
+            3600..86_400 => format!("{}h ago", secs / 3600),
+            _ => format!("{}d ago", secs / 86_400),
+        };
+        let first: String = s
+            .first_prompt
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(70)
+            .collect();
+        eprintln!(
+            "{:>2}  {age:>8}  {first}  \x1b[2m({} messages)\x1b[0m",
+            i + 1,
+            s.messages
+        );
+    }
+    eprint!("Continue which? [1] ");
+    let _ = io::stderr().flush();
+    let mut line = String::new();
+    io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+    let n = match line.trim() {
+        "" => 1,
+        t => t
+            .parse::<usize>()
+            .map_err(|_| format!("not a number: {t}"))?,
+    };
+    recent
+        .into_iter()
+        .nth(n.wrapping_sub(1))
+        .map(|s| s.path)
+        .ok_or_else(|| format!("there is no session {n}"))
 }
 
 /// The model with its effort, for the header and /model.
@@ -696,9 +747,10 @@ fn run() -> Result<ExitCode, String> {
     agent.compact_ratio = profile.compact_at;
 
     let sessions = session::dir_for(&home, &cwd);
-    let resume = match (args.session, args.resume_latest) {
-        (Some(p), _) => Some(p),
-        (None, true) => Some(session::latest(&sessions).ok_or("no session to continue here")?),
+    let resume = match (args.session, args.resume_latest, args.pick_session) {
+        (Some(p), _, _) => Some(p),
+        (None, true, _) => Some(session::latest(&sessions).ok_or("no session to continue here")?),
+        (None, false, true) => Some(pick_session(&sessions)?),
         _ => None,
     };
     let source = if resume.is_some() {
