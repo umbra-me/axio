@@ -48,10 +48,15 @@ impl Model {
         if let Some(n) = env("AXIO_CONTEXT_WINDOW").and_then(|v| v.parse().ok()) {
             return n;
         }
-        match self.id.as_str() {
-            id if id.starts_with("claude-haiku-4") || id.starts_with("claude-3") => 200_000,
-            id if id.starts_with("claude-") => 1_000_000,
-            _ => 128_000,
+        let id = self.id.as_str();
+        // Claude 4.6 and later have a 1M window; earlier Claude models 200k.
+        let million = ["opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6"];
+        match id {
+            _ if !id.starts_with("claude-") => 128_000,
+            _ if id.starts_with("claude-3") => 200_000,
+            _ if million.iter().any(|m| id.contains(m)) => 1_000_000,
+            _ if id.contains("-4") => 200_000,
+            _ => 1_000_000,
         }
     }
 }
@@ -213,7 +218,7 @@ pub fn retry_wait(err: &str, attempt: u32, unit: Duration) -> Duration {
         .and_then(|(_, r)| r.split_once("s)"))
         .and_then(|(n, _)| n.parse::<u64>().ok());
     match after {
-        Some(s) => Duration::from_secs(s.min(60)),
+        Some(s) => Duration::from_secs(s.min(300)),
         None => unit * 2u32.pow(attempt).min(30),
     }
 }
@@ -235,6 +240,18 @@ pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_windows_by_model() {
+        let w = |id: &str| Model::parse(&format!("anthropic/{id}")).context_window();
+        assert_eq!(w("claude-opus-5-5"), 1_000_000);
+        assert_eq!(w("claude-opus-4-8"), 1_000_000);
+        assert_eq!(w("claude-sonnet-4-6"), 1_000_000);
+        assert_eq!(w("claude-sonnet-4-5"), 200_000);
+        assert_eq!(w("claude-opus-4-1"), 200_000);
+        assert_eq!(w("claude-haiku-4-5"), 200_000);
+        assert_eq!(w("claude-haiku-5-5"), 1_000_000);
+    }
 
     #[test]
     fn retries_only_transient_failures() {

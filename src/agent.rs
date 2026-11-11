@@ -430,7 +430,7 @@ impl Agent {
             let mut images = Vec::new();
             for (id, name, input) in calls {
                 stopped = stopped || ui.interrupted();
-                let input_path = input["file_path"].as_str().map(String::from);
+                let mut input_path = None;
                 // A reply cut off at max_tokens can end inside a tool call.
                 let result = if stopped {
                     Err("not run: the user stopped the turn".into())
@@ -439,7 +439,9 @@ impl Agent {
                 } else if stop == Stop::MaxTokens {
                     Err("the reply hit the output limit before this call was complete".into())
                 } else {
-                    let (r, end) = self.run_tool(&id, &name, input, ui);
+                    // The path as run, after any hook rewrote the input.
+                    let (r, end, ran) = self.run_tool(&id, &name, input, ui);
+                    input_path = ran["file_path"].as_str().map(String::from);
                     stopped = matches!(&r, Err(e) if e.ends_with(tools::STOPPED));
                     hook_stop = end;
                     r
@@ -507,9 +509,10 @@ impl Agent {
         if changed.is_empty() {
             return Err("nothing to undo: the last turn wrote or edited no files".into());
         }
-        let mut done = Vec::new();
+        // Try every file; keep the ones that failed so /undo can be retried.
+        let (mut done, mut failed, mut errors) = (Vec::new(), Vec::new(), Vec::new());
         for (path, before) in changed.into_iter().rev() {
-            match &before {
+            let result = match &before {
                 Some(bytes) => std::fs::write(&path, bytes),
                 None => std::fs::remove_file(&path).or_else(|e| {
                     if e.kind() == std::io::ErrorKind::NotFound {
@@ -518,15 +521,41 @@ impl Agent {
                         Err(e)
                     }
                 }),
+            };
+            match result {
+                Ok(()) => done.push((path, before.is_some())),
+                Err(e) => {
+                    errors.push(format!("{}: {e}", path.display()));
+                    failed.push((path, before));
+                }
             }
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-            done.push((path, before.is_some()));
         }
-        let names: Vec<String> = done.iter().map(|(p, _)| p.display().to_string()).collect();
-        self.push(Message::user_text(format!(
-            "[The user undid the file changes from your previous turn: {}. Commands you ran were not undone.]",
-            names.join(", ")
-        )))?;
+        if !done.is_empty() {
+            let names: Vec<String> = done.iter().map(|(p, _)| p.display().to_string()).collect();
+            let mut note = format!(
+                "[The user undid the file changes from your previous turn: {}. Commands you ran were not undone.",
+                names.join(", ")
+            );
+            if !errors.is_empty() {
+                note.push_str(&format!(
+                    " These could not be put back: {}.",
+                    errors.join("; ")
+                ));
+            }
+            note.push(']');
+            self.push(Message::user_text(note))?;
+        }
+        if !failed.is_empty() {
+            failed.reverse();
+            if let Ok(mut changed) = self.changed.lock() {
+                *changed = failed;
+            }
+            return Err(format!(
+                "restored {} file(s); could not put back: {} (run /undo again once fixed)",
+                done.len(),
+                errors.join("; ")
+            ));
+        }
         Ok(done)
     }
 
@@ -536,7 +565,7 @@ impl Agent {
         name: &str,
         mut input: Value,
         ui: &mut dyn Ui,
-    ) -> (Result<String, String>, Option<String>) {
+    ) -> (Result<String, String>, Option<String>, Value) {
         let fields =
             |input: &Value| json!({"tool_name": name, "tool_input": input, "tool_use_id": id});
         let pre = self.hook(Hook::PreToolUse, Some(name), fields(&input), ui);
@@ -544,6 +573,7 @@ impl Agent {
             return (
                 Err(format!("not run: a hook ended the turn ({reason})")),
                 Some(reason),
+                input,
             );
         }
         if let Some(changed) = pre.updated_input {
@@ -619,7 +649,7 @@ impl Agent {
                 Ok(t) | Err(t) => add(t),
             }
         }
-        (result, post.stop)
+        (result, post.stop, input)
     }
 }
 
@@ -929,6 +959,65 @@ mod tests {
                 data: "iVBORw==".into()
             }
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_that_partly_fails_can_be_retried() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("axio-undo-partial-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "a1").unwrap();
+        std::fs::write(&b, "b1").unwrap();
+        let (a2, b2) = (a.display().to_string(), b.display().to_string());
+        let turn = Mutex::new(0);
+        let mut agent = agent(move |_, _| {
+            let mut t = turn.lock().unwrap();
+            *t += 1;
+            match *t {
+                1 => reply(
+                    vec![
+                        Block::ToolCall {
+                            id: "1".into(),
+                            name: "Write".into(),
+                            input: json!({"file_path": a2, "content": "a2"}),
+                        },
+                        Block::ToolCall {
+                            id: "2".into(),
+                            name: "Write".into(),
+                            input: json!({"file_path": b2, "content": "b2"}),
+                        },
+                    ],
+                    Stop::ToolUse,
+                    1,
+                ),
+                _ => reply(
+                    vec![Block::Text {
+                        text: "done".into(),
+                    }],
+                    Stop::EndTurn,
+                    1,
+                ),
+            }
+        });
+        agent.prompt("go", &mut Log::default()).unwrap();
+        std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let err = agent.undo().unwrap_err();
+        assert!(err.contains("b.txt") && err.contains("restored 1"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "a1",
+            "the others are still restored"
+        );
+        std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            agent.undo().unwrap(),
+            [(b.clone(), true)],
+            "retry does the rest"
+        );
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b1");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

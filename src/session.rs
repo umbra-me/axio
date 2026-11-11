@@ -35,7 +35,7 @@ impl Session {
     pub fn open(path: PathBuf) -> Result<Session, String> {
         let err = |e: std::io::Error| format!("{}: {e}", path.display());
         // A crash can leave a half-written last line; start ours on a fresh one.
-        let torn = std::fs::read(&path).is_ok_and(|b| b.last().is_some_and(|c| *c != b'\n'));
+        let torn = last_byte(&path).is_some_and(|c| c != b'\n');
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -130,12 +130,32 @@ pub fn dir_for(home: &Path, cwd: &Path) -> PathBuf {
     home.join("sessions").join(format!("-{slug}-"))
 }
 
+/// The session in `dir` used most recently.
 pub fn latest(dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
+    by_last_use(dir).into_iter().next()
+}
+
+/// Session files in `dir`, most recently used first, without reading them.
+fn by_last_use(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
-        .max()
+        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
+        .collect();
+    files.sort_by(|a, b| b.cmp(a));
+    files.into_iter().map(|(_, p)| p).collect()
+}
+
+fn last_byte(path: &Path) -> Option<u8> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::End(-1)).ok()?;
+    let mut b = [0u8];
+    f.read_exact(&mut b).ok()?;
+    Some(b[0])
 }
 
 /// A saved session, for choosing one to continue.
@@ -148,12 +168,9 @@ pub struct Summary {
 
 /// The sessions in `dir`, most recently used first.
 pub fn recent(dir: &Path, limit: usize) -> Vec<Summary> {
-    let mut out: Vec<Summary> = std::fs::read_dir(dir)
+    // Only the newest few are read, however many sessions there are.
+    by_last_use(dir)
         .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
         .filter_map(|path| {
             let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
             let messages = load(&path).ok()?;
@@ -175,15 +192,31 @@ pub fn recent(dir: &Path, limit: usize) -> Vec<Summary> {
             })
         })
         .filter(|s| s.messages > 0)
-        .collect();
-    out.sort_by_key(|s| std::cmp::Reverse(s.modified));
-    out.truncate(limit);
-    out
+        .take(limit)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_is_the_one_used_last() {
+        let dir = std::env::temp_dir().join(format!("axio-latest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (old, new) = (dir.join("100-1.jsonl"), dir.join("200-1.jsonl"));
+        std::fs::write(&new, "{}\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&old, "{}\n").unwrap();
+        assert_eq!(
+            latest(&dir),
+            Some(old),
+            "used after the newer-named one was created"
+        );
+        assert_eq!(last_byte(&new), Some(b'\n'));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn round_trips_and_repairs_interrupted_tool_calls() {
