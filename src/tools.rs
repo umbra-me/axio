@@ -11,16 +11,16 @@ const MAX_TIMEOUT_MS: u64 = 600_000;
 
 #[derive(Clone)]
 pub struct ToolSpec {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub schema: Value,
 }
 
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
-            name: "Read",
-            description: "Read a text file. Output is cut at 2000 lines or 50KB; use offset and limit to page through larger files.",
+            name: "Read".into(),
+            description: "Read a text file. Output is cut at 2000 lines or 50KB; use offset and limit to page through larger files.".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -33,8 +33,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "Write",
-            description: "Write a file, creating parent directories and replacing any existing content.",
+            name: "Write".into(),
+            description: "Write a file, creating parent directories and replacing any existing content.".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -46,8 +46,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "Edit",
-            description: "Replace exact text in a file. old_string must match exactly once, whitespace included; add surrounding lines to make it unique, or set replace_all to change every occurrence (handy for renames). An empty old_string creates a new file containing new_string.",
+            name: "Edit".into(),
+            description: "Replace exact text in a file. old_string must match exactly once, whitespace included; add surrounding lines to make it unique, or set replace_all to change every occurrence (handy for renames). An empty old_string creates a new file containing new_string.".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -61,8 +61,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "Bash",
-            description: "Run a bash command in the working directory. Returns stdout and stderr combined. Long output keeps its beginning and end, and the result names a log file holding the full output, which you can read or search.",
+            name: "Bash".into(),
+            description: "Run a bash command in the working directory. Returns stdout and stderr combined. Long output keeps its beginning and end, and the result names a log file holding the full output, which you can read or search.".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -476,7 +476,7 @@ mod tests {
             .iter()
             .map(|t| {
                 let props = t.schema["properties"].as_object().unwrap();
-                (t.name, props.keys().map(|k| k.as_str()).collect())
+                (t.name.as_str(), props.keys().map(|k| k.as_str()).collect())
             })
             .collect();
         assert_eq!(

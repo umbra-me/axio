@@ -61,6 +61,21 @@ a folder in `~/.axio/agent/plugins/` (or a trusted project's
 and asks before `git push`; copy it into `~/.axio/agent/plugins/` to use it.
 Matchers support `*`, exact names, `A|B` and prefixes like `mcp__github__.*`.
 
+## MCP servers
+
+axio starts MCP servers listed in `~/.axio/agent/mcp.json`, in plugins'
+`.mcp.json`, and in a trusted project's `.mcp.json`, in the usual format:
+
+```json
+{"mcpServers": {"github": {"command": "github-mcp", "args": ["stdio"], "env": {"TOKEN": "…"}}}}
+```
+
+Their tools appear as `mcp__<server>__<tool>`, so hooks can match them with
+`mcp__github__.*`. Servers run over stdio for the session; a server that
+exits is restarted on its next call, and Esc cancels a running call. `timeout`
+(milliseconds, default ten minutes) bounds each call. HTTP and SSE servers are
+listed as skipped for now.
+
 ## Keys
 
 | Key | Does |
