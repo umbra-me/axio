@@ -147,8 +147,19 @@ Remote servers use streamable HTTP:
                             "headers": {"Authorization": "Bearer ${TRACKER_TOKEN}"}}}}
 ```
 
-`${VAR}` in `url` and `headers` comes from the environment. Servers that need
-an OAuth sign-in are reported as such; the older SSE transport is skipped.
+`${VAR}` in `url` and `headers` comes from the environment. A server that
+needs an OAuth sign-in says so at start; sign in once with
+
+```sh
+axio mcp login tracker     # opens the browser; tokens refresh on their own
+axio mcp list              # servers, and which are signed in
+axio mcp logout tracker
+```
+
+Sign-in follows the MCP authorization spec (protected-resource discovery,
+dynamic client registration, PKCE, resource indicators). Tokens are kept in
+`~/.axio/agent/mcp-auth.json`, readable only by you. The older SSE transport
+is skipped.
 
 ## Keys
 
