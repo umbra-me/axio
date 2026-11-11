@@ -12,6 +12,8 @@ pub struct Settings {
     pub effort: Option<String>,
     pub profile: Option<String>,
     pub import_from_other_harnesses: Option<String>,
+    /// Lets sandboxed commands reach the network.
+    pub sandbox_network: Option<bool>,
 }
 
 impl Settings {
@@ -32,6 +34,7 @@ impl Settings {
             import_from_other_harnesses: over
                 .import_from_other_harnesses
                 .or(self.import_from_other_harnesses),
+            sandbox_network: over.sandbox_network.or(self.sandbox_network),
         }
     }
 

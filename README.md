@@ -35,12 +35,15 @@ A profile picks built-in modules, which plugins load, and defaults.
 |---|---|
 | `minimal` | Read, Write, Edit, Bash: the Pi-sized core |
 | `standard` (default) | the core plus the `search`, `plan` and `background` modules |
+| `full` | `standard` plus `web` and `sandbox` |
 
 | Module | Adds |
 |---|---|
 | `search` | `Grep` and `Glob` (ripgrep when installed, a built-in walk otherwise) |
 | `plan` | `TodoWrite`, a short task list shown as it changes |
 | `background` | `Bash` with `run_in_background`: output goes to a log the model reads, `TaskStop` ends it, and the model hears when it exits. Tasks end when axio exits |
+| `web` | `WebFetch`: an http(s) GET, with HTML reduced to text and links kept |
+| `sandbox` | Bash may write only in the project and temporary folders, and has no network unless `"sandboxNetwork": true`; Write and Edit follow the same limits. Seatbelt on macOS, bubblewrap on Linux. Hooks and MCP servers are not sandboxed |
 
 Choose one with `--profile`, `AXIO_PROFILE` or `"profile"` in settings;
 `/profile` shows the current one. Your own go in

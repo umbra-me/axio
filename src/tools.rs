@@ -22,6 +22,8 @@ pub struct Modules {
     pub search: bool,
     pub plan: bool,
     pub background: bool,
+    pub web: bool,
+    pub sandbox: bool,
 }
 
 impl Modules {
@@ -63,6 +65,9 @@ pub fn specs_for(m: Modules) -> Vec<ToolSpec> {
     if m.plan {
         v.push(crate::plan::spec());
     }
+    if m.web {
+        v.push(crate::web::spec());
+    }
     if m.background {
         if let Some(bash) = v.iter_mut().find(|t| t.name == "Bash") {
             crate::background::extend_bash(bash);
@@ -88,6 +93,7 @@ pub fn run_with(
             crate::background::start(cwd, input)
         }
         "TaskStop" if m.background => crate::background::stop(input),
+        "WebFetch" if m.web => crate::web::fetch(input),
         _ => run(name, input, cwd, stop),
     }
 }
@@ -233,6 +239,7 @@ fn read(cwd: &Path, input: &Value) -> Result<String, String> {
 
 fn write(cwd: &Path, input: &Value) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "file_path")?);
+    crate::sandbox::check_write(&path)?;
     let content = str_arg(input, "content")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -247,6 +254,7 @@ fn write(cwd: &Path, input: &Value) -> Result<String, String> {
 
 fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "file_path")?);
+    crate::sandbox::check_write(&path)?;
     let old = str_arg(input, "old_string")?;
     let new = str_arg(input, "new_string")?;
     let err = |e: std::io::Error| format!("{}: {e}", path.display());
@@ -291,10 +299,8 @@ fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<Str
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .min(MAX_TIMEOUT_MS),
     );
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(cwd)
+    let mut cmd = crate::sandbox::bash(command);
+    cmd.current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -391,7 +397,7 @@ pub(crate) fn kill(child: &mut std::process::Child) {
 /// Long output keeps its first quarter and last three quarters of the budget,
 /// where commands usually say what they ran and how they ended. The full text
 /// goes to a log file the model can read.
-fn shorten(text: &str) -> String {
+pub(crate) fn shorten(text: &str) -> String {
     let text = text.strip_suffix('\n').unwrap_or(text);
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() <= MAX_LINES && text.len() <= MAX_BYTES {
@@ -577,6 +583,7 @@ mod tests {
             search: true,
             plan: true,
             background: true,
+            ..Modules::default()
         };
         assert_eq!(
             names(standard),
@@ -604,6 +611,29 @@ mod tests {
             &mut || false,
         );
         assert_eq!(off, Err("unknown tool: Grep".into()));
+    }
+
+    #[test]
+    fn the_full_profile_adds_web_and_sandbox() {
+        let full = crate::profile::load(Path::new("/nonexistent"), "full")
+            .unwrap()
+            .modules;
+        assert!(full.sandbox);
+        let names: Vec<String> = specs_for(full).into_iter().map(|t| t.name).collect();
+        assert_eq!(
+            names,
+            [
+                "Read",
+                "Write",
+                "Edit",
+                "Bash",
+                "Grep",
+                "Glob",
+                "TodoWrite",
+                "WebFetch",
+                "TaskStop"
+            ]
+        );
     }
 
     #[test]

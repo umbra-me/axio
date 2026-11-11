@@ -12,6 +12,7 @@ mod plugin_cli;
 mod plugins;
 mod profile;
 mod provider;
+mod sandbox;
 mod search;
 mod session;
 mod settings;
@@ -20,6 +21,7 @@ mod sse;
 mod term;
 mod toml_lite;
 mod tools;
+mod web;
 
 use agent::{Agent, Ui};
 use provider::{Delta, Model, Stop, Usage};
@@ -43,7 +45,7 @@ Options:
   -c, --continue        Continue the most recent session in this directory
   -s, --session <file>  Continue a session file
       --no-session      Do not save this session
-      --profile <name>  minimal, standard (default) or one in
+      --profile <name>  minimal, standard (default), full or one in
                         ~/.axio/agent/profiles/ (env AXIO_PROFILE)
       --trust           Trust this project's configuration without asking
       --no-project-config  Ignore this project's .axio/ and .mcp.json
@@ -685,6 +687,13 @@ fn run() -> Result<ExitCode, String> {
     let started = mcp::Mcp::start(&servers, &cwd);
     for failed in &started.failed {
         eprintln!("axio: MCP server failed to start: {failed}");
+    }
+    if profile.modules.sandbox {
+        let root = settings::project_root(&cwd);
+        sandbox::activate(sandbox::Sandbox::for_project(
+            &root,
+            config.sandbox_network.unwrap_or(false),
+        ))?;
     }
     agent.set_tools(profile.modules, started);
 

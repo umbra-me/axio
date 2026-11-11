@@ -34,7 +34,7 @@ cargo test --locked
 - `src/import.rs`, `src/toml_lite.rs`: offers from other harnesses, and the TOML subset they need
 - `src/plugin_cli.rs`: `axio plugin install | list | update | remove`
 - `src/profile.rs`, `src/plugins.rs`: profiles and plugin folders
-- `src/search.rs`, `src/plan.rs`, `src/background.rs`: the built-in modules
+- `src/search.rs`, `src/plan.rs`, `src/background.rs`, `src/web.rs`, `src/sandbox.rs`: the built-in modules
 - `src/skills.rs`: skills, slash commands and the small frontmatter reader
 - `src/mcp.rs`: MCP stdio client (tests run the test binary as a stub server)
 - `src/hooks.rs`: hook loading, matching, running and merging replies
