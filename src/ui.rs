@@ -39,6 +39,8 @@ pub struct Term {
     tool: Option<(String, Value)>,
     /// Where an Edit's old text began, read before it ran.
     edit_at: Option<usize>,
+    /// Lines the user sent during this turn, not yet given to the model.
+    queued: Vec<String>,
     /// The latest tool call's header and full result, for /output.
     pub last_output: Option<(String, String)>,
     /// Summary of the model's current thinking, shown after the spinner.
@@ -75,6 +77,7 @@ impl Term {
             tool: None,
             edit_at: None,
             last_output: None,
+            queued: Vec::new(),
             writing: None,
             thought: String::new(),
             last: Shown::Nothing,
@@ -87,6 +90,12 @@ impl Term {
 
     pub fn dim(&self, s: &str) -> String {
         self.paint(DIM, s)
+    }
+
+    /// Lines sent during the turn that the model never got to; they become
+    /// the next prompt.
+    pub fn take_queued(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.queued)
     }
 
     pub fn begin_turn(&mut self) {
@@ -137,7 +146,14 @@ impl Term {
         let width = term_width().saturating_sub(4);
         let mut text = fit(&format!("{label}{time}"), width);
         let room = width.saturating_sub(term::text_width(&text) + 3);
-        if let Some(note) = latest_line(&self.thought, room) {
+        let typing = self.keys.as_ref().map(|k| k.typing()).unwrap_or_default();
+        let note = if typing.is_empty() {
+            latest_line(&self.thought, room)
+        } else {
+            // What the user is typing, so they are not typing blind.
+            Some(fit_tail(&format!("› {} (Enter sends it)", typing.replace('\n', " ")), room))
+        };
+        if let Some(note) = note {
             text.push_str(&format!(" · {note}"));
         }
         eprint!(
@@ -845,7 +861,24 @@ impl Ui for Term {
             self.thought = line;
         }
         self.tick(false);
-        self.keys.as_mut().is_some_and(|k| k.stop_requested())
+        let stop = self.keys.as_mut().is_some_and(|k| k.stop_requested());
+        let sent = self
+            .keys
+            .as_mut()
+            .map(|k| k.take_steered())
+            .unwrap_or_default();
+        for line in sent {
+            self.notice(&format!(
+                "queued: {} (the model sees it at its next step)",
+                clip(&line, 80)
+            ));
+            self.queued.push(line);
+        }
+        stop
+    }
+
+    fn steered(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.queued)
     }
 
     fn ask(&mut self, question: &str) -> bool {

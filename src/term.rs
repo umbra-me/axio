@@ -143,6 +143,8 @@ pub struct Keys {
     pending: VecDeque<u8>,
     /// Keys typed during a turn, replayed into the next prompt.
     typed_ahead: VecDeque<Key>,
+    /// Lines sent with Enter during a turn, for the model mid-turn.
+    steered: Vec<String>,
 }
 
 impl Keys {
@@ -161,6 +163,7 @@ impl Keys {
             rx,
             pending: VecDeque::new(),
             typed_ahead: VecDeque::new(),
+            steered: Vec::new(),
         }
     }
 
@@ -197,11 +200,46 @@ impl Keys {
                     self.typed_ahead.clear();
                     return true;
                 }
+                Some(Key::Enter) => {
+                    let line = typed_text(self.typed_ahead.drain(..));
+                    if !line.trim().is_empty() {
+                        self.steered.push(line.trim().to_string());
+                    }
+                }
                 Some(k) => self.typed_ahead.push_back(k),
                 None => return false,
             }
         }
     }
+}
+
+impl Keys {
+    /// What the user has typed so far during this turn.
+    pub fn typing(&self) -> String {
+        typed_text(self.typed_ahead.iter().cloned())
+    }
+
+    /// Lines the user sent with Enter while a turn ran.
+    pub fn take_steered(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.steered)
+    }
+}
+
+/// The text a run of keys types, applying backspaces.
+fn typed_text(keys: impl Iterator<Item = Key>) -> String {
+    let mut s = String::new();
+    for k in keys {
+        match k {
+            Key::Char(c) => s.push(c),
+            Key::Paste(p) => s.push_str(&p),
+            Key::AltEnter => s.push('\n'),
+            Key::Backspace => {
+                s.pop();
+            }
+            _ => {}
+        }
+    }
+    s
 }
 
 static SAVED: OnceLock<String> = OnceLock::new();
