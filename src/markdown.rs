@@ -19,6 +19,10 @@ pub struct Markdown {
     in_code: bool,
     /// Without colour: whether the last text printed left a line open.
     mid_line: bool,
+    /// Rows of a table being read; it prints aligned once it ends.
+    table: Vec<String>,
+    /// Terminal columns, so a table too wide for them prints as written.
+    pub width: usize,
     pub color: bool,
 }
 
@@ -59,10 +63,11 @@ impl Markdown {
             };
         }
         if self.pending.is_empty() && self.open.is_none() {
-            return String::new();
+            return self.end_table();
         }
         let rest = std::mem::take(&mut self.pending);
-        self.finish(&rest)
+        let out = self.finish(&rest);
+        out + &self.end_table()
     }
 
     /// Forgets code-block state between replies.
@@ -70,16 +75,101 @@ impl Markdown {
         self.pending.clear();
         self.open = None;
         self.in_code = false;
+        self.table.clear();
         self.mid_line = false;
     }
 
     fn finish(&mut self, rest: &str) -> String {
-        let mut out = match self.open.take() {
+        if self.open.is_none() && !self.in_code && rest.trim_start().starts_with('|') {
+            self.table.push(rest.trim().to_string());
+            return String::new();
+        }
+        let mut out = self.end_table();
+        out += &match self.open.take() {
             Some(close) if self.in_code => format!("{rest}{close}"),
             Some(close) => format!("{}{close}", inline_in(rest, base(close))),
             None => self.line(rest),
         };
         out.push('\n');
+        out
+    }
+
+    /// Prints a finished table with aligned columns: a bold header, a rule,
+    /// then the rows. Without a header rule, or when too wide, the rows
+    /// print as written.
+    fn end_table(&mut self) -> String {
+        let rows = std::mem::take(&mut self.table);
+        if rows.is_empty() {
+            return String::new();
+        }
+        let cells = |row: &str| -> Vec<String> {
+            let inner = row.trim().trim_start_matches('|');
+            let inner = inner.strip_suffix('|').unwrap_or(inner);
+            inner.split('|').map(|c| c.trim().to_string()).collect()
+        };
+        let is_rule = |row: &str| {
+            cells(row)
+                .iter()
+                .all(|c| !c.is_empty() && c.chars().all(|ch| "-: ".contains(ch)))
+        };
+        let raw = || {
+            rows.iter()
+                .map(|r| format!("{}\n", inline(r)))
+                .collect::<String>()
+        };
+        if rows.len() < 2 || !is_rule(&rows[1]) {
+            return raw();
+        }
+        let right: Vec<bool> = cells(&rows[1])
+            .iter()
+            .map(|c| c.ends_with(':') && !c.starts_with(':'))
+            .collect();
+        let body: Vec<Vec<String>> = rows
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != 1)
+            .map(|(_, r)| cells(r).iter().map(|c| inline(c)).collect())
+            .collect();
+        let columns = body.iter().map(Vec::len).max().unwrap_or(0);
+        let visible = |s: &str| crate::term::text_width(&crate::tools::strip_ansi(s));
+        let widths: Vec<usize> = (0..columns)
+            .map(|c| {
+                body.iter()
+                    .filter_map(|r| r.get(c))
+                    .map(|s| visible(s))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+        let total = widths.iter().sum::<usize>() + 3 * columns.saturating_sub(1);
+        if self.width > 0 && total > self.width {
+            return stacked(&body);
+        }
+        let mut out = String::new();
+        for (i, row) in body.iter().enumerate() {
+            let line: Vec<String> = (0..columns)
+                .map(|c| {
+                    let cell = row.get(c).map_or("", String::as_str);
+                    let pad = " ".repeat(widths[c] - visible(cell));
+                    let cell = if i == 0 {
+                        format!("{BOLD}{cell}{NO_BOLD}")
+                    } else {
+                        cell.to_string()
+                    };
+                    if right.get(c) == Some(&true) {
+                        format!("{pad}{cell}")
+                    } else {
+                        format!("{cell}{pad}")
+                    }
+                })
+                .collect();
+            out.push_str(line.join(&format!(" {DIM}│{NO_BOLD} ")).trim_end());
+            out.push('\n');
+            if i == 0 {
+                let rule: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
+                out.push_str(&format!("{DIM}{}{NO_BOLD}\n", rule.join("─┼─")));
+            }
+        }
         out
     }
 
@@ -142,9 +232,6 @@ impl Markdown {
         if matches!(trimmed, "---" | "***" | "___") {
             return format!("{DIM}{}{NO_BOLD}", "─".repeat(40));
         }
-        if trimmed.starts_with('|') && trimmed.chars().all(|c| "|-: ".contains(c)) {
-            return format!("{DIM}{line}{NO_BOLD}");
-        }
         let (prefix, skip, close) = block(trimmed);
         format!(
             "{indent}{prefix}{}{close}",
@@ -170,6 +257,28 @@ fn block(trimmed: &str) -> (String, usize, &'static str) {
         );
     }
     (String::new(), 0, "")
+}
+
+/// A table too wide for the terminal, one row at a time: its first cell in
+/// bold, then each other cell under its column name.
+fn stacked(body: &[Vec<String>]) -> String {
+    let Some((header, rows)) = body.split_first() else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for row in rows {
+        out.push_str(&format!(
+            "{BOLD}{}{NO_BOLD}\n",
+            row.first().map_or("", String::as_str)
+        ));
+        for (name, cell) in header.iter().zip(row).skip(1) {
+            out.push_str(&format!(
+                "  {DIM}{}:{NO_BOLD} {cell}\n",
+                crate::tools::strip_ansi(name)
+            ));
+        }
+    }
+    out
 }
 
 /// The style a line's prefix opened, to restore after an inner span ends.
@@ -239,7 +348,6 @@ fn heading(line: &str) -> Option<&str> {
 }
 
 /// `**bold**`, `*italic*`, `` `code` `` and `[text](url)` in one line.
-#[cfg(test)]
 fn inline(s: &str) -> String {
     inline_in(s, "")
 }
@@ -373,6 +481,40 @@ mod tests {
         assert_eq!(
             md.push("](https://x) ok "),
             "the docs\x1b[2m (https://x)\x1b[22m ok "
+        );
+    }
+
+    #[test]
+    fn tables_print_aligned_once_they_end() {
+        let mut md = Markdown::new(true);
+        assert_eq!(
+            md.push("| Function | Raises |\n|---|---:|\n| `area` | 2 |\n"),
+            "",
+            "held while the table runs"
+        );
+        let out = md.push("| perimeter | 10 |\nAfter.\n");
+        assert_eq!(
+            out,
+            format!(
+                "{BOLD}Function{NO_BOLD}  {DIM}│{NO_BOLD} {BOLD}Raises{NO_BOLD}\n\
+                 {DIM}──────────┼───────{NO_BOLD}\n\
+                 {CODE}area{NO_COLOR}      {DIM}│{NO_BOLD}      2\n\
+                 perimeter {DIM}│{NO_BOLD}     10\n\
+                 After.\n"
+            )
+        );
+        md.width = 10;
+        md.push("| Lang | Speed |\n|---|---|\n| Rust | slow builds |\n");
+        assert_eq!(
+            md.flush(),
+            format!("{BOLD}Rust{NO_BOLD}\n  {DIM}Speed:{NO_BOLD} slow builds\n"),
+            "too wide: one row at a time"
+        );
+        md.push("| no rule |\n| here |\n");
+        assert_eq!(
+            md.flush(),
+            "| no rule |\n| here |\n",
+            "not a table: as written"
         );
     }
 

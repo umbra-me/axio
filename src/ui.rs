@@ -388,8 +388,18 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
-/// A path relative to the working directory when it is inside it.
+/// A path relative to the working directory when it is inside it, with
+/// `~` for home, and the middle cut from very long ones.
 pub fn short_path(p: &str, cwd: &Path) -> String {
+    let short = relative_path(p, cwd);
+    let parts: Vec<&str> = short.split('/').collect();
+    if term::text_width(&short) > 48 && parts.len() > 3 {
+        return format!("…/{}", parts[parts.len() - 2..].join("/"));
+    }
+    short
+}
+
+fn relative_path(p: &str, cwd: &Path) -> String {
     let path = Path::new(p);
     match path.strip_prefix(cwd) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
@@ -721,6 +731,7 @@ impl Ui for Term {
         match d {
             Delta::Text(t) => {
                 self.unspin();
+                self.md.width = term_width();
                 let out = self.md.push(t);
                 if !out.trim().is_empty() || self.last == Shown::Text {
                     self.shown(Shown::Text);
@@ -878,6 +889,16 @@ mod tests {
                 "~/a.md"
             );
         }
+    }
+
+    #[test]
+    fn very_long_paths_keep_their_end() {
+        let long = "/private/tmp/claude-501/some-very-long-session-directory/scratch/h.X/out.s";
+        assert_eq!(short_path(long, Path::new("/elsewhere")), "…/h.X/out.s");
+        assert_eq!(
+            short_path("/a/b/c.rs", Path::new("/elsewhere")),
+            "/a/b/c.rs"
+        );
     }
 
     #[test]
