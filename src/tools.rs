@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 const MAX_LINES: usize = 2000;
 const MAX_BYTES: usize = 50 * 1024;
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+const MAX_TIMEOUT_MS: u64 = 600_000;
 
 #[derive(Clone)]
 pub struct ToolSpec {
@@ -18,55 +19,55 @@ pub struct ToolSpec {
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
-            name: "read",
+            name: "Read",
             description: "Read a text file. Output is cut at 2000 lines or 50KB; use offset and limit to page through larger files.",
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path, relative to the working directory or absolute"},
+                    "file_path": {"type": "string", "description": "File path, relative to the working directory or absolute"},
                     "offset": {"type": "integer", "description": "1-based line to start from"},
                     "limit": {"type": "integer", "description": "Maximum number of lines"}
                 },
-                "required": ["path"],
+                "required": ["file_path"],
                 "additionalProperties": false
             }),
         },
         ToolSpec {
-            name: "write",
+            name: "Write",
             description: "Write a file, creating parent directories and replacing any existing content.",
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
+                    "file_path": {"type": "string"},
                     "content": {"type": "string"}
                 },
-                "required": ["path", "content"],
+                "required": ["file_path", "content"],
                 "additionalProperties": false
             }),
         },
         ToolSpec {
-            name: "edit",
-            description: "Replace exact text in a file. old_text must match exactly once, whitespace included; add surrounding lines to make it unique, or set replace_all to change every occurrence (handy for renames). An empty old_text creates a new file containing new_text.",
+            name: "Edit",
+            description: "Replace exact text in a file. old_string must match exactly once, whitespace included; add surrounding lines to make it unique, or set replace_all to change every occurrence (handy for renames). An empty old_string creates a new file containing new_string.",
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
-                    "old_text": {"type": "string"},
-                    "new_text": {"type": "string"},
+                    "file_path": {"type": "string"},
+                    "old_string": {"type": "string"},
+                    "new_string": {"type": "string"},
                     "replace_all": {"type": "boolean", "description": "Replace every occurrence (default false)"}
                 },
-                "required": ["path", "old_text", "new_text"],
+                "required": ["file_path", "old_string", "new_string"],
                 "additionalProperties": false
             }),
         },
         ToolSpec {
-            name: "bash",
+            name: "Bash",
             description: "Run a bash command in the working directory. Returns stdout and stderr combined. Long output keeps its beginning and end, and the result names a log file holding the full output, which you can read or search.",
             schema: json!({
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"},
-                    "timeout": {"type": "integer", "description": "Seconds before the command is killed (default 120)"}
+                    "timeout": {"type": "integer", "description": "Milliseconds before the command is killed (default 120000, at most 600000)"}
                 },
                 "required": ["command"],
                 "additionalProperties": false
@@ -90,10 +91,10 @@ pub fn run(
         return Err(format!("tool input was not valid JSON: {raw}"));
     }
     match name {
-        "read" => read(cwd, input),
-        "write" => write(cwd, input),
-        "edit" => edit(cwd, input),
-        "bash" => bash(cwd, input, stop),
+        "Read" => read(cwd, input),
+        "Write" => write(cwd, input),
+        "Edit" => edit(cwd, input),
+        "Bash" => bash(cwd, input, stop),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -115,7 +116,7 @@ fn resolve(cwd: &Path, path: &str) -> PathBuf {
 }
 
 fn read(cwd: &Path, input: &Value) -> Result<String, String> {
-    let path = resolve(cwd, str_arg(input, "path")?);
+    let path = resolve(cwd, str_arg(input, "file_path")?);
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
     let offset = input["offset"].as_u64().unwrap_or(1).max(1) as usize;
@@ -155,7 +156,7 @@ fn read(cwd: &Path, input: &Value) -> Result<String, String> {
 }
 
 fn write(cwd: &Path, input: &Value) -> Result<String, String> {
-    let path = resolve(cwd, str_arg(input, "path")?);
+    let path = resolve(cwd, str_arg(input, "file_path")?);
     let content = str_arg(input, "content")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -169,14 +170,14 @@ fn write(cwd: &Path, input: &Value) -> Result<String, String> {
 }
 
 fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
-    let path = resolve(cwd, str_arg(input, "path")?);
-    let old = str_arg(input, "old_text")?;
-    let new = str_arg(input, "new_text")?;
+    let path = resolve(cwd, str_arg(input, "file_path")?);
+    let old = str_arg(input, "old_string")?;
+    let new = str_arg(input, "new_string")?;
     let err = |e: std::io::Error| format!("{}: {e}", path.display());
     if old.is_empty() {
         if path.exists() {
             return Err(format!(
-                "{} already exists; give old_text, or use write to replace it",
+                "{} already exists; give old_string, or use Write to replace it",
                 path.display()
             ));
         }
@@ -189,9 +190,9 @@ fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
     let text = std::fs::read_to_string(&path).map_err(err)?;
     let all = input["replace_all"].as_bool().unwrap_or(false);
     match text.matches(old).count() {
-        0 => Err(format!("old_text not found in {}", path.display())),
+        0 => Err(format!("old_string not found in {}", path.display())),
         n if n > 1 && !all => Err(format!(
-            "old_text matches {n} times in {}; include more context or set replace_all",
+            "old_string matches {n} times in {}; include more context or set replace_all",
             path.display()
         )),
         n => {
@@ -208,7 +209,12 @@ fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
 
 fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<String, String> {
     let command = str_arg(input, "command")?;
-    let timeout = Duration::from_secs(input["timeout"].as_u64().unwrap_or(DEFAULT_TIMEOUT_SECS));
+    let timeout = Duration::from_millis(
+        input["timeout"]
+            .as_u64()
+            .unwrap_or(DEFAULT_TIMEOUT_MS)
+            .min(MAX_TIMEOUT_MS),
+    );
     let mut cmd = Command::new("bash");
     cmd.arg("-c")
         .arg(command)
@@ -376,29 +382,29 @@ mod tests {
     fn write_edit_read_round_trip() {
         let dir = tmp();
         run(
-            "write",
-            &json!({"path": "a/b.txt", "content": "one\ntwo\ntwo\n"}),
+            "Write",
+            &json!({"file_path": "a/b.txt", "content": "one\ntwo\ntwo\n"}),
             &dir,
             &mut || false,
         )
         .unwrap();
         let dup = run(
-            "edit",
-            &json!({"path": "a/b.txt", "old_text": "two", "new_text": "2"}),
+            "Edit",
+            &json!({"file_path": "a/b.txt", "old_string": "two", "new_string": "2"}),
             &dir,
             &mut || false,
         );
         assert!(dup.unwrap_err().contains("matches 2 times"));
         run(
-            "edit",
-            &json!({"path": "a/b.txt", "old_text": "one\n", "new_text": "1\n"}),
+            "Edit",
+            &json!({"file_path": "a/b.txt", "old_string": "one\n", "new_string": "1\n"}),
             &dir,
             &mut || false,
         )
         .unwrap();
         let out = run(
-            "read",
-            &json!({"path": "a/b.txt", "offset": 2, "limit": 1}),
+            "Read",
+            &json!({"file_path": "a/b.txt", "offset": 2, "limit": 1}),
             &dir,
             &mut || false,
         )
@@ -415,7 +421,7 @@ mod tests {
         let dir = tmp();
         assert_eq!(
             run(
-                "bash",
+                "Bash",
                 &json!({"command": "echo hi; echo err >&2"}),
                 &dir,
                 &mut || false
@@ -426,14 +432,14 @@ mod tests {
             2
         );
         assert!(
-            run("bash", &json!({"command": "exit 3"}), &dir, &mut || false)
+            run("Bash", &json!({"command": "exit 3"}), &dir, &mut || false)
                 .unwrap_err()
                 .ends_with("[exit code 3]")
         );
         let started = Instant::now();
         let err = run(
-            "bash",
-            &json!({"command": "sleep 5 | cat", "timeout": 1}),
+            "Bash",
+            &json!({"command": "sleep 5 | cat", "timeout": 1000}),
             &dir,
             &mut || false,
         )
@@ -449,7 +455,7 @@ mod tests {
         let started = Instant::now();
         let mut polls = 0;
         let err = run(
-            "bash",
+            "Bash",
             &json!({"command": "echo begun; sleep 5"}),
             &dir,
             &mut || {
@@ -464,10 +470,34 @@ mod tests {
     }
 
     #[test]
+    fn uses_claude_code_tool_names_and_parameters() {
+        let specs = specs();
+        let shape: Vec<(&str, Vec<&str>)> = specs
+            .iter()
+            .map(|t| {
+                let props = t.schema["properties"].as_object().unwrap();
+                (t.name, props.keys().map(|k| k.as_str()).collect())
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("Read", vec!["file_path", "limit", "offset"]),
+                ("Write", vec!["content", "file_path"]),
+                (
+                    "Edit",
+                    vec!["file_path", "new_string", "old_string", "replace_all"]
+                ),
+                ("Bash", vec!["command", "timeout"]),
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_unparsed_input() {
         assert!(
             run(
-                "read",
+                "Read",
                 &Value::String("{\"pa".into()),
                 Path::new("."),
                 &mut || false
@@ -503,7 +533,7 @@ mod tests {
         let dir = tmp();
         let mut polls = 0;
         let err = run(
-            "bash",
+            "Bash",
             &json!({"command": "trap 'echo cleaned up; exit 0' TERM; sleep 5 & wait"}),
             &dir,
             &mut || {
@@ -521,24 +551,24 @@ mod tests {
         let dir = tmp();
         let no = &mut || false;
         run(
-            "edit",
-            &json!({"path": "n/new.txt", "old_text": "", "new_text": "a a"}),
+            "Edit",
+            &json!({"file_path": "n/new.txt", "old_string": "", "new_string": "a a"}),
             &dir,
             no,
         )
         .unwrap();
         assert!(
             run(
-                "edit",
-                &json!({"path": "n/new.txt", "old_text": "", "new_text": "x"}),
+                "Edit",
+                &json!({"file_path": "n/new.txt", "old_string": "", "new_string": "x"}),
                 &dir,
                 no
             )
             .is_err()
         );
         let out = run(
-            "edit",
-            &json!({"path": "n/new.txt", "old_text": "a", "new_text": "b", "replace_all": true}),
+            "Edit",
+            &json!({"file_path": "n/new.txt", "old_string": "a", "new_string": "b", "replace_all": true}),
             &dir,
             no,
         )

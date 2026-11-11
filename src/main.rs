@@ -5,6 +5,7 @@ mod editor;
 mod message;
 mod provider;
 mod session;
+mod settings;
 mod sse;
 mod term;
 mod tools;
@@ -29,6 +30,8 @@ Options:
   -c, --continue        Continue the most recent session in this directory
   -s, --session <file>  Continue a session file
       --no-session      Do not save this session
+      --trust           Trust this project's configuration without asking
+      --no-project-config  Ignore this project's .axio/ and .mcp.json
   -h, --help            Show this help
   -V, --version         Show the version
 
@@ -48,6 +51,8 @@ struct Args {
     resume_latest: bool,
     session: Option<PathBuf>,
     no_session: bool,
+    trust: bool,
+    no_project_config: bool,
     prompt: Vec<String>,
 }
 
@@ -71,6 +76,8 @@ fn parse_args() -> Result<Option<Args>, String> {
             "-c" | "--continue" => a.resume_latest = true,
             "-s" | "--session" => a.session = Some(value(&arg)?.into()),
             "--no-session" => a.no_session = true,
+            "--trust" => a.trust = true,
+            "--no-project-config" => a.no_project_config = true,
             "--" => a.prompt.extend(it.by_ref()),
             s if s.starts_with('-') && s.len() > 1 => return Err(format!("unknown option {s}")),
             _ => a.prompt.push(arg),
@@ -114,8 +121,8 @@ impl Ui for Term {
 
     fn tool_start(&mut self, name: &str, input: &Value) {
         let detail = match name {
-            "bash" => input["command"].as_str().unwrap_or("").to_string(),
-            _ => input["path"].as_str().unwrap_or("").to_string(),
+            "Bash" => input["command"].as_str().unwrap_or("").to_string(),
+            _ => input["file_path"].as_str().unwrap_or("").to_string(),
         };
         let first = detail.lines().next().unwrap_or("");
         eprintln!("\n{}", self.dim(&format!("→ {name} {first}")));
@@ -282,6 +289,52 @@ fn read_prompt(editor: &mut editor::Editor, keys: &mut term::Keys) -> Input {
     }
 }
 
+/// The project root when its configuration may load. Asks once per project in
+/// interactive mode; `-p` runs only use projects trusted earlier or `--trust`.
+fn trusted_project(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    args: &Args,
+    interactive: bool,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let root = settings::project_root(cwd);
+    let files = settings::project_config(&root);
+    if args.no_project_config || files.is_empty() {
+        return Ok(None);
+    }
+    let mut trust = settings::Trust::load(home);
+    let trusted = match trust.decision(&root) {
+        settings::Decision::Trusted => true,
+        _ if args.trust => {
+            trust.record(home, &root, true)?;
+            true
+        }
+        settings::Decision::Declined => false,
+        settings::Decision::Unknown if interactive => {
+            eprintln!("This project has configuration that can make axio run programs:");
+            for f in &files {
+                eprintln!("  {}", f.display());
+            }
+            eprint!("Trust {}? [y/N] ", root.display());
+            let _ = io::stderr().flush();
+            let mut answer = String::new();
+            io::stdin()
+                .read_line(&mut answer)
+                .map_err(|e| e.to_string())?;
+            let yes = matches!(answer.trim(), "y" | "Y" | "yes");
+            trust.record(home, &root, yes)?;
+            yes
+        }
+        settings::Decision::Unknown => false,
+    };
+    if !trusted {
+        eprintln!(
+            "axio: ignoring this project's configuration (not trusted; run with --trust to allow it)"
+        );
+    }
+    Ok(trusted.then_some(root))
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -297,18 +350,27 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     };
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let home = context::home();
+    let interactive = !args.print && io::stdin().is_terminal();
+    let project = trusted_project(&home, &cwd, &args, interactive)?;
+    let config = settings::Settings::load(&home, project.as_deref())?;
     let spec = args
         .model
         .or_else(|| std::env::var("AXIO_MODEL").ok())
+        .or(config.model)
         .unwrap_or_else(|| provider::DEFAULT_MODEL.into());
     let mut agent = Agent::new(
         Model::parse(&spec),
         cwd.clone(),
         context::system_prompt(&cwd),
     );
-    agent.effort = args.effort.or_else(|| std::env::var("AXIO_EFFORT").ok());
+    agent.effort = args
+        .effort
+        .clone()
+        .or_else(|| std::env::var("AXIO_EFFORT").ok())
+        .or(config.effort);
 
-    let sessions = session::dir_for(&context::home(), &cwd);
+    let sessions = session::dir_for(&home, &cwd);
     let resume = match (args.session, args.resume_latest) {
         (Some(p), _) => Some(p),
         (None, true) => Some(session::latest(&sessions).ok_or("no session to continue here")?),

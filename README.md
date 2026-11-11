@@ -13,8 +13,8 @@ axio -c                   # continue the last session in this directory
 
 ## What it does
 
-- **Four tools**: `read`, `write`, `edit`, `bash`. Anything else is a command
-  the model can run.
+- **Four tools**: `Read`, `Write`, `Edit`, `Bash`, with Claude Code's names and
+  parameters, so hooks written for Claude Code, Codex or Grok match them.
 - **Providers**: Anthropic Messages (`anthropic/claude-opus-5-5`, the default)
   and any OpenAI-compatible chat completions endpoint (`openai/<id>`,
   `openrouter/<vendor>/<id>`, or `<name>/<id>` with `<NAME>_BASE_URL`).
@@ -26,6 +26,15 @@ axio -c                   # continue the last session in this directory
   replaced by your recent requests (about 20k tokens, verbatim) and a summary
   of everything else. `/compact` does it on
   demand; `AXIO_CONTEXT_WINDOW` and `AXIO_COMPACT_AT` override the numbers.
+
+## Settings and trust
+
+`~/.axio/agent/settings.json` holds `model`, `effort` and `profile`. A
+project's `.axio/settings.json` overrides them, but project configuration
+(`.axio/`, `.mcp.json`) can make axio run programs, so it loads only after you
+trust the project: axio asks once, remembers the answer in
+`~/.axio/agent/trust.json`, and `--trust` or `--no-project-config` decide it for
+one run. Flags beat environment variables, which beat settings.
 
 ## Keys
 
