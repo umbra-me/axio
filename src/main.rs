@@ -51,7 +51,9 @@ Options:
   -p, --print           Answer one prompt (argument or stdin) and exit
   -m, --model <model>   provider/model, e.g. anthropic/claude-opus-5-5,
                         openai/<id>, openrouter/<vendor>/<id> (env AXIO_MODEL)
-  -e, --effort <level>  Reasoning effort sent to the provider (env AXIO_EFFORT)
+  -e, --effort <level>  low, medium, high, xhigh or max (env AXIO_EFFORT)
+      --fast            Anthropic fast mode: up to 2.5x faster output at twice
+                        the price, on models that offer it (env AXIO_FAST=1)
   -c, --continue        Continue the most recent session in this directory
   -s, --session <file>  Continue a session file
       --no-session      Do not save this session
@@ -65,7 +67,8 @@ Options:
 
 Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Up/Down
 walk history, Esc or Ctrl-C stops a running turn, Ctrl-D exits.
-Commands: /new, /compact, /model <model>, /session, /help, /quit, plus your own
+Commands: /new, /compact, /model <model>, /effort <level>, /fast, /session,
+/help, /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
 ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY, <NAME>_BASE_URL and
@@ -77,6 +80,7 @@ struct Args {
     print: bool,
     model: Option<String>,
     effort: Option<String>,
+    fast: bool,
     resume_latest: bool,
     session: Option<PathBuf>,
     no_session: bool,
@@ -106,6 +110,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "-p" | "--print" => a.print = true,
             "-m" | "--model" => a.model = Some(value(&arg)?),
             "-e" | "--effort" => a.effort = Some(value(&arg)?),
+            "--fast" => a.fast = true,
             "-c" | "--continue" => a.resume_latest = true,
             "-s" | "--session" => a.session = Some(value(&arg)?.into()),
             "--no-session" => a.no_session = true,
@@ -119,6 +124,18 @@ fn parse_args() -> Result<Option<Args>, String> {
         }
     }
     Ok(Some(a))
+}
+
+/// The model with its effort and speed, for the header and /model.
+fn model_line(agent: &Agent) -> String {
+    let mut s = agent.model.id.clone();
+    if let Some(e) = &agent.effort {
+        s.push_str(&format!(" {e}"));
+    }
+    if agent.fast {
+        s.push_str(" fast");
+    }
+    s
 }
 
 fn history_path() -> std::path::PathBuf {
@@ -395,6 +412,8 @@ fn help(lib: &skills::Library) -> String {
     let mut rows: Vec<(String, String)> = [
         ("/new", "start a new session"),
         ("/model [provider/model]", "show or switch the model"),
+        ("/effort [level]", "show or set reasoning effort"),
+        ("/fast", "toggle fast mode (faster output, twice the price)"),
         ("/compact", "summarize the conversation now"),
         ("/profile", "show the profile, modules and plugins"),
         ("/session", "show the session file"),
@@ -676,6 +695,9 @@ fn run() -> Result<ExitCode, String> {
         .or_else(|| std::env::var("AXIO_EFFORT").ok())
         .or(config.effort)
         .or(profile.effort.clone());
+    agent.fast = args.fast
+        || std::env::var("AXIO_FAST").is_ok_and(|v| v == "1" || v == "true")
+        || config.fast.unwrap_or(false);
     agent.compact_ratio = profile.compact_at;
 
     let sessions = session::dir_for(&home, &cwd);
@@ -766,7 +788,7 @@ fn run() -> Result<ExitCode, String> {
         term.paint("\x1b[1m", "axio"),
         term.dim(&format!(
             "{} · {} · {}",
-            agent.model.id,
+            model_line(&agent),
             profile.name,
             ui::short_path(
                 &cwd.display().to_string(),
@@ -818,7 +840,29 @@ fn run() -> Result<ExitCode, String> {
                 Ok(false) => eprintln!("{}", term.dim("nothing older to compact")),
                 Err(e) => eprintln!("axio: {e}"),
             },
-            ("/model", "") => eprintln!("{}", agent.model),
+            ("/model", "") => eprintln!("{}", term.dim(&model_line(&agent))),
+            ("/effort", "") => eprintln!(
+                "{}",
+                term.dim(&format!(
+                    "effort: {} (low, medium, high, xhigh, max)",
+                    agent.effort.as_deref().unwrap_or("the model's default")
+                ))
+            ),
+            ("/effort", level) => {
+                agent.effort = Some(level.to_string());
+                eprintln!("{}", term.dim(&format!("effort: {level} for this session")));
+            }
+            ("/fast", _) => {
+                agent.fast = !agent.fast;
+                eprintln!(
+                    "{}",
+                    term.dim(if agent.fast {
+                        "fast mode on for this session: faster output at twice the price"
+                    } else {
+                        "fast mode off"
+                    })
+                );
+            }
             ("/model", m) => {
                 agent.model = Model::parse(m);
                 eprintln!("{}", term.dim(&format!("model: {}", agent.model)));

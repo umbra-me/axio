@@ -159,10 +159,11 @@ fn parse_stream<R: BufRead>(
             }
             if let Some(n) = tc["function"]["name"].as_str() {
                 c.name.push_str(n);
-                on(Delta::ToolCall);
+                on(Delta::ToolCall(n));
             }
-            c.args
-                .push_str(tc["function"]["arguments"].as_str().unwrap_or(""));
+            let part = tc["function"]["arguments"].as_str().unwrap_or("");
+            c.args.push_str(part);
+            on(Delta::ToolInput(part));
         }
         if let Some(r) = choice["finish_reason"].as_str() {
             stop = Some(match r {

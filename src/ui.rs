@@ -33,6 +33,8 @@ pub struct Term {
     last_frame: Instant,
     frame: usize,
     tool: Option<(String, Value)>,
+    /// The tool call the model is writing now.
+    writing: Option<Writing>,
     /// What the turn printed last, to put a blank line between text and tools.
     last: Shown,
 }
@@ -58,6 +60,7 @@ impl Term {
             last_frame: Instant::now(),
             frame: 0,
             tool: None,
+            writing: None,
             last: Shown::Nothing,
         }
     }
@@ -79,6 +82,18 @@ impl Term {
         self.turn_started = Instant::now();
         self.md.reset();
         self.last = Shown::Nothing;
+    }
+
+    /// Changes the label without restarting the clock.
+    fn relabel(&mut self, label: String) {
+        match &mut self.spinner {
+            Some((l, _)) if *l != label => {
+                *l = label;
+                self.tick(false);
+            }
+            Some(_) => {}
+            None => self.spin(&label),
+        }
     }
 
     fn spin(&mut self, label: &str) {
@@ -159,6 +174,79 @@ impl Term {
             self.turn_started.elapsed().as_secs_f64()
         ))
     }
+}
+
+/// Progress on a tool call whose input is still streaming.
+struct Writing {
+    name: String,
+    json: String,
+    lines: usize,
+    escaped: bool,
+}
+
+impl Writing {
+    fn new(name: &str) -> Writing {
+        Writing {
+            name: name.to_string(),
+            json: String::new(),
+            lines: 0,
+            escaped: false,
+        }
+    }
+
+    fn push(&mut self, part: &str) {
+        for c in part.chars() {
+            if self.escaped {
+                self.lines += usize::from(c == 'n');
+                self.escaped = false;
+            } else {
+                self.escaped = c == '\\';
+            }
+        }
+        self.json.push_str(part);
+    }
+
+    /// "Write src/main.rs · 212 lines", from what has arrived so far.
+    fn label(&self, cwd: &Path) -> String {
+        let mut input = serde_json::Map::new();
+        for key in ["file_path", "command", "pattern", "url"] {
+            if let Some(v) = string_field(&self.json, key) {
+                input.insert(key.into(), Value::String(v));
+            }
+        }
+        let (title, detail) = tool_title(&self.name, &Value::Object(input), cwd);
+        let mut s = format!("writing {title}");
+        if !detail.is_empty() {
+            s.push_str(&format!(" {detail}"));
+        }
+        if self.lines > 0 {
+            s.push_str(&format!(" · {} lines", self.lines + 1));
+        } else if self.json.len() >= 1024 {
+            s.push_str(&format!(" · {:.1} KB", self.json.len() as f64 / 1024.0));
+        }
+        s
+    }
+}
+
+/// A complete string field from partial JSON, if it has fully arrived.
+fn string_field(json: &str, key: &str) -> Option<String> {
+    let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
+    let rest = json[at..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let mut end = None;
+    let mut escaped = false;
+    for (i, c) in rest.char_indices() {
+        match (escaped, c) {
+            (true, _) => escaped = false,
+            (false, '\\') => escaped = true,
+            (false, '"') => {
+                end = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    serde_json::from_str(&format!("\"{}\"", &rest[..end?])).ok()
 }
 
 fn term_width() -> usize {
@@ -325,14 +413,24 @@ impl Ui for Term {
                 }
             }
             Delta::Thinking => self.spin("thinking"),
-            Delta::ToolCall => {
+            Delta::ToolCall(name) => {
                 self.settle();
-                self.spin("preparing a tool call");
+                let w = Writing::new(name);
+                self.spin(&w.label(&self.cwd));
+                self.writing = Some(w);
+            }
+            Delta::ToolInput(part) => {
+                if let Some(w) = &mut self.writing {
+                    w.push(part);
+                    let label = w.label(&self.cwd);
+                    self.relabel(label);
+                }
             }
         }
     }
 
     fn tool_start(&mut self, name: &str, input: &Value) {
+        self.writing = None;
         self.settle();
         self.shown(Shown::Tool);
         let (title, detail) = tool_title(name, input, &self.cwd);
@@ -426,6 +524,22 @@ mod tests {
             "github · create_issue"
         );
         assert_eq!(tool_title("TodoWrite", &json!({}), cwd).0, "Plan");
+    }
+
+    #[test]
+    fn streaming_tool_input_shows_progress() {
+        let cwd = Path::new("/w");
+        let mut w = Writing::new("Write");
+        assert_eq!(w.label(cwd), "writing Write");
+        w.push(r#"{"file_path": "/w/a.s", "content": "x\\nliteral\n"#);
+        w.push(r#"y\"#);
+        w.push(r#"nz"#);
+        assert_eq!(w.label(cwd), "writing Write a.s · 3 lines");
+        assert_eq!(string_field(r#"{"command": "ls \"a"#, "command"), None);
+        assert_eq!(
+            string_field(r#"{"command": "ls \"a\""}"#, "command").as_deref(),
+            Some(r#"ls "a""#)
+        );
     }
 
     #[test]
