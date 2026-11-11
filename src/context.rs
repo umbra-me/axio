@@ -51,7 +51,11 @@ pub fn system_prompt(cwd: &Path, skills: Option<&str>) -> String {
         prompt.push_str("\n\n");
         prompt.push_str(skills);
     }
-    for (path, text) in files(cwd) {
+    let found = files(cwd);
+    if found.is_empty() {
+        prompt.push_str("\n\nNo AGENTS.md or CLAUDE.md applies to the working directory.");
+    }
+    for (path, text) in found {
         prompt.push_str(&format!(
             "\n\n<project-instructions path=\"{}\">\n{}\n</project-instructions>",
             path.display(),

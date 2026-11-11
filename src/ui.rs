@@ -406,32 +406,112 @@ fn edit_diff(input: &Value, after: &str, color: bool) -> Option<Vec<String>> {
     let new_full = &after[line_start..line_end];
     let old_lines: Vec<&str> = old_full.lines().collect();
     let new_lines: Vec<&str> = new_full.lines().collect();
-    let last = first + old_lines.len().max(new_lines.len());
-    let width = last.to_string().len();
     let all: Vec<&str> = after.lines().collect();
-    let mut out = Vec::new();
+    // (sign, line number, text): the line before, the diff, the line after.
+    let mut rows: Vec<(char, usize, &str)> = Vec::new();
     if first > 1 {
-        out.push(paint(
-            DIM,
-            &format!("{:>width$}   {}", first - 1, all[first - 2]),
-        ));
+        rows.push((' ', first - 1, all[first - 2]));
     }
-    for (sign, code, lines) in [("-", RED, &old_lines), ("+", GREEN, &new_lines)] {
-        for (i, l) in lines.iter().take(8).enumerate() {
-            out.push(paint(code, &format!("{:>width$} {sign} {l}", first + i)));
-        }
-        if lines.len() > 8 {
-            out.push(paint(
-                DIM,
-                &format!("{:>width$}   … {} more", "", lines.len() - 8),
-            ));
-        }
+    for op in line_diff(&old_lines, &new_lines) {
+        rows.push(match op {
+            Op::Same(n) => (' ', first + n, new_lines[n]),
+            Op::Del(o) => ('-', first + o, old_lines[o]),
+            Op::Add(n) => ('+', first + n, new_lines[n]),
+        });
     }
     let next = first + new_lines.len();
     if let Some(l) = all.get(next - 1) {
-        out.push(paint(DIM, &format!("{next:>width$}   {l}")));
+        rows.push((' ', next, l));
+    }
+    let changed = |k: usize| rows.get(k).is_some_and(|r| r.0 != ' ');
+    let width = rows
+        .iter()
+        .map(|r| r.1)
+        .max()
+        .unwrap_or(1)
+        .to_string()
+        .len();
+    let (mut out, mut shown, mut gap) = (Vec::new(), 0, false);
+    let total = rows.iter().filter(|r| r.0 != ' ').count();
+    for (k, (sign, n, text)) in rows.iter().enumerate() {
+        let near = changed(k) || (k > 0 && changed(k - 1)) || changed(k + 1);
+        if !near {
+            gap = true;
+            continue;
+        }
+        if shown >= MAX_DIFF_LINES {
+            out.push(paint(
+                DIM,
+                &format!("{:>width$}   … {} more changed lines", "", total - shown),
+            ));
+            break;
+        }
+        if std::mem::take(&mut gap) {
+            out.push(paint(DIM, &format!("{:>width$}   ⋮", "")));
+        }
+        let code = match sign {
+            '-' => RED,
+            '+' => GREEN,
+            _ => DIM,
+        };
+        out.push(paint(code, &format!("{n:>width$} {sign} {text}")));
+        shown += usize::from(*sign != ' ');
     }
     Some(out)
+}
+
+const MAX_DIFF_LINES: usize = 16;
+
+#[derive(Debug, PartialEq)]
+enum Op {
+    Same(usize),
+    Del(usize),
+    Add(usize),
+}
+
+/// A line diff: the longest common subsequence for blocks of a few hundred
+/// lines, else common ends and a plain replacement in between.
+fn line_diff(a: &[&str], b: &[&str]) -> Vec<Op> {
+    let head = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let tail = a[head..]
+        .iter()
+        .rev()
+        .zip(b[head..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (am, bm) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
+    let mut ops: Vec<Op> = (0..head).map(Op::Same).collect();
+    if am.len() * bm.len() <= 250_000 {
+        // lcs[i][j]: common subsequence length of am[i..] and bm[j..].
+        let mut lcs = vec![vec![0u32; bm.len() + 1]; am.len() + 1];
+        for i in (0..am.len()).rev() {
+            for j in (0..bm.len()).rev() {
+                lcs[i][j] = if am[i] == bm[j] {
+                    lcs[i + 1][j + 1] + 1
+                } else {
+                    lcs[i + 1][j].max(lcs[i][j + 1])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < am.len() || j < bm.len() {
+            if i < am.len() && j < bm.len() && am[i] == bm[j] {
+                ops.push(Op::Same(head + j));
+                (i, j) = (i + 1, j + 1);
+            } else if j == bm.len() || (i < am.len() && lcs[i + 1][j] >= lcs[i][j + 1]) {
+                ops.push(Op::Del(head + i));
+                i += 1;
+            } else {
+                ops.push(Op::Add(head + j));
+                j += 1;
+            }
+        }
+    } else {
+        ops.extend((0..am.len()).map(|i| Op::Del(head + i)));
+        ops.extend((0..bm.len()).map(|j| Op::Add(head + j)));
+    }
+    ops.extend((b.len() - tail..b.len()).map(Op::Same));
+    ops
 }
 
 pub fn tool_lines(
@@ -450,6 +530,23 @@ pub fn tool_lines(
         }
     };
     let text = match result {
+        // A command's output is still output; only its status is the failure.
+        Err(e) if name == "Bash" => {
+            let lines: Vec<&str> = e.lines().filter(|l| !l.trim().is_empty()).collect();
+            let status = lines
+                .last()
+                .filter(|l| l.starts_with('[') && l.ends_with(']'))
+                .map(|l| l.trim_matches(['[', ']']));
+            let output = &lines[..lines.len() - usize::from(status.is_some())];
+            let start = output.len().saturating_sub(4);
+            let mut out = Vec::new();
+            if start > 0 {
+                out.push(paint(DIM, &format!("… {start} lines above")));
+            }
+            out.extend(output[start..].iter().map(|l| paint(DIM, &clip(l, 160))));
+            out.push(paint(RED, &format!("✗ {}", status.unwrap_or("failed"))));
+            return out;
+        }
         Err(e) => {
             let lines: Vec<&str> = e.lines().filter(|l| !l.trim().is_empty()).collect();
             let shown = lines.len().saturating_sub(4);
@@ -715,6 +812,33 @@ mod tests {
     }
 
     #[test]
+    fn line_diff_keeps_unchanged_lines_out_of_the_change() {
+        use Op::*;
+        assert_eq!(
+            line_diff(&["a", "b", "c"], &["a", "B", "c", "d"]),
+            [Same(0), Del(1), Add(1), Same(2), Add(3)]
+        );
+        let after = "x\ndef f(n=1):\n    \"\"\"Doc.\n\n    More.\n    \"\"\"\n    return n\n";
+        let input = json!({
+            "old_string": "def f():\n    \"\"\"Doc.\n\n    More.\n    \"\"\"\n    return 1",
+            "new_string": "def f(n=1):\n    \"\"\"Doc.\n\n    More.\n    \"\"\"\n    return n"
+        });
+        assert_eq!(
+            tool_lines("Edit", &input, &Ok("ok".into()), Some(after), false),
+            [
+                "1   x",
+                "2 - def f():",
+                "2 + def f(n=1):",
+                "3       \"\"\"Doc.",
+                "    ⋮",
+                "6       \"\"\"",
+                "7 -     return 1",
+                "7 +     return n",
+            ]
+        );
+    }
+
+    #[test]
     fn edits_show_numbered_lines_with_context() {
         let after = "fn main() {\n    let x = 2;\n    println!(\"{x}\");\n}\n";
         let input = json!({"old_string": "1", "new_string": "2"});
@@ -731,7 +855,7 @@ mod tests {
         let after = "fn f() {\n    done();\n}";
         assert_eq!(
             tool_lines("Edit", &added, &Ok("edited".into()), Some(after), false),
-            ["1   fn f() {", "2 - }", "2 +     done();", "3 + }"]
+            ["1   fn f() {", "2 +     done();", "3   }"]
         );
     }
 
@@ -776,7 +900,7 @@ mod tests {
                 None,
                 false
             ),
-            ["✗ boom", "✗ [exit code 1]"]
+            ["boom", "✗ exit code 1"]
         );
     }
 }
