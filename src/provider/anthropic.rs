@@ -1,4 +1,4 @@
-use super::{Delta, Reply, Request, Stop, Usage, env, post_stream};
+use super::{Delta, Reply, Request, Stop, Usage, post_stream};
 use crate::message::{Block, Message};
 use crate::sse;
 use serde_json::{Value, json};
@@ -7,14 +7,15 @@ use std::io::BufRead;
 const PROVIDER: &str = "anthropic";
 
 pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
-    let base = env("ANTHROPIC_BASE_URL").unwrap_or_else(|| "https://api.anthropic.com".into());
+    let base = crate::auth::get("ANTHROPIC_BASE_URL", PROVIDER, "baseUrl")
+        .unwrap_or_else(|| "https://api.anthropic.com".into());
     let mut headers = vec![("anthropic-version", "2023-06-01".to_string())];
-    if let Some(key) = env("ANTHROPIC_API_KEY") {
+    if let Some(key) = crate::auth::get("ANTHROPIC_API_KEY", PROVIDER, "apiKey") {
         headers.push(("x-api-key", key));
-    } else if let Some(token) = env("ANTHROPIC_AUTH_TOKEN") {
+    } else if let Some(token) = crate::auth::get("ANTHROPIC_AUTH_TOKEN", PROVIDER, "authToken") {
         headers.push(("authorization", format!("Bearer {token}")));
     } else {
-        return Err("set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN".into());
+        return Err("set ANTHROPIC_API_KEY, or run `axio auth set anthropic`".into());
     }
     let reader = post_stream(
         &format!("{}/v1/messages", base.trim_end_matches('/')),

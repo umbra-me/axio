@@ -1,5 +1,5 @@
 use super::anthropic::parse_input;
-use super::{Delta, Reply, Request, Stop, Usage, env, post_stream};
+use super::{Delta, Reply, Request, Stop, Usage, post_stream};
 use crate::message::{Block, Message};
 use crate::sse;
 use serde_json::{Value, json};
@@ -10,15 +10,16 @@ use std::io::BufRead;
 /// reads `<NAME>_BASE_URL` and an optional `<NAME>_API_KEY`.
 pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
     let name = req.model.provider.to_uppercase().replace('-', "_");
-    let base = env(&format!("{name}_BASE_URL"))
+    let provider = req.model.provider.as_str();
+    let base = crate::auth::get(&format!("{name}_BASE_URL"), provider, "baseUrl")
         .or_else(|| match req.model.provider.as_str() {
             "openai" => Some("https://api.openai.com/v1".into()),
             "openrouter" => Some("https://openrouter.ai/api/v1".into()),
             _ => None,
         })
-        .ok_or_else(|| format!("set {name}_BASE_URL for provider {}", req.model.provider))?;
+        .ok_or_else(|| format!("set {name}_BASE_URL, or run `axio auth set {provider} baseUrl`"))?;
     let mut headers = Vec::new();
-    if let Some(key) = env(&format!("{name}_API_KEY")) {
+    if let Some(key) = crate::auth::get(&format!("{name}_API_KEY"), provider, "apiKey") {
         headers.push(("authorization", format!("Bearer {key}")));
     }
     let reader = post_stream(
