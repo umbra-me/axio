@@ -391,21 +391,6 @@ impl Outcome {
     }
 }
 
-/// Plugin folders: each direct subfolder of `dir` that has `hooks/hooks.json`.
-pub fn plugin_hook_files(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<(PathBuf, PathBuf)> = entries
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir())
-        .map(|p| (p.join("hooks/hooks.json"), p))
-        .filter(|(f, _)| f.is_file())
-        .collect();
-    found.sort();
-    found
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,8 +553,9 @@ mod tests {
             project_dir: dir.clone(),
             ..Hooks::default()
         };
-        for (file, root) in plugin_hook_files(&dir) {
-            h.add_file(&file, Some(&root)).unwrap();
+        for p in crate::plugins::list(&dir, None) {
+            h.add_file(&p.root.join("hooks/hooks.json"), Some(&p.root))
+                .unwrap();
         }
         assert_eq!(h.skipped.len(), 1);
         assert!(h.skipped[0].ends_with("PermissionRequest has no axio event"));
@@ -582,8 +568,9 @@ mod tests {
     fn the_example_guard_plugin_decides() {
         let plugins = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/plugins");
         let mut h = Hooks::new(std::env::temp_dir());
-        for (file, root) in plugin_hook_files(&plugins) {
-            h.add_file(&file, Some(&root)).unwrap();
+        for p in crate::plugins::list(&plugins, None) {
+            h.add_file(&p.root.join("hooks/hooks.json"), Some(&p.root))
+                .unwrap();
         }
         let decide = |cmd: &str| {
             h.run(Event::PreToolUse, Some("Bash"), tool_input("Bash", cmd))

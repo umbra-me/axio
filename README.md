@@ -27,6 +27,31 @@ axio -c                   # continue the last session in this directory
   of everything else. `/compact` does it on
   demand; `AXIO_CONTEXT_WINDOW` and `AXIO_COMPACT_AT` override the numbers.
 
+## Profiles and modules
+
+A profile picks built-in modules, which plugins load, and defaults.
+
+| Profile | Tools |
+|---|---|
+| `minimal` | Read, Write, Edit, Bash: the Pi-sized core |
+| `standard` (default) | the core plus the `search`, `plan` and `background` modules |
+
+| Module | Adds |
+|---|---|
+| `search` | `Grep` and `Glob` (ripgrep when installed, a built-in walk otherwise) |
+| `plan` | `TodoWrite`, a short task list shown as it changes |
+| `background` | `Bash` with `run_in_background`: output goes to a log the model reads, `TaskStop` ends it, and the model hears when it exits. Tasks end when axio exits |
+
+Choose one with `--profile`, `AXIO_PROFILE` or `"profile"` in settings;
+`/profile` shows the current one. Your own go in
+`~/.axio/agent/profiles/<name>.json`:
+
+```json
+{"extends": "minimal", "modules": ["plan"], "plugins": ["guard"], "model": "anthropic/claude-sonnet-5-5", "compactAt": 0.7}
+```
+
+`plugins` lists the plugin names to load (`"*"` for all, the default).
+
 ## Settings and trust
 
 `~/.axio/agent/settings.json` holds `model`, `effort` and `profile`. A

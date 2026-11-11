@@ -16,6 +16,82 @@ pub struct ToolSpec {
     pub schema: Value,
 }
 
+/// Built-in modules a profile can switch on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modules {
+    pub search: bool,
+    pub plan: bool,
+    pub background: bool,
+}
+
+impl Modules {
+    pub fn from_names(names: &[&str]) -> Result<Modules, String> {
+        let mut m = Modules::default();
+        for n in names {
+            match *n {
+                "search" => m.search = true,
+                "plan" => m.plan = true,
+                "background" => m.background = true,
+                other => {
+                    return Err(format!(
+                        "unknown module {other}: known are search, plan, background"
+                    ));
+                }
+            }
+        }
+        Ok(m)
+    }
+
+    pub fn names(&self) -> Vec<&'static str> {
+        [
+            ("search", self.search),
+            ("plan", self.plan),
+            ("background", self.background),
+        ]
+        .into_iter()
+        .filter_map(|(n, on)| on.then_some(n))
+        .collect()
+    }
+}
+
+/// The core tools plus the modules' tools.
+pub fn specs_for(m: Modules) -> Vec<ToolSpec> {
+    let mut v = specs();
+    if m.search {
+        v.extend(crate::search::specs());
+    }
+    if m.plan {
+        v.push(crate::plan::spec());
+    }
+    if m.background {
+        if let Some(bash) = v.iter_mut().find(|t| t.name == "Bash") {
+            crate::background::extend_bash(bash);
+        }
+        v.push(crate::background::stop_spec());
+    }
+    v
+}
+
+/// Runs a core or module tool.
+pub fn run_with(
+    m: Modules,
+    name: &str,
+    input: &Value,
+    cwd: &Path,
+    stop: &mut dyn FnMut() -> bool,
+) -> Result<String, String> {
+    match name {
+        "Grep" if m.search => crate::search::grep(cwd, input, true),
+        "Glob" if m.search => crate::search::glob(cwd, input, true),
+        "TodoWrite" if m.plan => crate::plan::write(input),
+        "Bash" if m.background && input["run_in_background"] == true => {
+            crate::background::start(cwd, input)
+        }
+        "TaskStop" if m.background => crate::background::stop(input),
+        _ => run(name, input, cwd, stop),
+    }
+}
+
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -291,7 +367,7 @@ fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<Str
 
 /// SIGTERM to the whole process group, then SIGKILL after a second, so
 /// programs get a chance to clean up.
-fn kill(child: &mut std::process::Child) {
+pub(crate) fn kill(child: &mut std::process::Child) {
     #[cfg(unix)]
     {
         let group = format!("-{}", child.id());
@@ -491,6 +567,43 @@ mod tests {
                 ("Bash", vec!["command", "timeout"]),
             ]
         );
+    }
+
+    #[test]
+    fn profiles_choose_the_tool_set() {
+        let names = |m: Modules| specs_for(m).into_iter().map(|t| t.name).collect::<Vec<_>>();
+        assert_eq!(names(Modules::default()), ["Read", "Write", "Edit", "Bash"]);
+        let standard = Modules {
+            search: true,
+            plan: true,
+            background: true,
+        };
+        assert_eq!(
+            names(standard),
+            [
+                "Read",
+                "Write",
+                "Edit",
+                "Bash",
+                "Grep",
+                "Glob",
+                "TodoWrite",
+                "TaskStop"
+            ]
+        );
+        let bash = specs_for(standard)
+            .into_iter()
+            .find(|t| t.name == "Bash")
+            .unwrap();
+        assert!(bash.schema["properties"]["run_in_background"].is_object());
+        let off = run_with(
+            Modules::default(),
+            "Grep",
+            &json!({"pattern": "x"}),
+            Path::new("."),
+            &mut || false,
+        );
+        assert_eq!(off, Err("unknown tool: Grep".into()));
     }
 
     #[test]

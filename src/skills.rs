@@ -152,28 +152,6 @@ impl Library {
         }
     }
 
-    /// Plugin folders under `dir`, named by `.claude-plugin/plugin.json` or
-    /// their folder name.
-    pub fn add_plugins(&mut self, dir: &Path) {
-        for plugin in sorted_entries(dir) {
-            if !plugin.is_dir() {
-                continue;
-            }
-            let name = std::fs::read_to_string(plugin.join(".claude-plugin/plugin.json"))
-                .ok()
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                .and_then(|v| v["name"].as_str().map(String::from))
-                .unwrap_or_else(|| {
-                    plugin
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into()
-                });
-            self.add_dir(&plugin, Some(&name));
-        }
-    }
-
     /// The prompt for `/name args`, or `None` when no command or invocable
     /// skill has that name.
     pub fn expand(&self, name: &str, args: &str) -> Option<String> {
@@ -295,7 +273,9 @@ mod tests {
         let mut lib = Library::default();
         lib.add_dir(&root.join("project"), None);
         lib.add_dir(&root.join("home"), None);
-        lib.add_plugins(&root.join("plugins"));
+        for p in crate::plugins::list(&root.join("plugins"), None) {
+            lib.add_dir(&p.root, Some(&p.name));
+        }
 
         let skills: Vec<&str> = lib.skills.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(skills, ["pdf", "ship"]);

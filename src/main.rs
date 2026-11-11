@@ -1,11 +1,16 @@
 mod agent;
+mod background;
 mod compact;
 mod context;
 mod editor;
 mod hooks;
 mod mcp;
 mod message;
+mod plan;
+mod plugins;
+mod profile;
 mod provider;
+mod search;
 mod session;
 mod settings;
 mod skills;
@@ -33,6 +38,8 @@ Options:
   -c, --continue        Continue the most recent session in this directory
   -s, --session <file>  Continue a session file
       --no-session      Do not save this session
+      --profile <name>  minimal, standard (default) or one in
+                        ~/.axio/agent/profiles/ (env AXIO_PROFILE)
       --trust           Trust this project's configuration without asking
       --no-project-config  Ignore this project's .axio/ and .mcp.json
   -h, --help            Show this help
@@ -55,6 +62,7 @@ struct Args {
     session: Option<PathBuf>,
     no_session: bool,
     trust: bool,
+    profile: Option<String>,
     no_project_config: bool,
     prompt: Vec<String>,
 }
@@ -80,6 +88,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "-s" | "--session" => a.session = Some(value(&arg)?.into()),
             "--no-session" => a.no_session = true,
             "--trust" => a.trust = true,
+            "--profile" => a.profile = Some(value(&arg)?),
             "--no-project-config" => a.no_project_config = true,
             "--" => a.prompt.extend(it.by_ref()),
             s if s.starts_with('-') && s.len() > 1 => return Err(format!("unknown option {s}")),
@@ -349,60 +358,69 @@ fn trusted_project(
     Ok(trusted.then_some(root))
 }
 
-/// Hooks from global settings and plugins, then, for a trusted project, its
-/// settings and plugins.
-fn load_hooks(
-    home: &std::path::Path,
-    project: Option<&std::path::Path>,
-    cwd: &std::path::Path,
-) -> Result<hooks::Hooks, String> {
-    let mut h = hooks::Hooks::new(project.unwrap_or(cwd).to_path_buf());
-    let mut add = |settings: std::path::PathBuf, plugins: std::path::PathBuf| {
-        h.add_file(&settings, None)?;
-        for (file, root) in hooks::plugin_hook_files(&plugins) {
-            h.add_file(&file, Some(&root))?;
-        }
-        Ok::<_, String>(())
-    };
-    add(home.join("settings.json"), home.join("plugins"))?;
-    if let Some(root) = project {
-        add(root.join(".axio/settings.json"), root.join(".axio/plugins"))?;
-    }
-    Ok(h)
+/// Where configuration comes from: `~/.axio/agent`, then a trusted project,
+/// with plugins limited to those the profile allows.
+struct Sources<'a> {
+    home: &'a std::path::Path,
+    project: Option<&'a std::path::Path>,
+    allowed: Option<&'a [String]>,
 }
 
-/// MCP servers from `~/.axio/agent/mcp.json` and plugins, then a trusted
-/// project's `.mcp.json` and plugins.
-fn load_mcp(
-    home: &std::path::Path,
-    project: Option<&std::path::Path>,
-) -> Result<mcp::Config, String> {
-    let mut c = mcp::Config::default();
-    let mut add = |file: std::path::PathBuf, plugins: std::path::PathBuf| {
-        c.add_file(&file, None)?;
-        for (file, root) in mcp::plugin_server_files(&plugins) {
-            c.add_file(&file, Some(&root))?;
-        }
-        Ok::<_, String>(())
-    };
-    add(home.join("mcp.json"), home.join("plugins"))?;
-    if let Some(root) = project {
-        add(root.join(".mcp.json"), root.join(".axio/plugins"))?;
+impl Sources<'_> {
+    fn plugins(&self, dir: std::path::PathBuf) -> Vec<plugins::Plugin> {
+        plugins::list(&dir, self.allowed)
     }
-    Ok(c)
-}
 
-/// Skills and commands: a trusted project's first, so it can override global
-/// ones, then `~/.axio/agent` and its plugins.
-fn load_library(home: &std::path::Path, project: Option<&std::path::Path>) -> skills::Library {
-    let mut lib = skills::Library::default();
-    if let Some(root) = project {
-        lib.add_dir(&root.join(".axio"), None);
-        lib.add_plugins(&root.join(".axio/plugins"));
+    /// Hooks from global settings and plugins, then a trusted project's.
+    fn hooks(&self, cwd: &std::path::Path) -> Result<hooks::Hooks, String> {
+        let mut h = hooks::Hooks::new(self.project.unwrap_or(cwd).to_path_buf());
+        let mut add = |settings: std::path::PathBuf, dir: std::path::PathBuf| {
+            h.add_file(&settings, None)?;
+            for p in self.plugins(dir) {
+                h.add_file(&p.root.join("hooks/hooks.json"), Some(&p.root))?;
+            }
+            Ok::<_, String>(())
+        };
+        add(self.home.join("settings.json"), self.home.join("plugins"))?;
+        if let Some(root) = self.project {
+            add(root.join(".axio/settings.json"), root.join(".axio/plugins"))?;
+        }
+        Ok(h)
     }
-    lib.add_dir(home, None);
-    lib.add_plugins(&home.join("plugins"));
-    lib
+
+    /// MCP servers from `mcp.json` and plugins, then a trusted project's.
+    fn mcp(&self) -> Result<mcp::Config, String> {
+        let mut c = mcp::Config::default();
+        let mut add = |file: std::path::PathBuf, dir: std::path::PathBuf| {
+            c.add_file(&file, None)?;
+            for p in self.plugins(dir) {
+                c.add_file(&p.root.join(".mcp.json"), Some(&p.root))?;
+            }
+            Ok::<_, String>(())
+        };
+        add(self.home.join("mcp.json"), self.home.join("plugins"))?;
+        if let Some(root) = self.project {
+            add(root.join(".mcp.json"), root.join(".axio/plugins"))?;
+        }
+        Ok(c)
+    }
+
+    /// Skills and commands: a trusted project's first, so it can override
+    /// global ones, then `~/.axio/agent` and its plugins.
+    fn library(&self) -> skills::Library {
+        let mut lib = skills::Library::default();
+        if let Some(root) = self.project {
+            lib.add_dir(&root.join(".axio"), None);
+            for p in self.plugins(root.join(".axio/plugins")) {
+                lib.add_dir(&p.root, Some(&p.name));
+            }
+        }
+        lib.add_dir(self.home, None);
+        for p in self.plugins(self.home.join("plugins")) {
+            lib.add_dir(&p.root, Some(&p.name));
+        }
+        lib
+    }
 }
 
 /// `/name args` for a command or invocable skill. `None` for ordinary text,
@@ -421,7 +439,7 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 
 fn help(lib: &skills::Library) -> String {
     let mut s = String::from(
-        "/new  start a new session\n/compact  summarize the conversation now\n/model [provider/model]  show or switch the model\n/session  show the session file\n/help  this list\n/quit  exit",
+        "/new  start a new session\n/profile  show the profile, modules and plugins\n/compact  summarize the conversation now\n/model [provider/model]  show or switch the model\n/session  show the session file\n/help  this list\n/quit  exit",
     );
     for c in &lib.commands {
         s.push_str(&format!("\n/{}  {}", c.name, c.description));
@@ -455,7 +473,19 @@ fn run() -> Result<ExitCode, String> {
     let interactive = !args.print && io::stdin().is_terminal();
     let project = trusted_project(&home, &cwd, &args, interactive)?;
     let config = settings::Settings::load(&home, project.as_deref())?;
-    let library = load_library(&home, project.as_deref());
+    let profile_name = args
+        .profile
+        .clone()
+        .or_else(|| std::env::var("AXIO_PROFILE").ok())
+        .or(config.profile.clone())
+        .unwrap_or_else(|| profile::DEFAULT.into());
+    let profile = profile::load(&home, &profile_name)?;
+    let sources = Sources {
+        home: &home,
+        project: project.as_deref(),
+        allowed: profile.plugins.as_deref(),
+    };
+    let library = sources.library();
     for shadowed in &library.shadowed {
         eprintln!("axio: ignored duplicate {shadowed}");
     }
@@ -463,6 +493,7 @@ fn run() -> Result<ExitCode, String> {
         .model
         .or_else(|| std::env::var("AXIO_MODEL").ok())
         .or(config.model)
+        .or(profile.model.clone())
         .unwrap_or_else(|| provider::DEFAULT_MODEL.into());
     let mut agent = Agent::new(
         Model::parse(&spec),
@@ -473,7 +504,9 @@ fn run() -> Result<ExitCode, String> {
         .effort
         .clone()
         .or_else(|| std::env::var("AXIO_EFFORT").ok())
-        .or(config.effort);
+        .or(config.effort)
+        .or(profile.effort.clone());
+    agent.compact_ratio = profile.compact_at;
 
     let sessions = session::dir_for(&home, &cwd);
     let resume = match (args.session, args.resume_latest) {
@@ -492,21 +525,19 @@ fn run() -> Result<ExitCode, String> {
     } else if !args.no_session {
         agent.session = Some(session::Session::create(&sessions, &cwd)?);
     }
-    agent.hooks = load_hooks(&home, project.as_deref(), &cwd)?;
+    agent.hooks = sources.hooks(&cwd)?;
     for skipped in &agent.hooks.skipped {
         eprintln!("axio: skipped hook: {skipped}");
     }
-    let servers = load_mcp(&home, project.as_deref())?;
+    let servers = sources.mcp()?;
     for skipped in &servers.skipped {
         eprintln!("axio: skipped MCP server: {skipped}");
     }
-    if !servers.servers.is_empty() {
-        let started = mcp::Mcp::start(&servers, &cwd);
-        for failed in &started.failed {
-            eprintln!("axio: MCP server failed to start: {failed}");
-        }
-        agent.set_mcp(started);
+    let started = mcp::Mcp::start(&servers, &cwd);
+    for failed in &started.failed {
+        eprintln!("axio: MCP server failed to start: {failed}");
     }
+    agent.set_tools(profile.modules, started);
 
     let mut term = Term {
         color: io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
@@ -535,6 +566,7 @@ fn run() -> Result<ExitCode, String> {
         };
         let result = agent.prompt(&prompt, &mut term);
         agent.end("other", &mut term);
+        background::stop_all();
         result?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -545,9 +577,10 @@ fn run() -> Result<ExitCode, String> {
     eprintln!(
         "{}",
         term.dim(&format!(
-            "axio {} · {} · Esc stops a turn · /quit to exit",
+            "axio {} · {} · {} · Esc stops a turn · /quit to exit",
             env!("CARGO_PKG_VERSION"),
-            agent.model
+            agent.model,
+            profile.name
         ))
     );
     if !agent.messages.is_empty() {
@@ -601,6 +634,18 @@ fn run() -> Result<ExitCode, String> {
                 None => eprintln!("not saved"),
             },
             ("/help", _) => eprintln!("{}", help(&library)),
+            ("/profile", _) => eprintln!(
+                "{} · modules: {} · plugins: {}",
+                profile.name,
+                match agent.modules.names().join(", ") {
+                    n if n.is_empty() => "none".to_string(),
+                    n => n,
+                },
+                profile
+                    .plugins
+                    .as_ref()
+                    .map_or("all".to_string(), |p| p.join(", "))
+            ),
             _ => {
                 let text = match command(&library, input) {
                     Some(Ok(expanded)) => expanded,
@@ -622,6 +667,7 @@ fn run() -> Result<ExitCode, String> {
         }
     }
     agent.end("prompt_input_exit", &mut term);
+    background::stop_all();
     Ok(ExitCode::SUCCESS)
 }
 
