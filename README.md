@@ -83,7 +83,18 @@ Declare hooks under `"hooks"` in a settings file, or ship them in a plugin:
 a folder in `~/.axio/agent/plugins/` (or a trusted project's
 `.axio/plugins/`) with `hooks/hooks.json`, in the Claude Code plugin layout.
 [`examples/plugins/guard`](examples/plugins/guard) blocks destructive commands
-and asks before `git push`; copy it into `~/.axio/agent/plugins/` to use it.
+and asks before `git push`.
+
+```sh
+axio plugin install ./examples/plugins/guard     # a folder
+axio plugin install owner/repo                   # GitHub
+axio plugin install git:host/owner/repo@v1.2     # any git host, pinned
+axio plugin list | update [name] | remove <name> # --project for .axio/plugins
+```
+
+Installing runs nothing: it copies or clones the plugin, records where it
+came from, and lists the hooks and MCP servers it will run from the next
+session. `update` refuses a git plugin with local edits.
 Matchers support `*`, exact names, `A|B` and prefixes like `mcp__github__.*`.
 
 ## Skills and commands
