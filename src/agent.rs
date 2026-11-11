@@ -329,11 +329,19 @@ impl Agent {
         if summary.is_empty() {
             return Err("the model returned an empty summary".into());
         }
+        let before = self.context.max(compact::estimate_tokens(&self.messages));
         compact::apply(&mut self.messages, &summary);
         if let Some(s) = &mut self.session {
             s.compaction(&summary)?;
         }
-        self.context = 0;
+        let after = compact::estimate_tokens(&self.messages);
+        ui.notice(&format!(
+            "compacted: {} → about {} tokens",
+            crate::ui::tokens(before),
+            crate::ui::tokens(after)
+        ));
+        // An estimate until the next reply reports the real size.
+        self.context = after;
         Ok(true)
     }
 

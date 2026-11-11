@@ -851,7 +851,7 @@ fn run() -> Result<ExitCode, String> {
                 eprintln!("{}", term.dim("new session"));
             }
             ("/compact", _) => match agent.compact("manual", &mut term) {
-                Ok(true) => eprintln!("{}", term.dim("compacted")),
+                Ok(true) => {}
                 Ok(false) => eprintln!("{}", term.dim("nothing older to compact")),
                 Err(e) => eprintln!("axio: {e}"),
             },
