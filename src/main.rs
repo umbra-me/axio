@@ -7,6 +7,7 @@ mod hooks;
 mod mcp;
 mod message;
 mod plan;
+mod plugin_cli;
 mod plugins;
 mod profile;
 mod provider;
@@ -29,6 +30,7 @@ use std::time::{Duration, Instant};
 const USAGE: &str = "axio: a minimal coding agent
 
 Usage: axio [options] [prompt...]
+       axio plugin install|list|update|remove ...
 
 Options:
   -p, --print           Answer one prompt (argument or stdin) and exit
@@ -465,6 +467,12 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, String> {
+    let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.first().is_some_and(|a| a == "plugin") {
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+        plugin_cli::main(&all[1..], &context::home(), &cwd)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let Some(args) = parse_args()? else {
         return Ok(ExitCode::SUCCESS);
     };
