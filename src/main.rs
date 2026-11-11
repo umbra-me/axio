@@ -2,6 +2,7 @@ mod agent;
 mod compact;
 mod context;
 mod editor;
+mod hooks;
 mod message;
 mod provider;
 mod session;
@@ -173,6 +174,17 @@ impl Ui for Term {
         self.keys.as_mut().is_some_and(|k| k.stop_requested())
     }
 
+    fn ask(&mut self, question: &str) -> bool {
+        let Some(keys) = &mut self.keys else {
+            return false;
+        };
+        eprint!("\n{question} [y/N] ");
+        let _ = io::stderr().flush();
+        let yes = matches!(keys.next(), Some(term::Key::Char('y' | 'Y')));
+        eprintln!("{}", if yes { "yes" } else { "no" });
+        yes
+    }
+
     fn notice(&mut self, text: &str) {
         eprintln!("{}", self.dim(text));
     }
@@ -335,6 +347,28 @@ fn trusted_project(
     Ok(trusted.then_some(root))
 }
 
+/// Hooks from global settings and plugins, then, for a trusted project, its
+/// settings and plugins.
+fn load_hooks(
+    home: &std::path::Path,
+    project: Option<&std::path::Path>,
+    cwd: &std::path::Path,
+) -> Result<hooks::Hooks, String> {
+    let mut h = hooks::Hooks::new(project.unwrap_or(cwd).to_path_buf());
+    let mut add = |settings: std::path::PathBuf, plugins: std::path::PathBuf| {
+        h.add_file(&settings, None)?;
+        for (file, root) in hooks::plugin_hook_files(&plugins) {
+            h.add_file(&file, Some(&root))?;
+        }
+        Ok::<_, String>(())
+    };
+    add(home.join("settings.json"), home.join("plugins"))?;
+    if let Some(root) = project {
+        add(root.join(".axio/settings.json"), root.join(".axio/plugins"))?;
+    }
+    Ok(h)
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -376,11 +410,20 @@ fn run() -> Result<ExitCode, String> {
         (None, true) => Some(session::latest(&sessions).ok_or("no session to continue here")?),
         _ => None,
     };
+    let source = if resume.is_some() {
+        "resume"
+    } else {
+        "startup"
+    };
     if let Some(path) = resume {
         agent.messages = session::load(&path)?;
         agent.session = Some(session::Session::open(path)?);
     } else if !args.no_session {
         agent.session = Some(session::Session::create(&sessions, &cwd)?);
+    }
+    agent.hooks = load_hooks(&home, project.as_deref(), &cwd)?;
+    for skipped in &agent.hooks.skipped {
+        eprintln!("axio: skipped hook: {skipped}");
     }
 
     let mut term = Term {
@@ -402,12 +445,16 @@ fn run() -> Result<ExitCode, String> {
         if prompt.is_empty() {
             return Err("no prompt".into());
         }
-        agent.prompt(&prompt, &mut term)?;
+        agent.start(source, &mut term)?;
+        let result = agent.prompt(&prompt, &mut term);
+        agent.end("other", &mut term);
+        result?;
         return Ok(ExitCode::SUCCESS);
     }
 
     let _raw = term::RawMode::enter().ok_or("could not configure the terminal (stty failed)")?;
     term.keys = Some(term::Keys::spawn());
+    agent.start(source, &mut term)?;
     eprintln!(
         "{}",
         term.dim(&format!(
@@ -452,7 +499,7 @@ fn run() -> Result<ExitCode, String> {
                 }
                 eprintln!("{}", term.dim("new session"));
             }
-            ("/compact", _) => match agent.compact(&mut term) {
+            ("/compact", _) => match agent.compact("manual", &mut term) {
                 Ok(true) => eprintln!("{}", term.dim("compacted")),
                 Ok(false) => eprintln!("{}", term.dim("nothing older to compact")),
                 Err(e) => eprintln!("axio: {e}"),
@@ -478,5 +525,6 @@ fn run() -> Result<ExitCode, String> {
             }
         }
     }
+    agent.end("prompt_input_exit", &mut term);
     Ok(ExitCode::SUCCESS)
 }

@@ -36,6 +36,31 @@ trust the project: axio asks once, remembers the answer in
 `~/.axio/agent/trust.json`, and `--trust` or `--no-project-config` decide it for
 one run. Flags beat environment variables, which beat settings.
 
+## Hooks and plugins
+
+Hooks are commands axio runs at fixed points, in the format Claude Code, Codex
+and Grok Build use: the event arrives as JSON on stdin, and the hook answers
+with its exit code (2 blocks, with stderr as the reason) or JSON on stdout
+(`decision`, `continue`, `systemMessage`, and `hookSpecificOutput` with
+`permissionDecision`, `updatedInput` or `additionalContext`).
+
+| Event | When | A hook can |
+|---|---|---|
+| `SessionStart` | session opens or resumes | add context |
+| `UserPromptSubmit` | before a prompt is sent | block it, add context |
+| `PreToolUse` | before a tool runs | allow, deny, ask you, rewrite the input |
+| `PostToolUse` | after a tool returns | add context, flag the result |
+| `Stop` | the model is about to finish | send it back to work (up to 8 times) |
+| `PreCompact` | before compaction | add summary instructions, skip it |
+| `SessionEnd` | axio exits | observe |
+
+Declare hooks under `"hooks"` in a settings file, or ship them in a plugin:
+a folder in `~/.axio/agent/plugins/` (or a trusted project's
+`.axio/plugins/`) with `hooks/hooks.json`, in the Claude Code plugin layout.
+[`examples/plugins/guard`](examples/plugins/guard) blocks destructive commands
+and asks before `git push`; copy it into `~/.axio/agent/plugins/` to use it.
+Matchers support `*`, exact names, `A|B` and prefixes like `mcp__github__.*`.
+
 ## Keys
 
 | Key | Does |
