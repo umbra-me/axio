@@ -1,0 +1,20 @@
+#!/bin/sh
+# PreToolUse hook: reads the tool call as JSON on stdin and answers with a
+# permission decision. Plain sh and grep, so it runs wherever axio does.
+input=$(cat)
+
+decide() {
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' "$1" "$2"
+  exit 0
+}
+
+if printf '%s' "$input" | grep -Eq 'rm -[a-zA-Z]*r[a-zA-Z]*f? +(/|~|\$HOME)([" ]|$)|rm -[a-zA-Z]*f[a-zA-Z]*r +(/|~|\$HOME)([" ]|$)'; then
+  decide deny "recursive delete of a home or root directory"
+fi
+if printf '%s' "$input" | grep -Eq 'git push[^"]*(--force|-f)([" ]|$)'; then
+  decide deny "force push"
+fi
+if printf '%s' "$input" | grep -Eq 'git push'; then
+  decide ask "pushes to a remote"
+fi
+exit 0

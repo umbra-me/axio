@@ -31,6 +31,7 @@ cargo test --locked
 
 - `src/main.rs`: arguments, terminal output, interactive loop
 - `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor
+- `src/hooks.rs`: hook loading, matching, running and merging replies
 - `src/settings.rs`: settings files and project trust
 - `src/compact.rs`: compaction to recent user requests plus a summary
 - `src/agent.rs`: the turn loop (model, tools, repeat)
