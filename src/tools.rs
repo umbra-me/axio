@@ -46,13 +46,14 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "edit",
-            description: "Replace one exact occurrence of old_text with new_text in a file. old_text must match exactly once, whitespace included.",
+            description: "Replace exact text in a file. old_text must match exactly once, whitespace included; add surrounding lines to make it unique, or set replace_all to change every occurrence (handy for renames). An empty old_text creates a new file containing new_text.",
             schema: json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "old_text": {"type": "string"},
-                    "new_text": {"type": "string"}
+                    "new_text": {"type": "string"},
+                    "replace_all": {"type": "boolean", "description": "Replace every occurrence (default false)"}
                 },
                 "required": ["path", "old_text", "new_text"],
                 "additionalProperties": false
@@ -60,7 +61,7 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "bash",
-            description: "Run a bash command in the working directory. Returns stdout and stderr combined; long output keeps the last 2000 lines or 50KB.",
+            description: "Run a bash command in the working directory. Returns stdout and stderr combined. Long output keeps its beginning and end, and the result names a log file holding the full output, which you can read or search.",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -171,21 +172,37 @@ fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "path")?);
     let old = str_arg(input, "old_text")?;
     let new = str_arg(input, "new_text")?;
+    let err = |e: std::io::Error| format!("{}: {e}", path.display());
     if old.is_empty() {
-        return Err("old_text is empty".into());
+        if path.exists() {
+            return Err(format!(
+                "{} already exists; give old_text, or use write to replace it",
+                path.display()
+            ));
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(err)?;
+        }
+        std::fs::write(&path, new).map_err(err)?;
+        return Ok(format!("created {}", path.display()));
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(&path).map_err(err)?;
+    let all = input["replace_all"].as_bool().unwrap_or(false);
     match text.matches(old).count() {
         0 => Err(format!("old_text not found in {}", path.display())),
-        1 => {
-            std::fs::write(&path, text.replacen(old, new, 1))
-                .map_err(|e| format!("{}: {e}", path.display()))?;
-            Ok(format!("edited {}", path.display()))
-        }
-        n => Err(format!(
-            "old_text matches {n} times in {}; include more context",
+        n if n > 1 && !all => Err(format!(
+            "old_text matches {n} times in {}; include more context or set replace_all",
             path.display()
         )),
+        n => {
+            std::fs::write(&path, text.replace(old, new)).map_err(err)?;
+            let times = if n > 1 {
+                format!(" ({n} replacements)")
+            } else {
+                String::new()
+            };
+            Ok(format!("edited {}{times}", path.display()))
+        }
     }
 }
 
@@ -251,7 +268,7 @@ fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<Str
         out.extend_from_slice(&chunk);
     }
 
-    let mut text = tail(&String::from_utf8_lossy(&out));
+    let mut text = shorten(&String::from_utf8_lossy(&out));
     if stopped {
         return Err(format!("{text}\n{STOPPED}"));
     }
@@ -266,39 +283,78 @@ fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<Str
     }
 }
 
+/// SIGTERM to the whole process group, then SIGKILL after a second, so
+/// programs get a chance to clean up.
 fn kill(child: &mut std::process::Child) {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", child.id())])
-            .status();
+        let group = format!("-{}", child.id());
+        let signal = |sig: &str| {
+            let _ = Command::new("kill")
+                .args([sig, "--", &group])
+                .stderr(Stdio::null())
+                .status();
+        };
+        signal("-TERM");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline && !matches!(child.try_wait(), Ok(Some(_))) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Children that ignored TERM, or outlived the shell, still hold the group.
+        signal("-KILL");
     }
     let _ = child.kill();
 }
 
-/// Keeps the end of long output, where errors and results usually are.
-fn tail(text: &str) -> String {
+/// Long output keeps its first quarter and last three quarters of the budget,
+/// where commands usually say what they ran and how they ended. The full text
+/// goes to a log file the model can read.
+fn shorten(text: &str) -> String {
+    let text = text.strip_suffix('\n').unwrap_or(text);
     let lines: Vec<&str> = text.lines().collect();
-    let mut kept = Vec::new();
-    let mut bytes = 0;
-    for line in lines.iter().rev() {
-        if kept.len() == MAX_LINES || bytes + line.len() + 1 > MAX_BYTES {
-            break;
+    if lines.len() <= MAX_LINES && text.len() <= MAX_BYTES {
+        return text.to_string();
+    }
+    let take = |iter: &mut dyn Iterator<Item = &&str>, max_lines: usize, max_bytes: usize| {
+        let mut kept = 0;
+        let mut bytes = 0;
+        for line in iter {
+            if kept == max_lines || bytes + line.len() + 1 > max_bytes {
+                break;
+            }
+            bytes += line.len() + 1;
+            kept += 1;
         }
-        bytes += line.len() + 1;
-        kept.push(*line);
-    }
-    kept.reverse();
-    let body = kept.join("\n");
-    if kept.len() < lines.len() {
-        format!(
-            "[showing the last {} of {} lines]\n{body}",
-            kept.len(),
-            lines.len()
-        )
-    } else {
-        body
-    }
+        kept
+    };
+    let head = take(&mut lines.iter(), MAX_LINES / 4, MAX_BYTES / 4);
+    let tail = take(
+        &mut lines[head..].iter().rev(),
+        MAX_LINES * 3 / 4,
+        MAX_BYTES * 3 / 4,
+    );
+    let omitted = lines.len() - head - tail;
+    let saved = save_output(text).map_or_else(
+        |e| format!("the full output could not be saved: {e}"),
+        |p| format!("full output: {}", p.display()),
+    );
+    format!(
+        "{}\n[… {omitted} lines omitted; {saved} …]\n{}",
+        lines[..head].join("\n"),
+        lines[lines.len() - tail..].join("\n")
+    )
+}
+
+fn save_output(text: &str) -> std::io::Result<PathBuf> {
+    let dir = std::env::temp_dir().join("axio");
+    std::fs::create_dir_all(&dir)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = dir.join(format!("output-{}-{stamp}.log", std::process::id()));
+    std::fs::write(&path, text)?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -421,13 +477,77 @@ mod tests {
     }
 
     #[test]
-    fn tail_keeps_the_end() {
+    fn long_output_keeps_both_ends_and_saves_the_rest() {
         let long = (0..3000)
             .map(|i| i.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        let t = tail(&long);
-        assert!(t.starts_with("[showing the last 2000 of 3000 lines]"));
+        let t = shorten(&long);
+        assert!(t.starts_with("0\n1\n"));
         assert!(t.ends_with("2999"));
+        assert!(t.contains("[… 1000 lines omitted; full output: "));
+        let path = t
+            .split("full output: ")
+            .nth(1)
+            .unwrap()
+            .split(" …]")
+            .next()
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), long);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(shorten("short"), "short");
+    }
+
+    #[test]
+    fn stopping_lets_the_command_clean_up_first() {
+        let dir = tmp();
+        let mut polls = 0;
+        let err = run(
+            "bash",
+            &json!({"command": "trap 'echo cleaned up; exit 0' TERM; sleep 5 & wait"}),
+            &dir,
+            &mut || {
+                polls += 1;
+                polls > 20
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("cleaned up"), "{err}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn edit_replaces_all_and_creates_files() {
+        let dir = tmp();
+        let no = &mut || false;
+        run(
+            "edit",
+            &json!({"path": "n/new.txt", "old_text": "", "new_text": "a a"}),
+            &dir,
+            no,
+        )
+        .unwrap();
+        assert!(
+            run(
+                "edit",
+                &json!({"path": "n/new.txt", "old_text": "", "new_text": "x"}),
+                &dir,
+                no
+            )
+            .is_err()
+        );
+        let out = run(
+            "edit",
+            &json!({"path": "n/new.txt", "old_text": "a", "new_text": "b", "replace_all": true}),
+            &dir,
+            no,
+        )
+        .unwrap();
+        assert!(out.ends_with("(2 replacements)"));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("n/new.txt")).unwrap(),
+            "b b"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

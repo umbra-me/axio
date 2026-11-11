@@ -138,15 +138,16 @@ impl Agent {
         }
     }
 
-    /// Summarizes older turns, keeping recent ones. Returns whether it did.
+    /// Replaces the history with recent requests and a summary. Returns
+    /// whether there was anything to compact.
     pub fn compact(&mut self, ui: &mut dyn Ui) -> Result<bool, String> {
-        let Some(keep_from) = compact::cut(&self.messages, compact::KEEP_RECENT_TOKENS) else {
+        if !compact::worthwhile(&self.messages) {
             return Ok(false);
-        };
+        }
         ui.notice("compacting the conversation…");
         let prompt = format!(
             "<transcript>\n{}</transcript>\n\n{}",
-            compact::transcript(&self.messages[..keep_from]),
+            compact::transcript(&self.messages),
             compact::INSTRUCTION
         );
         let reply = self.call(
@@ -165,9 +166,9 @@ impl Agent {
         if summary.is_empty() {
             return Err("the model returned an empty summary".into());
         }
-        compact::apply(&mut self.messages, keep_from, &summary);
+        compact::apply(&mut self.messages, &summary);
         if let Some(s) = &mut self.session {
-            s.compaction(keep_from, &summary)?;
+            s.compaction(&summary)?;
         }
         self.context = 0;
         Ok(true)
@@ -185,6 +186,14 @@ impl Agent {
             }
         }
         self.push(Message::user_text(text))?;
+        let result = self.run_turn(ui);
+        if matches!(&result, Err(e) if e == ABORTED) {
+            self.push(Message::user_text(compact::INTERRUPTED))?;
+        }
+        result
+    }
+
+    fn run_turn(&mut self, ui: &mut dyn Ui) -> Result<(), String> {
         loop {
             let reply = self.call(
                 &self.system,
@@ -363,14 +372,22 @@ mod tests {
             ..Log::default()
         };
         assert_eq!(agent.prompt("one", &mut log).unwrap_err(), ABORTED);
-        assert_eq!(agent.messages, [Message::user_text("one")]);
+        assert_eq!(agent.messages.len(), 1);
+        assert_eq!(
+            agent.messages[0].text(),
+            format!("one{}", compact::INTERRUPTED),
+            "the model is told the turn was stopped"
+        );
         // The next prompt folds into the unanswered one instead of adding a
         // second consecutive user message.
         agent.complete =
             Arc::new(|_, _| reply(vec![Block::Text { text: "hi".into() }], Stop::EndTurn, 5));
         agent.prompt("two", &mut Log::default()).unwrap();
         assert_eq!(agent.messages.len(), 2);
-        assert_eq!(agent.messages[0].text(), "onetwo");
+        assert_eq!(
+            agent.messages[0].text(),
+            format!("one{}two", compact::INTERRUPTED)
+        );
     }
 
     #[test]
@@ -388,7 +405,13 @@ mod tests {
         let Message::User { content } = agent.messages.last().unwrap() else {
             panic!()
         };
-        assert_eq!(content.len(), 2);
+        assert_eq!(content.len(), 3);
+        assert_eq!(
+            content[2],
+            Block::Text {
+                text: compact::INTERRUPTED.into()
+            }
+        );
         assert!(
             matches!(&content[0], Block::ToolResult { output, is_error: true, .. } if output.ends_with(tools::STOPPED))
         );
@@ -423,16 +446,19 @@ mod tests {
             )
         });
         agent.prompt("old", &mut Log::default()).unwrap();
-        agent.prompt("recent", &mut Log::default()).unwrap();
-        assert!(
-            !*summarized.lock().unwrap(),
-            "the second prompt has nothing older to cut yet"
-        );
+        assert!(!*summarized.lock().unwrap());
         let mut log = Log::default();
-        agent.prompt("next", &mut log).unwrap();
+        agent.prompt("recent", &mut log).unwrap();
         assert!(*summarized.lock().unwrap());
         assert!(log.events[0].starts_with("compacting"));
-        assert!(agent.messages[0].text().contains("old work"));
-        assert!(!agent.messages.iter().any(|m| m.text() == "old"));
+        assert_eq!(
+            agent.messages.len(),
+            2,
+            "only the new reply follows the summary"
+        );
+        let first = agent.messages[0].text();
+        assert!(
+            first.starts_with("old") && first.contains("old work") && first.ends_with("recent")
+        );
     }
 }

@@ -8,7 +8,9 @@ Tools:
 - edit: replace exact text in a file
 - write: create or overwrite a file
 
-Read a file before you edit it. Prefer edit over write for changes to existing files. Keep answers short, and show file paths when you mention files.";
+Read a file before you edit it. Prefer edit over write for changes to existing files. Do not re-read a file after a successful edit. Prefer rg for searching. Only say something is done, fixed or tested when tool output shows it. Keep answers short, and show file paths when you mention files.
+
+Project instructions: AGENTS.md (or CLAUDE.md) files apply to the directory tree that contains them. The ones from the filesystem root down to the working directory are included below. When you work in another directory, check for AGENTS.md files there. Deeper files win over shallower ones, and the user's direct instructions win over all of them.";
 
 /// The directory holding axio's settings, sessions and global AGENTS.md.
 pub fn home() -> PathBuf {
