@@ -41,6 +41,8 @@ pub struct Term {
     edit_at: Option<usize>,
     /// Lines the user sent during this turn, not yet given to the model.
     queued: Vec<String>,
+    /// Notes to print once the running tool's output is shown.
+    held_notes: Vec<String>,
     /// The latest tool call's header and full result, for /output.
     pub last_output: Option<(String, String)>,
     /// Summary of the model's current thinking, shown after the spinner.
@@ -78,6 +80,7 @@ impl Term {
             edit_at: None,
             last_output: None,
             queued: Vec::new(),
+            held_notes: Vec::new(),
             writing: None,
             thought: String::new(),
             last: Shown::Nothing,
@@ -151,7 +154,10 @@ impl Term {
             latest_line(&self.thought, room)
         } else {
             // What the user is typing, so they are not typing blind.
-            Some(fit_tail(&format!("› {} (Enter sends it)", typing.replace('\n', " ")), room))
+            Some(fit_tail(
+                &format!("› {} (Enter sends it)", typing.replace('\n', " ")),
+                room,
+            ))
         };
         if let Some(note) = note {
             text.push_str(&format!(" · {note}"));
@@ -463,7 +469,19 @@ fn clip(s: &str, n: usize) -> String {
 pub fn tool_title(name: &str, input: &Value, cwd: &Path) -> (String, String) {
     let s = |k: &str| input[k].as_str().unwrap_or("");
     let detail = match name {
-        "Bash" => clip(without_cd(s("command"), cwd), 90),
+        "Bash" => {
+            let command = without_cd(s("command"), cwd);
+            let more = command.trim_end().lines().count().saturating_sub(1);
+            let first = command.lines().next().unwrap_or("");
+            match more {
+                0 => clip(first, 90),
+                n => format!(
+                    "{} (+{n} line{})",
+                    clip(first, 70),
+                    if n == 1 { "" } else { "s" }
+                ),
+            }
+        }
         "Read" | "Write" | "Edit" => short_path(s("file_path"), cwd),
         "Grep" => format!(
             "{}{}",
@@ -833,6 +851,10 @@ impl Ui for Term {
         for line in tool_lines(&name, &input, result, view, self.color) {
             eprintln!("  {line}");
         }
+        // Lines queued while the tool ran, shown after its output.
+        for line in std::mem::take(&mut self.held_notes) {
+            eprintln!("{}", self.dim(&line));
+        }
     }
 
     fn stopped(&mut self, stop: &Stop) {
@@ -868,10 +890,15 @@ impl Ui for Term {
             .map(|k| k.take_steered())
             .unwrap_or_default();
         for line in sent {
-            self.notice(&format!(
+            let note = format!(
                 "queued: {} (the model sees it at its next step)",
                 clip(&line, 80)
-            ));
+            );
+            if self.tool.is_some() {
+                self.held_notes.push(note);
+            } else {
+                self.notice(&note);
+            }
             self.queued.push(line);
         }
         stop
@@ -952,7 +979,7 @@ mod tests {
         );
         assert_eq!(
             tool_title("Bash", &json!({"command": "cargo test\n--more"}), cwd),
-            ("Bash".into(), "cargo test…".into())
+            ("Bash".into(), "cargo test (+1 line)".into())
         );
         assert_eq!(
             tool_title("mcp__github__create_issue", &json!({}), cwd).0,
@@ -960,6 +987,10 @@ mod tests {
         );
         assert_eq!(tool_title("TodoWrite", &json!({}), cwd).0, "Plan");
         let bash = |c: &str| tool_title("Bash", &json!({"command": c}), cwd).1;
+        assert_eq!(
+            bash("python3 - <<'EOF'\nprint(1)\nEOF\n"),
+            "python3 - <<'EOF' (+2 lines)"
+        );
         assert_eq!(bash("cd /work/proj && ls -la"), "ls -la");
         assert_eq!(bash("cd '/work/proj'; make"), "make");
         assert_eq!(
