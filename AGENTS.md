@@ -18,6 +18,8 @@ The desktop super app that used to live here is now Axio Atrium
 - Every behaviour change starts with a failing test. Provider streams are
   tested from recorded SSE text, never from live calls.
 - Live provider runs spend the owner's money: ask first.
+- Each user-facing change adds a line under Unreleased in CHANGELOG.md, with
+  its pull request number.
 
 ## Checks
 
