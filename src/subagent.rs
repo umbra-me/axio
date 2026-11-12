@@ -32,7 +32,9 @@ pub struct Host {
 }
 
 /// A sub-agent call checked and ready to start.
+#[derive(Clone)]
 pub struct Planned {
+    pub role: String,
     pub label: String,
     pub spec: Spec,
     pub notes: Vec<String>,
@@ -128,7 +130,12 @@ impl Host {
             Some(d) => format!("{} · {}", role.name, d.trim()),
             None => role.name.clone(),
         };
-        Ok(Planned { label, spec, notes })
+        Ok(Planned {
+            role: role.name.clone(),
+            label,
+            spec,
+            notes,
+        })
     }
 
     fn spawn(&self, index: usize, plan: &Planned) -> Result<Running, String> {
@@ -191,10 +198,16 @@ impl Host {
         plans: &[&Planned],
         mcp: std::sync::Arc<crate::mcp::Mcp>,
         ui: &mut dyn Ui,
-    ) -> Vec<Result<String, String>> {
+    ) -> Vec<Finished> {
         let (mcp_tx, mcp_rx) = mpsc::channel::<(usize, Value, Result<String, String>)>();
         let limit = self.settings.parallel.unwrap_or(PARALLEL).max(1);
-        let mut results: Vec<Option<Result<String, String>>> = vec![None; plans.len()];
+        let mut results: Vec<Option<Finished>> = (0..plans.len()).map(|_| None).collect();
+        let failed = |e: String| {
+            Some(Finished {
+                result: Err(e),
+                session: None,
+            })
+        };
         let mut queue: std::collections::VecDeque<usize> = (0..plans.len()).collect();
         let mut running: Vec<Running> = Vec::new();
         loop {
@@ -205,7 +218,7 @@ impl Host {
                     Ok(r) => running.push(r),
                     Err(e) => {
                         ui.agent_done(&plans[i].label, &Err(e.clone()), "");
-                        results[i] = Some(Err(e));
+                        results[i] = failed(e);
                     }
                 }
             }
@@ -290,10 +303,10 @@ impl Host {
                 for r in running.drain(..) {
                     let e = format!("not finished: {}", crate::tools::STOPPED);
                     ui.agent_done(&r.label, &Err(e.clone()), "stopped");
-                    results[r.index] = Some(Err(e));
+                    results[r.index] = failed(e);
                 }
                 for i in queue.drain(..) {
-                    results[i] = Some(Err(format!("not run: {}", crate::tools::STOPPED)));
+                    results[i] = failed(format!("not run: {}", crate::tools::STOPPED));
                 }
                 break;
             }
@@ -301,11 +314,14 @@ impl Host {
         }
         results
             .into_iter()
-            .map(|r| r.unwrap_or_else(|| Err("the sub-agent did not run".into())))
+            .map(|r| {
+                r.or_else(|| failed("the sub-agent did not run".into()))
+                    .expect("set")
+            })
             .collect()
     }
 
-    fn finish(&self, r: Running, plan: &Planned, ui: &mut dyn Ui) -> Result<String, String> {
+    fn finish(&self, r: Running, plan: &Planned, ui: &mut dyn Ui) -> Finished {
         let Running {
             label,
             mut child,
@@ -361,7 +377,10 @@ impl Host {
             )),
         };
         ui.agent_done(&label, &out, &summary);
-        out
+        Finished {
+            result: out,
+            session: session.map(std::path::PathBuf::from),
+        }
     }
 }
 
@@ -400,4 +419,10 @@ fn stop(running: &mut [Running]) {
         }
         let _ = r.child.wait();
     }
+}
+
+/// A sub-agent's result and the transcript it left.
+pub struct Finished {
+    pub result: Result<String, String>,
+    pub session: Option<std::path::PathBuf>,
 }

@@ -344,6 +344,7 @@ pub fn spec(
             session_dir: None,
             sandbox,
             history: None,
+            resume: None,
             mcp: parent
                 .mcp
                 .iter()

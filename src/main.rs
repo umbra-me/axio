@@ -406,7 +406,15 @@ impl Sources<'_> {
                     .map(|p| p.root),
             );
         }
-        roles::load(&roles::dirs(self.home, self.project, &plugin_roots))
+        let mut dirs = roles::dirs(self.home, self.project, &plugin_roots);
+        // Imported folders sit just below axio's own.
+        let at = plugin_roots.len();
+        for i in &self.imported {
+            if let import::Kind::Agents(dir) = &i.kind {
+                dirs.insert(at, dir.clone());
+            }
+        }
+        roles::load(&dirs)
     }
 
     /// MCP servers from `mcp.json` and plugins, then a trusted project's.

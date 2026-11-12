@@ -467,3 +467,98 @@ fn sub_agents_use_the_main_agents_mcp_servers() {
         .to_string();
     assert!(result.contains("child got [said: hi"), "{result}");
 }
+
+fn hooked(body: &Value) -> Reply {
+    let messages = body["messages"].as_array().unwrap();
+    if is_child(body) {
+        let all = body["messages"].to_string();
+        let saw = all.contains("START-CONTEXT");
+        return if all.contains("check again") {
+            (
+                Duration::ZERO,
+                text(&format!("second answer, context {saw}")),
+            )
+        } else {
+            (Duration::ZERO, text("first answer"))
+        };
+    }
+    if messages.iter().any(|m| m["role"] == "tool") {
+        return (Duration::ZERO, text("done"));
+    }
+    (
+        Duration::ZERO,
+        calls(&[(
+            "a",
+            "Agent",
+            json!({"description": "d", "prompt": "look", "subagent_type": "explore"}),
+        )]),
+    )
+}
+
+#[test]
+fn subagent_hooks_add_context_and_can_send_a_sub_agent_back() {
+    let (port, seen) = serve(hooked);
+    let home = home("hooks", port);
+    let mark = home.join("stopped-once");
+    let log = home.join("hook-input.jsonl");
+    let start = format!(
+        r#"cat >> {log}; echo >> {log}; echo '{{"hookSpecificOutput": {{"hookEventName": "SubagentStart", "additionalContext": "START-CONTEXT"}}}}'"#,
+        log = log.display()
+    );
+    let stop = format!(
+        r#"cat >> {log}; echo >> {log}; if [ -f {m} ]; then exit 0; fi; touch {m}; echo '{{"decision": "block", "reason": "check again"}}'"#,
+        log = log.display(),
+        m = mark.display()
+    );
+    std::fs::write(
+        home.join("settings.json"),
+        json!({"hooks": {
+            "SubagentStart": [{"matcher": "explore", "hooks": [{"type": "command", "command": start}]}],
+            "SubagentStop": [{"matcher": "explore", "hooks": [{"type": "command", "command": stop}]}]
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let out = axio(&home, &["-p", "--no-session", "-m", "stub/main", "go"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.iter().filter(|s| is_child(&s.body)).count(),
+        2,
+        "resumed once"
+    );
+    let main_last = seen.iter().rev().find(|s| !is_child(&s.body)).unwrap();
+    let result = main_last.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        result.starts_with("second answer, context true"),
+        "{result}"
+    );
+    let inputs: Vec<Value> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(inputs[0]["hook_event_name"], "SubagentStart");
+    assert_eq!(inputs[0]["agent_type"], "explore");
+    assert_eq!(inputs[1]["hook_event_name"], "SubagentStop");
+    assert_eq!(inputs[1]["stop_hook_active"], false);
+    assert!(
+        inputs[1]["agent_transcript_path"]
+            .as_str()
+            .unwrap()
+            .ends_with(".jsonl")
+    );
+    assert_eq!(inputs[2]["stop_hook_active"], true);
+}

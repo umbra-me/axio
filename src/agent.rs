@@ -569,19 +569,38 @@ impl Agent {
             }
             if !pending.is_empty() {
                 let host = self.subagents.clone().expect("pending agents have a host");
+                // SubagentStart: context hooks return joins the brief.
+                for (_, id, _, _, plan) in pending.iter_mut() {
+                    let role = plan.role.clone();
+                    let o = self.hook(
+                        Hook::SubagentStart,
+                        Some(&role),
+                        json!({"agent_id": id, "agent_type": role}),
+                        ui,
+                    );
+                    for c in o.context {
+                        plan.spec
+                            .task
+                            .push_str(&format!("\n\n[Context from a SubagentStart hook:]\n{c}"));
+                    }
+                }
                 let plans: Vec<_> = pending.iter().map(|p| &p.4).collect();
+                let skip = |why: String| -> Vec<crate::subagent::Finished> {
+                    plans
+                        .iter()
+                        .map(|_| crate::subagent::Finished {
+                            result: Err(why.clone()),
+                            session: None,
+                        })
+                        .collect()
+                };
                 let outs = match (&hook_stop, stopped) {
-                    (Some(reason), _) => plans
-                        .iter()
-                        .map(|_| Err(format!("not run: a hook ended the turn ({reason})")))
-                        .collect(),
-                    (None, true) => plans
-                        .iter()
-                        .map(|_| Err(format!("not run: {}", tools::STOPPED)))
-                        .collect(),
+                    (Some(reason), _) => skip(format!("not run: a hook ended the turn ({reason})")),
+                    (None, true) => skip(format!("not run: {}", tools::STOPPED)),
                     (None, false) => host.run_all(&plans, self.mcp.clone(), ui),
                 };
-                for ((slot, id, input, context, _), out) in pending.into_iter().zip(outs) {
+                for ((slot, id, input, context, plan), done) in pending.into_iter().zip(outs) {
+                    let out = self.subagent_stop(&host, &id, &plan, done, ui);
                     stopped = stopped || matches!(&out, Err(e) if e.ends_with(tools::STOPPED));
                     let (out, end) = self.post_tool(&id, "Agent", &input, out, context, ui);
                     hook_stop = hook_stop.or(end);
@@ -693,6 +712,54 @@ impl Agent {
             ));
         }
         Ok(done)
+    }
+
+    /// SubagentStop: a hook that blocks sends the sub-agent back to work in
+    /// its own session, as a Stop hook does for the main agent.
+    fn subagent_stop(
+        &self,
+        host: &crate::subagent::Host,
+        id: &str,
+        plan: &crate::subagent::Planned,
+        mut done: crate::subagent::Finished,
+        ui: &mut dyn Ui,
+    ) -> Result<String, String> {
+        let mut rounds = 0;
+        loop {
+            let Some(session) = done.session.clone() else {
+                return done.result;
+            };
+            if matches!(&done.result, Err(e) if e.ends_with(tools::STOPPED)) {
+                return done.result;
+            }
+            let o = self.hook(
+                Hook::SubagentStop,
+                Some(&plan.role),
+                json!({"agent_id": id, "agent_type": plan.role,
+                       "agent_transcript_path": session.display().to_string(),
+                       "stop_hook_active": rounds > 0}),
+                ui,
+            );
+            let Some(reason) = o
+                .block
+                .filter(|_| o.stop.is_none() && rounds < MAX_STOP_CONTINUATIONS)
+            else {
+                return done.result;
+            };
+            rounds += 1;
+            ui.notice(&format!(
+                "a SubagentStop hook sent {} back to work: {reason}",
+                plan.label
+            ));
+            let mut again = plan.clone();
+            again.spec.resume = Some(session);
+            again.spec.history = None;
+            again.spec.task = format!("[SubagentStop hook] {reason}");
+            done = host
+                .run_all(&[&again], self.mcp.clone(), ui)
+                .pop()
+                .expect("one result per plan");
+        }
     }
 
     /// PreToolUse for one call: the input to run (a hook may rewrite it), a
