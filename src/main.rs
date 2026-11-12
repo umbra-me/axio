@@ -763,9 +763,6 @@ fn run() -> Result<ExitCode, String> {
     };
     if let Some(path) = resume {
         agent.messages = session::load(&path)?;
-        // No reply has measured the context yet; estimate it so a long
-        // resumed session can still compact before its first prompt.
-        agent.context = compact::estimate_tokens(&agent.messages);
         agent.session = Some(session::Session::open(path)?);
     } else if !args.no_session {
         agent.session = Some(session::Session::create(&sessions, &cwd)?);
@@ -794,6 +791,11 @@ fn run() -> Result<ExitCode, String> {
         ))?;
     }
     agent.set_tools(profile.modules, started);
+    if !agent.messages.is_empty() {
+        // No reply has measured the context yet; estimate it so a long
+        // resumed session can still compact before its first prompt.
+        agent.context = agent.estimated_context();
+    }
 
     let no_color = std::env::var_os("NO_COLOR").is_some();
     let mut term = ui::Term::new(

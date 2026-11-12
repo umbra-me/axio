@@ -367,14 +367,26 @@ fn fit_tail(s: &str, cols: usize) -> String {
 pub fn recap(messages: &[crate::message::Message]) -> Vec<String> {
     use crate::message::{Block, Message};
     let prompt = messages.iter().rev().find_map(|m| match m {
-        Message::User { content } => content.iter().find_map(|b| match b {
-            Block::Text { text }
-                if !text.starts_with('[') && !text.starts_with(crate::compact::SUMMARY_MARK) =>
-            {
-                Some(text.as_str())
+        Message::User { content } => {
+            fn typed(b: &Block) -> Option<&str> {
+                match b {
+                    Block::Text { text } if !text.starts_with('[') => Some(text.as_str()),
+                    _ => None,
+                }
             }
-            _ => None,
-        }),
+            let is_summary = |b: &Block| {
+                matches!(b, Block::Text { text } if text.starts_with(crate::compact::SUMMARY_MARK))
+            };
+            // A compaction folds the kept requests and the summary into the
+            // first message, and the next prompt is appended to it.
+            match content.iter().rposition(is_summary) {
+                Some(i) => content[i + 1..]
+                    .iter()
+                    .find_map(typed)
+                    .or_else(|| content[..i].iter().rev().find_map(typed)),
+                None => content.iter().find_map(typed),
+            }
+        }
         Message::Assistant { .. } => None,
     });
     let reply = messages.iter().rev().find_map(|m| match m {
@@ -1066,6 +1078,33 @@ mod tests {
             ["› fix the tests…", "  …", "  two", "  three", "  four"]
         );
         assert!(recap(&[]).is_empty());
+    }
+
+    #[test]
+    fn recap_after_a_compaction_shows_the_newest_prompt() {
+        use crate::compact::SUMMARY_MARK;
+        use crate::message::{Block, Message};
+        let text = |t: &str| Block::Text { text: t.into() };
+        let summary = format!("{SUMMARY_MARK} summary");
+        let folded = vec![
+            Message::User {
+                content: vec![
+                    text("old ask"),
+                    text("older fix"),
+                    text(&summary),
+                    text("latest ask"),
+                    text("<file path=\"a.rs\">\nfn a() {}\n</file>"),
+                ],
+            },
+            Message::Assistant {
+                content: vec![text("done")],
+            },
+        ];
+        assert_eq!(recap(&folded), ["› latest ask", "  done"]);
+        let just_compacted = vec![Message::User {
+            content: vec![text("old ask"), text("older fix"), text(&summary)],
+        }];
+        assert_eq!(recap(&just_compacted), ["› older fix"]);
     }
 
     #[test]

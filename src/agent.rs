@@ -110,6 +110,17 @@ impl Agent {
     }
 
     /// Compaction starts at 85% of the window, or AXIO_COMPACT_AT tokens.
+    /// A rough size of the next request, for when no reply has measured it:
+    /// the history plus the system prompt and tool definitions.
+    pub fn estimated_context(&self) -> u64 {
+        let tools: usize = self
+            .tools
+            .iter()
+            .map(|t| t.name.len() + t.description.len() + t.schema.to_string().len())
+            .sum();
+        compact::estimate_tokens(&self.messages) + (self.system.len() + tools) as u64 / 4
+    }
+
     pub fn compact_at(&self) -> u64 {
         std::env::var("AXIO_COMPACT_AT")
             .ok()
@@ -333,12 +344,12 @@ impl Agent {
         if summary.is_empty() {
             return Err("the model returned an empty summary".into());
         }
-        let before = self.context.max(compact::estimate_tokens(&self.messages));
+        let before = self.context.max(self.estimated_context());
         compact::apply(&mut self.messages, &summary);
         if let Some(s) = &mut self.session {
             s.compaction(&summary)?;
         }
-        let after = compact::estimate_tokens(&self.messages);
+        let after = self.estimated_context();
         ui.notice(&format!(
             "compacted: {} → about {} tokens",
             crate::ui::tokens(before),
@@ -1271,6 +1282,30 @@ mod tests {
         );
         assert!(
             matches!(&content[1], Block::ToolResult { output, .. } if output.starts_with("not run"))
+        );
+    }
+
+    #[test]
+    fn compaction_estimate_counts_the_system_prompt() {
+        let mut agent = agent(|req, _| {
+            let text = if req.system == SUMMARY_SYSTEM {
+                "<summary>old work</summary>"
+            } else {
+                "ok"
+            };
+            reply(
+                vec![Block::Text { text: text.into() }],
+                Stop::EndTurn,
+                12_000,
+            )
+        });
+        agent.system = "s".repeat(40_000);
+        agent.prompt("old", &mut Log::default()).unwrap();
+        assert!(agent.compact("manual", &mut Log::default()).unwrap());
+        assert!(
+            agent.context >= 10_000,
+            "the system prompt still counts after compacting, got {}",
+            agent.context
         );
     }
 
