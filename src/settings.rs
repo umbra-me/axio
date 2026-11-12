@@ -19,7 +19,18 @@ pub struct Settings {
     /// Fast mode by default, on models that have it.
     pub fast_mode: Option<bool>,
     #[serde(default)]
+    pub status_line: StatusLine,
+    #[serde(default)]
     pub subagents: Subagents,
+}
+
+/// `"statusLine"` in settings.json: which items each status line shows;
+/// unset means all of them, an empty list hides the line.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StatusLine {
+    pub under_prompt: Option<Vec<String>>,
+    pub after_turn: Option<Vec<String>>,
 }
 
 /// `"subagents"` in settings.json.
@@ -97,6 +108,13 @@ impl Settings {
             sandbox_network: over.sandbox_network.or(self.sandbox_network),
             compact_model: over.compact_model.or(self.compact_model),
             fast_mode: over.fast_mode.or(self.fast_mode),
+            status_line: StatusLine {
+                under_prompt: over
+                    .status_line
+                    .under_prompt
+                    .or(self.status_line.under_prompt),
+                after_turn: over.status_line.after_turn.or(self.status_line.after_turn),
+            },
             subagents: self.subagents.overlay(over.subagents),
         }
     }

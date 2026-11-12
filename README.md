@@ -318,6 +318,11 @@ Commands:
 - The line after each turn shows the output speed (output tokens a second,
   timed from each reply's first token to its end) and the wait for the first
   token; `/status` gives the session average.
+- Each item on both lines can be switched off: `/settings` → "Under the
+  prompt" or "After each turn" (Enter switches an item, Esc saves; it
+  applies at once), or in settings.json, where an empty list hides the line:
+  `"statusLine": {"underPrompt": ["model", "context", "cost"], "afterTurn":
+  ["context", "output", "cache", "time", "speed", "first"]}`.
 - `/context` shows what fills the context window: a bar, then the system
   prompt, AGENTS.md, skills list, MCP guidance, built-in tools, the Agent
   tool, each MCP server's tools and the messages, with the free space and

@@ -44,6 +44,8 @@ pub struct Picker {
     typed_prefix: Option<String>,
     /// Effort levels each choice takes, and the level being shown.
     effort: Option<(Vec<Vec<String>>, String)>,
+    /// Replaces the usual key hint after the title.
+    hint: Option<String>,
 }
 
 /// Whether a choice becomes the default or lasts for this session.
@@ -77,6 +79,7 @@ impl Picker {
             selected: 0,
             top: 0,
             typed_prefix: None,
+            hint: None,
             effort: None,
         };
         if let Some(c) = current.filter(|c| *c < p.choices.len()) {
@@ -88,6 +91,13 @@ impl Picker {
 
     /// Lets Enter use what was typed when no choice matches it, for a
     /// list that may not hold everything, such as a server's models.
+    /// A key hint of its own, for pickers where Enter or Esc mean
+    /// something else.
+    pub fn with_hint(mut self, hint: &str) -> Picker {
+        self.hint = Some(hint.into());
+        self
+    }
+
     pub fn allow_typed(mut self, prefix: &str) -> Picker {
         self.typed_prefix = Some(prefix.into());
         self
@@ -221,10 +231,10 @@ impl Picker {
     /// The rows to draw, each cut to fit `width` so none wraps.
     pub fn lines(&self, width: usize, color: bool) -> Vec<String> {
         let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
-        let hint = if self.effort.is_some() {
-            "type to filter · ↑↓ move"
-        } else {
-            "type to filter · ↑↓ move · Enter choose · Esc cancel"
+        let hint = match (&self.hint, self.effort.is_some()) {
+            (Some(h), _) => h.as_str(),
+            (None, true) => "type to filter · ↑↓ move",
+            (None, false) => "type to filter · ↑↓ move · Enter choose · Esc cancel",
         };
         let mut out = vec![format!("{}  {}", self.title, dim(hint))];
         out.extend(self.body(width, color));

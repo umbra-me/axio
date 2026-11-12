@@ -215,24 +215,6 @@ impl Term {
         }
         self.dim(&s)
     }
-
-    /// The dim line after a turn: context, output, cache and time.
-    pub fn status(&self, context: u64, window: u64) -> String {
-        let t = &self.turn;
-        let sent = t.input + t.cache_read + t.cache_write;
-        let cached = (t.cache_read * 100)
-            .checked_div(sent)
-            .filter(|p| *p > 0)
-            .map(|p| format!(" · {p}% cached"))
-            .unwrap_or_default();
-        self.dim(&format!(
-            "{} of {} context · {} out{cached} · {:.1}s",
-            tokens(context),
-            tokens(window),
-            tokens(t.output),
-            self.turn_started.elapsed().as_secs_f64()
-        ))
-    }
 }
 
 /// Progress on a tool call whose input is still streaming.

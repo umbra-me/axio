@@ -85,6 +85,9 @@ under Unreleased.
 - Output speed (tok/s) and time to first token after each turn and in
   `/status` (#73).
 
+- Each status line item can be switched on or off in `/settings` or
+  `statusLine` (#74).
+
 **Models**
 - Fast mode as an opt-in toggle on models that have it: `/fast`,
   `"fastMode"` in settings, the price shown when it turns on, standard speed

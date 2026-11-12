@@ -41,6 +41,8 @@ pump(2)
 context = step([b'/context\r'])
 fast = step([b'/settings\r', b'fast mode by', b'\r'])
 parallel = step([b'/settings\r', b'at once', b'\r', b'2', b'\r'])
+toggled = step([b'/settings\r', b'under the', b'\r', b'cost', b'\r', b'\x1b'], 1)
+after_toggle = step([b'x', b'\x15'], 0.5)
 step([b'/init\r'], 2.5)
 os.write(fd, b'\x04'); pump(0.5)
 saved = json.load(open(os.path.join(HOME, 'settings.json')))
@@ -49,6 +51,8 @@ checks = [
     ('/context names its parts', 'System prompt' in context and 'Built-in tools' in context and 'AGENTS.md' in context),
     ('/settings turns fast mode on for new sessions', saved.get('fastMode') is True and 'Fast mode by default: on for new sessions' in fast),
     ('/settings sets a nested value', saved.get('subagents', {}).get('parallel') == 2 and 'Sub-agents at once: 2' in parallel),
+    ('a status line item can be switched off', saved.get('statusLine', {}).get('underPrompt') == ['model', 'context'] and 'Under the prompt: model, context (now and for new sessions)' in toggled),
+    ('and the status line drops it at once', 'no price list' not in after_toggle and '% context' in after_toggle),
     ('/init asks for AGENTS.md at the project root', any('AGENTS.md at ' + os.path.realpath(work) in a or 'AGENTS.md at ' + work in a for a in asked)),
 ]
 for name, ok in checks:

@@ -369,15 +369,48 @@ fn context_lines(
 
 /// The status line under the prompt: model, context and what the session
 /// has cost so far.
-fn footer(agent: &Agent) -> String {
+fn footer(agent: &Agent, items: &[&str]) -> String {
     let window = agent.model.context_window().max(1);
     let used = agent.context.max(agent.estimated_context());
-    format!(
-        "{} · {}% context · {}",
-        model_line(agent),
-        used * 100 / window,
-        cost_label(agent)
-    )
+    items
+        .iter()
+        .map(|item| match *item {
+            "model" => model_line(agent),
+            "context" => format!("{}% context", used * 100 / window),
+            _ => cost_label(agent),
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The line after a turn, with the chosen items; those not measured this
+/// turn are left out.
+fn turn_line(term: &ui::Term, agent: &Agent, items: &[&str]) -> String {
+    let t = &term.turn;
+    let speed = agent.turn_speed();
+    let parts: Vec<String> = items
+        .iter()
+        .filter_map(|item| match *item {
+            "context" => Some(format!(
+                "{} of {} context",
+                ui::tokens(agent.context),
+                ui::tokens(agent.model.context_window())
+            )),
+            "output" => Some(format!("{} out", ui::tokens(t.output))),
+            "cache" => {
+                let sent = t.input + t.cache_read + t.cache_write;
+                (t.cache_read * 100)
+                    .checked_div(sent)
+                    .filter(|p| *p > 0)
+                    .map(|p| format!("{p}% cached"))
+            }
+            "time" => Some(format!("{:.1}s", term.turn_started.elapsed().as_secs_f64())),
+            "speed" => speed.rate().map(|r| format!("{r:.0} tok/s")),
+            "first" => speed.first_token().map(|f| format!("first token {f:.1}s")),
+            _ => None,
+        })
+        .collect();
+    parts.join(" · ")
 }
 
 /// What the session has cost, or how this model is paid for before any
@@ -1196,6 +1229,7 @@ fn run() -> Result<ExitCode, String> {
     agent.compact_ratio = profile.compact_at;
     agent.compact_model = config.compact_model.clone();
     agent.fast = config.fast_mode.unwrap_or(false);
+    let mut status_line = config.status_line.clone();
     agent.fast_model = config.subagents.fast_model.clone();
 
     let sessions = session::dir_for(&home, &cwd);
@@ -1364,7 +1398,10 @@ fn run() -> Result<ExitCode, String> {
     loop {
         if prompt.is_empty() {
             println!();
-            editor.footer = footer(&agent);
+            editor.footer = footer(
+                &agent,
+                &panels::shown(&status_line.under_prompt, &panels::UNDER_PROMPT),
+            );
             let keys = term.keys.as_mut().expect("keys");
             match read_prompt(&mut editor, keys) {
                 Input::Line(line) => {
@@ -1457,7 +1494,13 @@ fn run() -> Result<ExitCode, String> {
                     );
                 }
             }
-            ("/settings", _) => interactive::settings(&mut agent, &mut term, &home, &mut models),
+            ("/settings", _) => {
+                interactive::settings(&mut agent, &mut term, &home, &mut models);
+                // Status line changes apply at once.
+                if let Ok(c) = settings::Settings::load(&home, project.as_deref()) {
+                    status_line = c.status_line;
+                }
+            }
             ("/rewind", _) => {
                 if let Some(text) = interactive::rewind(&mut agent, &mut term) {
                     editor.prefill(&text);
@@ -1531,11 +1574,14 @@ fn run() -> Result<ExitCode, String> {
                         eprintln!("{}", term.paint("\x1b[31m", &format!("axio: {e}")));
                     }
                 }
-                let mut line = term.status(agent.context, agent.model.context_window());
-                if let Some(speed) = agent.turn_speed().label() {
-                    line.push_str(&term.dim(&format!(" · {speed}")));
+                let line = turn_line(
+                    &term,
+                    &agent,
+                    &panels::shown(&status_line.after_turn, &panels::AFTER_TURN),
+                );
+                if !line.is_empty() {
+                    eprintln!("{}", term.dim(&line));
                 }
-                eprintln!("{line}");
                 let left = term.take_queued();
                 if !left.is_empty() {
                     prompt = left.join("\n");
@@ -1557,6 +1603,30 @@ fn run() -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_lines_show_only_the_chosen_items() {
+        let tmp = std::env::temp_dir();
+        let a = Agent::new(
+            Model::parse("anthropic/claude-opus-5-5"),
+            tmp.clone(),
+            String::new(),
+        );
+        assert_eq!(footer(&a, &["model", "cost"]), "claude-opus-5-5 · $0.00");
+        assert_eq!(footer(&a, &[]), "", "no items, no line");
+        let term = ui::Term::new(&tmp, false, false);
+        let line = turn_line(&term, &a, &["output", "time"]);
+        assert!(
+            line.starts_with("0 out · ") && line.ends_with('s'),
+            "{line}"
+        );
+        assert!(!line.contains("context"));
+        assert_eq!(
+            turn_line(&term, &a, &["speed", "first"]),
+            "",
+            "nothing measured yet"
+        );
+    }
 
     #[test]
     fn the_cost_label_suits_the_model_before_any_call() {
