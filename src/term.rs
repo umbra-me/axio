@@ -30,6 +30,8 @@ pub enum Key {
     Esc,
     Paste(String),
     Ctrl(char),
+    /// Shift+Tab.
+    BackTab,
     /// A sequence axio has no use for, such as an F-key.
     Other,
 }
@@ -118,6 +120,7 @@ fn csi(next: &mut dyn FnMut(Option<Duration>) -> Option<u8>) -> Key {
         (_, b'F') | ("4" | "8", b'~') => Key::End,
         ("3", b'~') => Key::Delete,
         ("200", b'~') => paste(next),
+        ("", b'Z') => Key::BackTab,
         // F-keys, Shift-Tab, focus events and the like: never a stop.
         _ => Key::Other,
     }
@@ -455,7 +458,7 @@ mod tests {
         assert_eq!(keys(b"\x1b"), [Key::Esc]);
         assert_eq!(
             keys(b"\x1b[Z\x1b[15~\x1bd\x1b[I\x1bOP"),
-            [Key::Other, Key::Other, Key::Other, Key::Other, Key::Other],
+            [Key::BackTab, Key::Other, Key::Other, Key::Other, Key::Other],
             "Shift-Tab, F5, Alt-d, focus-in and F1 are not Esc"
         );
     }

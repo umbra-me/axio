@@ -53,6 +53,15 @@ pub trait Ui {
     ) -> Option<(Result<String, String>, Vec<Block>)> {
         None
     }
+    /// Asks whether a tool may run: `options` to choose from, `None` for
+    /// Esc. Without a terminal there is no one to ask.
+    fn permission(&mut self, _question: &str, _options: &[String]) -> Option<usize> {
+        None
+    }
+    /// Whether `permission` can reach a person.
+    fn can_ask(&self) -> bool {
+        false
+    }
     /// Sub-agents are running: one line on what they are doing.
     fn agents_running(&mut self, _line: &str) {}
     /// A sub-agent finished; `summary` is its tool calls and time.
@@ -145,6 +154,11 @@ pub struct Agent {
     /// Files the latest turn wrote or edited, with what they held before
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
+    /// When tools may run without asking.
+    permissions: std::sync::Mutex<crate::permissions::Permissions>,
+    /// Where "always in this project" saves rules: the user's axio home and
+    /// the project root.
+    pub rules_home: Option<(PathBuf, PathBuf)>,
     /// Output speed of this turn's replies and of the whole session's.
     turn_speed: std::sync::Mutex<Speed>,
     session_speed: std::sync::Mutex<Speed>,
@@ -204,6 +218,12 @@ impl Agent {
             spend: Default::default(),
             turn_speed: Default::default(),
             session_speed: Default::default(),
+            // Library default; the program sets the mode from settings.
+            permissions: std::sync::Mutex::new(crate::permissions::Permissions {
+                mode: crate::permissions::Mode::Bypass,
+                ..Default::default()
+            }),
+            rules_home: None,
         }
     }
 
@@ -217,6 +237,94 @@ impl Agent {
             self.system.push_str(&section);
         }
         self.mcp = Arc::new(mcp);
+    }
+
+    pub fn set_permissions(&mut self, p: crate::permissions::Permissions) {
+        if let Ok(mut current) = self.permissions.lock() {
+            *current = p;
+        }
+    }
+
+    pub fn permissions(&self) -> crate::permissions::Permissions {
+        self.permissions
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_mode(&self, mode: crate::permissions::Mode) {
+        if let Ok(mut p) = self.permissions.lock() {
+            p.mode = mode;
+        }
+    }
+
+    /// The permission check after hooks: `Some(reason)` refuses the call.
+    fn check_permission(&self, name: &str, input: &Value, ui: &mut dyn Ui) -> Option<String> {
+        use crate::permissions::{Rule, Verdict};
+        let p = self.permissions();
+        let (question, rule) = match p.decide(name, input, &self.cwd) {
+            Verdict::Allow => return None,
+            Verdict::Deny(why) => return Some(why),
+            Verdict::Ask { question, rule } => (question, rule),
+        };
+        if !ui.can_ask() {
+            return Some(format!(
+                "not run: {name} needs permission and there is no one to ask; the user can allow it with --permission-mode acceptEdits or bypassPermissions, or an allow rule in settings"
+            ));
+        }
+        #[derive(Clone)]
+        enum Act {
+            Once,
+            AcceptEdits,
+            Project(Rule),
+            Session(Rule),
+            No,
+        }
+        let mut options = vec!["Yes".to_string()];
+        let mut acts = vec![Act::Once];
+        if matches!(name, "Write" | "Edit") {
+            options.push("Yes, and accept all edits for the rest of this session".into());
+            acts.push(Act::AcceptEdits);
+        } else if let Some(r) = rule {
+            options.push(format!("Yes, and don't ask again for {r} in this project"));
+            acts.push(Act::Project(r.clone()));
+            options.push("Yes, for the rest of this session".into());
+            acts.push(Act::Session(r));
+        }
+        options.push("No".into());
+        acts.push(Act::No);
+        let add = |r: Rule| {
+            if let Ok(mut p) = self.permissions.lock() {
+                p.allow.push(r);
+            }
+        };
+        match ui
+            .permission(&question, &options)
+            .and_then(|i| acts.get(i).cloned())
+        {
+            Some(Act::Once) => None,
+            Some(Act::AcceptEdits) => {
+                self.set_mode(crate::permissions::Mode::AcceptEdits);
+                ui.notice(
+                    "accepting edits for the rest of this session (Shift+Tab changes the mode)",
+                );
+                None
+            }
+            Some(Act::Project(r)) => {
+                if let Some((home, root)) = &self.rules_home
+                    && let Err(e) = crate::permissions::save_project_rule(home, root, &r)
+                {
+                    ui.notice(&format!("could not save the rule: {e}"));
+                }
+                add(r);
+                None
+            }
+            Some(Act::Session(r)) => {
+                add(r);
+                None
+            }
+            Some(Act::No) | None => Some("the user declined this call".into()),
+        }
     }
 
     pub fn turn_speed(&self) -> Speed {
@@ -672,6 +780,11 @@ impl Agent {
             content.push(block);
         }
         content.extend(submit.context.into_iter().map(|text| Block::Text { text }));
+        if self.permissions().mode == crate::permissions::Mode::Plan {
+            content.push(Block::Text {
+                text: "[axio] Plan mode is on: read and research, then propose a plan. Changing files and running commands are refused until the user leaves plan mode.".into(),
+            });
+        }
         self.push(Message::User { content })?;
         self.turn_at
             .store(self.messages.len() - 1, Ordering::Relaxed);
@@ -1145,6 +1258,8 @@ impl Agent {
             (Some(reason), _) | (_, Some(Permission::Deny(reason))) => {
                 Some(format!("blocked by a hook: {reason}"))
             }
+            (None, Some(Permission::Allow)) => None,
+            (None, None) => self.check_permission(name, &input, ui),
             (None, Some(Permission::Ask(reason))) => {
                 let why = if reason.is_empty() {
                     String::new()
@@ -1159,7 +1274,6 @@ impl Agent {
                 (!ui.ask(&format!("Allow {name} {summary}{why}?")))
                     .then(|| format!("the user declined this call{why}"))
             }
-            _ => None,
         };
         Ok((input, refusal, pre.context))
     }
@@ -1298,6 +1412,9 @@ impl Agent {
         ui.tool_start("Agent", &input);
         match planned {
             Ok(mut plan) => {
+                // Sub-agents ask first exactly as the main agent does.
+                plan.spec.permissions = Some(crate::child::PermSpec::of(&self.permissions()));
+                plan.spec.can_ask = ui.can_ask();
                 let granted: Vec<String> = plan.spec.mcp.iter().map(|t| t.name.clone()).collect();
                 if !granted.is_empty()
                     && let Some(section) = self.mcp.prompt_section(Some(&granted))
@@ -1333,8 +1450,22 @@ mod tests {
         stop_after_polls: Option<usize>,
         polls: usize,
         answer: bool,
+        /// Answers to permission questions, in order; `None` is Esc.
+        choices: Vec<Option<usize>>,
     }
     impl Ui for Log {
+        fn can_ask(&self) -> bool {
+            true
+        }
+        fn permission(&mut self, question: &str, options: &[String]) -> Option<usize> {
+            self.events
+                .push(format!("permission {question} [{}]", options.join(" | ")));
+            if self.choices.is_empty() {
+                None
+            } else {
+                self.choices.remove(0)
+            }
+        }
         fn delta(&mut self, d: Delta) {
             if let Delta::Text(t) = d {
                 self.events.push(format!("text {t}"));
@@ -2384,5 +2515,129 @@ mod tests {
             calls: 1,
         };
         assert_eq!(tiny.rate(), None);
+    }
+
+    /// Runs `command` with Bash once per prompt, then answers.
+    fn bash_each_prompt(command: &'static str) -> Agent {
+        agent(move |req, _| {
+            let last = req.messages.last().unwrap();
+            if matches!(last, Message::User { content } if content.iter().any(|b| matches!(b, Block::ToolResult { .. })))
+            {
+                return reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1);
+            }
+            reply(bash("b", command), Stop::ToolUse, 1)
+        })
+    }
+
+    #[test]
+    fn the_default_mode_asks_and_remembers_the_answer() {
+        let dir = std::env::temp_dir().join(format!("axio-ask-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("ran");
+        let command: &'static str =
+            Box::leak(format!("touch {}", marker.display()).into_boxed_str());
+        let mut agent = bash_each_prompt(command);
+        agent.cwd = dir.clone();
+        agent.set_permissions(crate::permissions::Permissions::default());
+        agent.rules_home = Some((dir.join("home"), dir.clone()));
+        // No: not run, and the model is told.
+        let mut log = Log {
+            choices: vec![Some(3)],
+            ..Log::default()
+        };
+        agent.prompt("one", &mut log).unwrap();
+        assert!(!marker.exists());
+        let asked = log
+            .events
+            .iter()
+            .find(|e| e.starts_with("permission"))
+            .unwrap();
+        assert!(
+            asked.contains("Run `touch")
+                && asked.contains("in this project")
+                && asked.contains("this session"),
+            "{asked}"
+        );
+        let Some(Message::User { content }) = agent.messages.iter().rev().nth(1) else {
+            panic!()
+        };
+        assert!(
+            matches!(&content[0], Block::ToolResult { output, is_error: true, .. } if output.contains("declined"))
+        );
+        // Yes for this session: runs, and the next call does not ask.
+        let mut log = Log {
+            choices: vec![Some(2)],
+            ..Log::default()
+        };
+        agent.prompt("two", &mut log).unwrap();
+        assert!(marker.exists());
+        std::fs::remove_file(&marker).unwrap();
+        let mut log = Log::default();
+        agent.prompt("three", &mut log).unwrap();
+        assert!(marker.exists(), "allowed for the session");
+        assert!(!log.events.iter().any(|e| e.starts_with("permission")));
+        // Always in this project: saved in the user's own folder.
+        let mut fresh = bash_each_prompt("git status");
+        fresh.cwd = dir.clone();
+        fresh.set_permissions(crate::permissions::Permissions::default());
+        fresh.rules_home = Some((dir.join("home"), dir.clone()));
+        fresh
+            .prompt(
+                "four",
+                &mut Log {
+                    choices: vec![Some(1)],
+                    ..Log::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            crate::permissions::project_rules(&dir.join("home"), &dir)
+                .iter()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>(),
+            ["Bash(git status:*)"]
+        );
+    }
+
+    #[test]
+    fn plan_mode_refuses_changes_and_says_so() {
+        let mut agent = bash_each_prompt("echo hi");
+        agent.set_permissions(crate::permissions::Permissions {
+            mode: crate::permissions::Mode::Plan,
+            ..Default::default()
+        });
+        agent.prompt("do it", &mut Log::default()).unwrap();
+        assert!(
+            agent.messages[0].text().contains("plan mode"),
+            "the model is told"
+        );
+        let Some(Message::User { content }) = agent.messages.iter().rev().nth(1) else {
+            panic!()
+        };
+        assert!(
+            matches!(&content[0], Block::ToolResult { output, is_error: true, .. } if output.contains("plan mode"))
+        );
+    }
+
+    #[test]
+    fn a_hook_that_allows_skips_the_question() {
+        let mut agent = bash_each_prompt("true");
+        agent.set_permissions(crate::permissions::Permissions::default());
+        with_hooks(
+            &mut agent,
+            hook(
+                "PreToolUse",
+                "Bash",
+                r#"echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'"#,
+            ),
+        );
+        let mut log = Log::default();
+        agent.prompt("go", &mut log).unwrap();
+        assert!(
+            !log.events.iter().any(|e| e.starts_with("permission")),
+            "{:?}",
+            log.events
+        );
     }
 }

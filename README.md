@@ -70,6 +70,41 @@ the one binary. Your own go in
 
 `plugins` lists the plugin names to load (`"*"` for all, the default).
 
+## Permissions
+
+axio asks before it runs a command, changes a file, fetches a page or uses an
+MCP tool. Reading and searching never ask. The answer can be yes, yes and
+don't ask again in this project (saved in `~/.axio/agent/permissions.json`,
+never in the repository, so a cloned project cannot grant itself anything),
+yes for the rest of the session, or no.
+
+| Mode | What runs without asking |
+|---|---|
+| `default` | reading and searching |
+| `acceptEdits` | reading, searching and file changes |
+| `plan` | reading and searching; changes and commands are refused, and the model proposes a plan |
+| `bypassPermissions` | everything |
+
+Shift+Tab cycles default → accept edits → plan; the status line shows the
+mode when it is not the default. Start in a mode with `--permission-mode`,
+`AXIO_PERMISSION_MODE` or `"permissions": {"defaultMode": ...}` in settings
+(also in `/settings`); `--dangerously-skip-permissions` is bypass.
+`/permissions` shows the mode and rules. Rules use Claude Code's syntax:
+
+```json
+{"permissions": {
+  "allow": ["Bash(cargo test:*)", "Bash(git status)", "Edit(src/**)", "WebFetch(domain:docs.rs)", "mcp__mobbin"],
+  "deny": ["Bash(rm:*)", "Edit(.env)"]
+}}
+```
+
+`Bash(git log:*)` allows `git log` and anything after it. A command joined
+with `&&`, `;` or `|` runs only when every part is allowed, and commands with
+`$(...)`, backticks or `>` always ask. Deny rules win, even over bypass.
+Sub-agents follow the same mode and rules, and their questions come to your
+terminal. Without a terminal (`-p`), a call that would ask is refused with a
+note on how to allow it. PreToolUse hooks can still allow, deny or ask.
+
 ## Sub-agents
 
 The `Agent` tool hands a self-contained task to a sub-agent: another `axio`
@@ -354,10 +389,10 @@ Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out
 
-No plan mode and no built-in permission prompts (a hook can
-ask). `/undo` puts back files written by Write and Edit, not changes made by
-commands. The model runs commands with your user's rights in the working
-directory, so run it where that is acceptable.
+`/undo` and `/rewind` put back files written by Write and Edit, not changes
+made by commands. Commands run with your user's rights in the working
+directory: keep the default permission mode, or use the sandbox, where that
+matters.
 
 ## Dependencies
 

@@ -346,6 +346,8 @@ pub fn spec(
             history: None,
             resume: None,
             fast: settings.fast.unwrap_or(false),
+            permissions: None,
+            can_ask: false,
             mcp: parent
                 .mcp
                 .iter()

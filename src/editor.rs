@@ -14,6 +14,8 @@ pub enum Outcome {
     Interrupt,
     /// Ctrl-D on an empty line.
     Exit,
+    /// Shift+Tab: the next permission mode.
+    CycleMode,
     Redraw,
 }
 
@@ -426,6 +428,7 @@ impl Editor {
             }
             Key::Ctrl('i') => self.complete(),
             Key::Ctrl('o') if self.buf.is_empty() => return Outcome::Submit("/output".into()),
+            Key::BackTab => return Outcome::CycleMode,
             Key::Char(c) => self.insert(&c.to_string()),
             Key::Paste(s) => {
                 let text = dropped_image(&s, self.cwd.as_deref())

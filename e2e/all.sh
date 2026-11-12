@@ -11,6 +11,8 @@ P=$(cd "$D/.." && pwd)/examples/plugins
 T=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/axio-e2e.XXXXXX")" && pwd -P)
 OUT=$T/results.txt
 h() { mktemp -d "$T/h.XXXXXX"; }
+# The checks are about features; e2e/permissions.py turns asking back on.
+export AXIO_PERMISSION_MODE=bypassPermissions
 {
   timeout 90 python3 "$D/pty_check.py" "$B" "$(h)"
   timeout 120 python3 "$D/ask_check.py" "$B" "$(h)" "$P"
@@ -40,5 +42,6 @@ h() { mktemp -d "$T/h.XXXXXX"; }
   timeout 60 python3 "$D/status_line.py" "$B" "$(h)"
   timeout 60 python3 "$D/settings_context.py" "$B" "$(h)"
   timeout 60 python3 "$D/rewind_history.py" "$B" "$(h)"
+  timeout 90 python3 "$D/permissions.py" "$B" "$(h)"
 } 2>&1 | grep -E '^(PASS|FAIL)' > "$OUT"
 grep FAIL "$OUT"; echo "$(grep -c PASS "$OUT") passed, $(grep -c FAIL "$OUT") failed"

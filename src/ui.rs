@@ -927,6 +927,31 @@ impl Ui for Term {
         std::mem::take(&mut self.queued)
     }
 
+    fn can_ask(&self) -> bool {
+        self.keys.is_some()
+    }
+
+    fn permission(&mut self, question: &str, options: &[String]) -> Option<usize> {
+        self.settle();
+        let color = self.color;
+        let title = format!("{} {question}", self.paint(YELLOW, "?"));
+        let keys = self.keys.as_mut()?;
+        let choices = options
+            .iter()
+            .map(|o| crate::menu::Choice::new(o.clone(), ""))
+            .collect();
+        let picker = crate::menu::Picker::new(&title, choices, None)
+            .with_hint("↑↓ move · Enter choose · Esc means no");
+        let picked = crate::menu::pick(keys, picker, color);
+        let answer = picked.map_or("No".to_string(), |i| options[i].clone());
+        eprintln!(
+            "{} {question} {}",
+            self.paint(YELLOW, "?"),
+            self.dim(&answer)
+        );
+        picked
+    }
+
     fn ask(&mut self, question: &str) -> bool {
         self.settle();
         let mark = self.paint(YELLOW, "?");

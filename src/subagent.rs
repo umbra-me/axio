@@ -248,6 +248,25 @@ impl Host {
                                 .to_string();
                             }
                             Some("result" | "error") => r.end = Some(v),
+                            Some("ask") => {
+                                let options: Vec<String> = v["options"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|o| o.as_str().map(String::from))
+                                    .collect();
+                                let question = format!(
+                                    "{}: {}",
+                                    r.label,
+                                    v["question"].as_str().unwrap_or("allow this?")
+                                );
+                                let choice = ui.permission(&question, &options);
+                                if let Some(stdin) = &mut r.stdin {
+                                    let line =
+                                        json!({"type": "answer", "id": v["id"], "choice": choice});
+                                    let _ = writeln!(stdin, "{line}").and_then(|_| stdin.flush());
+                                }
+                            }
                             Some("mcp_call") => {
                                 let name = v["name"].as_str().unwrap_or("").to_string();
                                 let granted =
