@@ -136,7 +136,7 @@ fn rule_matches(rule: &Rule, tool: &str, input: &Value, cwd: &Path, deny: bool) 
                 .zip(crate::sandbox::resolve(cwd))
                 .is_some_and(|(f, c)| path_matches(spec, &f, &c));
             if deny {
-                written || real
+                written || real || denied_target(spec, &cwd.join(f))
             } else {
                 written && real
             }
@@ -185,37 +185,128 @@ fn unsafe_to_match(command: &str) -> bool {
         || command.contains('<')
 }
 
-/// Every command a deny rule should see, nested ones included: the text is
-/// also split at brackets and backticks, quotes and backslashes are dropped
-/// (`"rm"`, `\rm`), and leading `NAME=value` assignments are skipped. Deny
-/// rules stay a best effort: `bash -c '…'` hides a command from them.
+/// Every command a deny rule should see, nested ones included, as plain
+/// words: quotes and escapes resolved, `$(…)`, backticks, `<(…)` and
+/// brackets starting commands of their own (also inside double quotes),
+/// leading `NAME=value` assignments and wrappers such as `env` or `sudo`
+/// skipped, and the program named by its file name (`/bin/rm` is `rm`).
+/// Deny rules stay a best effort: `bash -c '…'` hides a command from them.
 fn deny_parts(command: &str) -> Vec<String> {
-    let flat: String = command
-        .chars()
-        .filter(|c| !matches!(c, '"' | '\'' | '\\'))
-        .map(|c| {
-            if matches!(c, '(' | ')' | '`' | '{' | '}') {
-                ';'
-            } else {
-                c
+    let mut commands: Vec<Vec<String>> = vec![Vec::new()];
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    // `"$(…)"` and `` "`…`" ``: the closing character, and the quote to go
+    // back to after it.
+    let mut nested: Vec<(char, Option<char>)> = Vec::new();
+    let mut it = command.chars().peekable();
+    fn end_word(commands: &mut [Vec<String>], word: &mut String, in_word: &mut bool) {
+        if *in_word {
+            commands
+                .last_mut()
+                .expect("never empty")
+                .push(std::mem::take(word));
+            *in_word = false;
+        }
+    }
+    fn end_command(commands: &mut Vec<Vec<String>>, word: &mut String, in_word: &mut bool) {
+        end_word(commands, word, in_word);
+        if commands.last().is_some_and(|c| !c.is_empty()) {
+            commands.push(Vec::new());
+        }
+    }
+    while let Some(c) = it.next() {
+        if quote.is_none() && nested.last().is_some_and(|n| n.0 == c) {
+            end_command(&mut commands, &mut word, &mut in_word);
+            quote = nested.pop().and_then(|n| n.1);
+            in_word = true;
+            continue;
+        }
+        match (quote, c) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), c) => word.push(c),
+            (Some('"'), '\\') => word.extend(it.next()),
+            (Some('"'), '`') => {
+                end_command(&mut commands, &mut word, &mut in_word);
+                nested.push(('`', quote));
+                quote = None;
             }
-        })
-        .collect();
-    command_parts(&flat)
+            (Some('"'), '$') if it.peek() == Some(&'(') => {
+                it.next();
+                end_command(&mut commands, &mut word, &mut in_word);
+                nested.push((')', quote));
+                quote = None;
+            }
+            (Some(_), c) => {
+                word.push(c);
+                in_word = true;
+            }
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                in_word = true;
+            }
+            (None, '\\') => {
+                if let Some(n) = it.next().filter(|n| *n != '\n') {
+                    word.push(n);
+                    in_word = true;
+                }
+            }
+            (None, ';' | '&' | '|' | '\n' | '(' | ')' | '`' | '{' | '}' | '<' | '>') => {
+                end_command(&mut commands, &mut word, &mut in_word)
+            }
+            (None, c) if c.is_whitespace() => end_word(&mut commands, &mut word, &mut in_word),
+            (None, c) => {
+                word.push(c);
+                in_word = true;
+            }
+        }
+    }
+    end_word(&mut commands, &mut word, &mut in_word);
+    commands
         .into_iter()
-        .map(|p| {
-            let mut words = p.split_whitespace().peekable();
-            while words.peek().is_some_and(|w| {
-                w.split_once('=').is_some_and(|(name, _)| {
-                    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                })
-            }) {
-                words.next();
-            }
-            words.collect::<Vec<_>>().join(" ")
-        })
-        .filter(|p| !p.is_empty())
+        .filter_map(|words| program(&words))
         .collect()
+}
+
+/// A command's words from its program on, past assignments and wrappers,
+/// with the program by its file name.
+fn program(words: &[String]) -> Option<String> {
+    const WRAPPERS: [&str; 9] = [
+        "command", "builtin", "exec", "env", "nohup", "time", "sudo", "doas", "nice",
+    ];
+    // Wrapper options that take a value (`sudo -u root`, `nice -n 5`).
+    const WITH_VALUE: [&str; 8] = ["-u", "-g", "-n", "-C", "-p", "-U", "-h", "-S"];
+    let name = |w: &str| w.rsplit(['/', '\\']).next().unwrap_or(w).to_string();
+    let assignment = |w: &str| {
+        w.split_once('=').is_some_and(|(n, _)| {
+            !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    };
+    let mut i = 0;
+    loop {
+        while words.get(i).is_some_and(|w| assignment(w)) {
+            i += 1;
+        }
+        if !words
+            .get(i)
+            .is_some_and(|w| WRAPPERS.contains(&name(w).as_str()))
+        {
+            break;
+        }
+        i += 1;
+        while let Some(w) = words.get(i).filter(|w| w.starts_with('-')) {
+            i += if WITH_VALUE.contains(&w.as_str()) {
+                2
+            } else {
+                1
+            };
+        }
+    }
+    let (first, rest) = words.get(i..)?.split_first()?;
+    let words: Vec<String> = std::iter::once(name(first))
+        .chain(rest.iter().cloned())
+        .collect();
+    Some(words.join(" "))
 }
 
 /// `git log:*` is the prefix `git log` (as a whole word); anything else
@@ -254,6 +345,26 @@ fn normalize(path: &str, cwd: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// What a deny rule must also catch for an existing file: an unanchored
+/// pattern (`secret`, `*.pem`) matching the name a symlink leads to, even
+/// outside the working directory, and any file with more than one hard link,
+/// whose other names the rule cannot see.
+fn denied_target(spec: &str, path: &Path) -> bool {
+    let unanchored = !(spec.starts_with('/') || spec.trim_start_matches('/').contains('/'));
+    let named = unanchored
+        && crate::sandbox::resolve(path)
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .is_some_and(|n| wild(spec, &n));
+    #[cfg(unix)]
+    let linked = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.nlink() > 1)
+    };
+    #[cfg(not(unix))]
+    let linked = false;
+    named || linked
 }
 
 /// `.gitignore`-style: `/x` is from the working directory, a pattern with a
@@ -622,6 +733,68 @@ mod tests {
             assert!(denies(&rm, "Bash", &bash(cmd), &c), "deny misses {cmd}");
         }
         assert!(!denies(&rm, "Bash", &bash("cat rmdir.txt"), &c));
+    }
+
+    #[test]
+    fn deny_rules_see_through_assignments_and_wrappers() {
+        let c = cwd();
+        let rm = rule("Bash(rm:*)");
+        for cmd in [
+            "FOO=\"a b\" rm -f v",
+            "FOO='a b' BAR=1 rm -f v",
+            "command rm -f v",
+            "env X=y rm -f v",
+            "env -i rm -f v",
+            "/bin/rm -f v",
+            "sudo rm -f v",
+            "nohup rm -f v",
+            "exec rm -f v",
+            "time rm -f v",
+            "builtin command rm -f v",
+            "echo \"$(rm -f v)\"",
+            "echo \"`rm -f v`\"",
+        ] {
+            assert!(denies(&rm, "Bash", &bash(cmd), &c), "deny misses {cmd}");
+        }
+        for cmd in ["rmdir x", "echo rm", "git rm x"] {
+            assert!(!denies(&rm, "Bash", &bash(cmd), &c), "{cmd}");
+        }
+        let push = rule("Bash(git push:*)");
+        assert!(denies(
+            &push,
+            "Bash",
+            &bash("env GIT_X=1 /usr/bin/git push"),
+            &c
+        ));
+    }
+
+    #[test]
+    fn deny_path_rules_see_link_targets_and_hard_links() {
+        let dir = std::env::temp_dir().join(format!("axio-perm-deny-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (proj, outside) = (dir.join("proj"), dir.join("outside"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret"), "s").unwrap();
+        std::fs::write(proj.join("secret"), "s").unwrap();
+        let write = |f: &str| json!({"file_path": f, "content": "x"});
+        let deny = rule("Edit(secret)");
+        assert!(denies(&deny, "Write", &write("secret"), &proj));
+        assert!(!denies(&deny, "Write", &write("other"), &proj));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.join("secret"), proj.join("alias")).unwrap();
+            assert!(
+                denies(&deny, "Write", &write("alias"), &proj),
+                "symlink to a denied name"
+            );
+            std::fs::hard_link(proj.join("secret"), proj.join("hard")).unwrap();
+            assert!(
+                denies(&deny, "Write", &write("hard"), &proj),
+                "hard link to a denied file"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

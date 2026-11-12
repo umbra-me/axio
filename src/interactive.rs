@@ -23,7 +23,7 @@ fn display_name(provider: &str) -> String {
 }
 
 fn note(term: &ui::Term, s: &str) {
-    eprintln!("{}", term.dim(s));
+    eprintln!("{}", term.dim(&crate::term::clean(s)));
 }
 
 /// A provider's models as the browser shows them, with the full
@@ -628,8 +628,9 @@ pub fn resume(agent: &mut Agent, term: &mut ui::Term, dir: &Path) {
 }
 
 /// Prints lines under a dim title, indented like tool output.
+/// Callers clean outside text in `lines` before styling it.
 fn panel(term: &ui::Term, title: &str, lines: &[String]) {
-    eprintln!("{}", term.paint("\x1b[1m", title));
+    eprintln!("{}", term.paint("\x1b[1m", &crate::term::clean(title)));
     for l in lines {
         eprintln!("  {l}");
     }
@@ -692,7 +693,11 @@ pub fn mcp(
         actions.push(Choice::new("Sign out", "forgets the saved sign-in"));
     }
     let keys = term.keys.as_mut().expect("keys");
-    match menu::pick(keys, Picker::new(&server.name, actions, None), term.color) {
+    match menu::pick(
+        keys,
+        Picker::new(&crate::term::clean(&server.name), actions, None),
+        term.color,
+    ) {
         Some(0) => show_tools(term, &server.name, &tools),
         Some(1) => mcp_sign_in(term, &server.name, url, !tools.is_empty()),
         Some(2) => match crate::oauth::logout(url) {
@@ -716,14 +721,19 @@ fn show_tools(term: &ui::Term, server: &str, tools: &[&crate::tools::ToolSpec]) 
     let lines: Vec<String> = tools
         .iter()
         .map(|t| {
-            let first = t.description.lines().next().unwrap_or("");
+            let description = crate::term::clean(&t.description);
+            let first = description.lines().next().unwrap_or("");
             let about: String = if first.chars().count() > room {
                 let cut: String = first.chars().take(room - 1).collect();
                 format!("{}…", cut.trim_end())
             } else {
                 first.to_string()
             };
-            format!("{:width$}  {}", t.name, term.dim(&about))
+            format!(
+                "{:width$}  {}",
+                crate::term::clean(&t.name),
+                term.dim(&about)
+            )
         })
         .collect();
     panel(term, &format!("{server} tools"), &lines);
@@ -786,7 +796,7 @@ pub fn skills(term: &mut ui::Term, lib: &crate::skills::Library) -> Option<Strin
             term,
             &k.name,
             &[
-                k.description.clone(),
+                crate::term::clean(&k.description),
                 format!("file: {}", k.path.display()),
                 "the model reads it when a task matches".into(),
             ],
@@ -1106,7 +1116,8 @@ pub fn agents(term: &mut ui::Term, roles: &[crate::roles::Role], enabled: bool) 
     let keys = term.keys.as_mut().expect("keys");
     if let Some(i) = menu::pick(keys, Picker::new("Sub-agent roles", rows, None), term.color) {
         let lines = crate::panels::role_detail(&roles[i]);
-        panel(term, &roles[i].name, &lines[1..]);
+        let lines: Vec<String> = lines[1..].iter().map(|l| crate::term::clean(l)).collect();
+        panel(term, &roles[i].name, &lines);
     }
 }
 
