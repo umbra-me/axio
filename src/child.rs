@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const RESULT_LIMIT: usize = 8000;
 pub const MAX_TURNS: usize = 50;
 
-#[derive(Deserialize, serde::Serialize, Debug, Default, PartialEq)]
+#[derive(Clone, Deserialize, serde::Serialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Spec {
     /// The brief: everything the sub-agent knows about its work.
@@ -39,6 +39,8 @@ pub struct Spec {
     /// call on stdout and reads the result on stdin.
     #[serde(default)]
     pub mcp: Vec<crate::tools::ToolSpec>,
+    /// Continue this saved session instead of starting a new one.
+    pub resume: Option<PathBuf>,
 }
 
 /// A sandbox for a sub-agent's Bash, Write and Edit.
@@ -93,7 +95,7 @@ pub fn agent(
         .unwrap_or(crate::provider::DEFAULT_MODEL);
     let system =
         crate::context::sub_agent_prompt(&cwd, &spec.instructions, spec.context != Sees::Brief);
-    if spec.context == Sees::Fork && spec.history.is_none() {
+    if spec.context == Sees::Fork && spec.history.is_none() && spec.resume.is_none() {
         return Err("context fork needs the main agent's conversation".into());
     }
     let mut a = Agent::new(Model::parse(model), cwd.clone(), system);
@@ -105,11 +107,16 @@ pub fn agent(
         a.set_subagents(h);
     }
     a.keep_tools(&spec.tools)?;
-    let dir = match &spec.session_dir {
-        Some(d) => d.clone(),
-        None => crate::session::dir_for(home, &cwd).join("agents"),
-    };
-    a.session = Some(crate::session::Session::create(&dir, &cwd)?);
+    if let Some(path) = &spec.resume {
+        a.messages = crate::session::load(path)?;
+        a.session = Some(crate::session::Session::open(path.clone())?);
+    } else {
+        let dir = match &spec.session_dir {
+            Some(d) => d.clone(),
+            None => crate::session::dir_for(home, &cwd).join("agents"),
+        };
+        a.session = Some(crate::session::Session::create(&dir, &cwd)?);
+    }
     Ok(a)
 }
 
@@ -197,7 +204,7 @@ pub fn drive(mut agent: Agent, spec: &Spec, out: &mut dyn Write) -> bool {
     let tools = agent.tool_names();
     let model = format!("{}/{}", agent.model.provider, agent.model.id);
     lines.emit(json!({"type": "start", "model": model, "tools": tools, "session": session}));
-    let task = match &spec.history {
+    let task = match spec.history.as_ref().filter(|_| spec.resume.is_none()) {
         Some(h) => format!(
             "<conversation-so-far>\n{h}</conversation-so-far>\n\nThe conversation above is the main agent's, for context. Your task:\n\n{}",
             spec.task

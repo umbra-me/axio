@@ -18,6 +18,8 @@ pub enum Kind {
     Mcp(Value),
     /// A folder holding `skills/` (and possibly `commands/`).
     Skills(PathBuf),
+    /// A folder of sub-agent role files (Claude Code's `agents/`).
+    Agents(PathBuf),
     /// Something axio cannot run, listed so the user knows.
     Unusable,
 }
@@ -216,7 +218,7 @@ fn plugin_support(root: &Path, codex: bool) -> Support {
         works.push("commands");
     }
     if root.join("agents").is_dir() {
-        notes.push("sub-agents are not supported".into());
+        works.push("agents");
     }
     works.dedup();
     if works.is_empty() {
@@ -253,6 +255,29 @@ fn skills_item(harness: &'static str, base: &Path) -> Option<Item> {
         version: None,
         support: Support::Works,
         fingerprint: fnv(sorted.join("\n").as_bytes()),
+    })
+}
+
+fn agents_item(harness: &'static str, dir: &Path) -> Option<Item> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .filter_map(|p| Some(p.file_stem()?.to_string_lossy().into_owned()))
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    names.sort();
+    Some(Item {
+        harness,
+        kind: Kind::Agents(dir.to_path_buf()),
+        label: "agents",
+        name: names.join(", "),
+        version: None,
+        support: Support::Works,
+        fingerprint: fnv(names.join("\n").as_bytes()),
     })
 }
 
@@ -300,6 +325,7 @@ pub fn scan(h: &Path) -> Vec<Item> {
         items.extend(mcp_items("Claude Code", c["mcpServers"].as_object()));
     }
     items.extend(skills_item("Claude Code", &claude));
+    items.extend(agents_item("Claude Code", &claude.join("agents")));
 
     // Codex
     let codex = h.join(".codex");
@@ -662,6 +688,35 @@ mod tests {
             .unwrap_or_else(|| panic!("{harness} {name} missing"))
             .support
             .clone()
+    }
+
+    #[test]
+    fn claude_code_agents_are_offered_as_roles() {
+        let h = std::env::temp_dir().join(format!("axio-import-agents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        write(&h, ".claude/agents/tester.md", "---\nname: tester\n---\nx");
+        write(&h, ".claude/agents/doc.md", "---\nname: doc\n---\nx");
+        let plugin = h.join("p/roles");
+        write(&plugin, "agents/a.md", "---\nname: a\n---\nx");
+        write(
+            &h,
+            ".claude/plugins/installed_plugins.json",
+            &format!(
+                r#"{{"plugins": {{"roles@m": [{{"installPath": "{}", "version": "1"}}]}}}}"#,
+                plugin.display()
+            ),
+        );
+        let items = scan(&h);
+        let agents = items
+            .iter()
+            .find(|i| i.label == "agents")
+            .expect("agents offered");
+        assert_eq!(agents.kind, Kind::Agents(h.join(".claude/agents")));
+        assert_eq!(
+            (agents.name.as_str(), &agents.support),
+            ("doc, tester", &Support::Works)
+        );
+        assert_eq!(line(&items, "Claude Code", "roles"), Support::Works);
     }
 
     #[test]

@@ -19,10 +19,12 @@ pub enum Event {
     Stop,
     PreCompact,
     SessionEnd,
+    SubagentStart,
+    SubagentStop,
 }
 
 impl Event {
-    pub const ALL: [Event; 7] = [
+    pub const ALL: [Event; 9] = [
         Event::SessionStart,
         Event::UserPromptSubmit,
         Event::PreToolUse,
@@ -30,6 +32,8 @@ impl Event {
         Event::Stop,
         Event::PreCompact,
         Event::SessionEnd,
+        Event::SubagentStart,
+        Event::SubagentStop,
     ];
 
     pub fn name(self) -> &'static str {
@@ -41,6 +45,8 @@ impl Event {
             Event::Stop => "Stop",
             Event::PreCompact => "PreCompact",
             Event::SessionEnd => "SessionEnd",
+            Event::SubagentStart => "SubagentStart",
+            Event::SubagentStop => "SubagentStop",
         }
     }
 
@@ -394,6 +400,21 @@ impl Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sub_agent_events_load() {
+        let mut h = Hooks::new(std::env::temp_dir());
+        h.add(
+            &serde_json::json!({"hooks": {
+                "SubagentStart": [{"matcher": "explore", "hooks": [{"type": "command", "command": "true"}]}],
+                "SubagentStop": [{"hooks": [{"type": "command", "command": "true"}]}]
+            }}),
+            None,
+            Path::new("t"),
+        );
+        assert!(h.skipped.is_empty(), "{:?}", h.skipped);
+        assert!(h.has(Event::SubagentStart) && h.has(Event::SubagentStop));
+    }
 
     fn hooks(event: &str, matcher: &str, command: &str) -> Hooks {
         let mut h = Hooks {

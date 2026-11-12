@@ -135,7 +135,8 @@ roles set to `choose`. `roles.<name>` overrides `model`, `effort`, `context`,
 ## Using what other harnesses already have
 
 `axio import` looks at Claude Code, Codex, Grok Build and Pi on this machine:
-their hooks, installed plugins, MCP servers and skills. It lists each item
+their hooks, installed plugins, MCP servers, skills and Claude Code's
+sub-agents (`~/.claude/agents`), which become roles. It lists each item
 with its version, the harness and its version, and whether it works as is,
 partly (and what is missing) or not at all, then asks: import everything that
 works, choose, later, or never ask. Accepted items are used where they are, so
@@ -174,6 +175,8 @@ with its exit code (2 blocks, with stderr as the reason) or JSON on stdout
 | `Stop` | the model is about to finish | send it back to work (up to 8 times) |
 | `PreCompact` | before compaction | add summary instructions, skip it |
 | `SessionEnd` | axio exits | observe |
+| `SubagentStart` | before a sub-agent starts (matcher: its role) | add context to its brief |
+| `SubagentStop` | a sub-agent has answered (matcher: its role) | send it back to work in its own session (up to 8 times) |
 
 Declare hooks under `"hooks"` in a settings file, or ship them in a plugin:
 a folder in `~/.axio/agent/plugins/` (or a trusted project's

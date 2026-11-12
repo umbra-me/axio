@@ -195,6 +195,11 @@ output before it enters the conversation, and background tasks.
    refuses tools the child was not granted.
 6. `SubagentStart` / `SubagentStop` hooks; `axio import` offers Claude Code
    agents.
+   Built: both events run in the main agent, matched on the role.
+   SubagentStart context joins the brief. A SubagentStop block resumes the
+   child's own session with the reason (the child has exited by then), up to
+   8 times like Stop. Imported `~/.claude/agents` sit just below axio's own
+   role folders; plugins with `agents/` now count as working.
 7. Side jobs (compaction, long-output summaries) moved onto child mode.
 
 Each step lands with a failing test first and is measured: child memory,
