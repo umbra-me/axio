@@ -110,6 +110,13 @@ under Unreleased.
 **Testing**
 - Terminal checks in `e2e/` (`sh e2e/all.sh target/release/axio`) and a Linux
   container run (`sh e2e/linux.sh`) (#59).
+- GitHub Actions: fmt, clippy and tests on Linux, macOS and Windows, and the
+  terminal checks on Linux and macOS, for every pull request.
+
+**Releases**
+- Pushing a `vX.Y.Z` tag publishes static binaries for macOS, Linux and
+  Windows with `SHA256SUMS` and the changelog section; `docs/releasing.md`
+  describes versions and the steps.
 
 ### Changed
 - **Breaking:** tools renamed to Claude Code's names, and configuration moved
