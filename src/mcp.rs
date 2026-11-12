@@ -709,6 +709,8 @@ struct Server {
     conn: Option<Connection>,
     /// Model-facing tool name to the server's own name.
     tools: Vec<(String, String)>,
+    /// How to use the server, from its `initialize` reply.
+    instructions: Option<String>,
 }
 
 impl Server {
@@ -720,12 +722,17 @@ impl Server {
 
     fn handshake(&mut self, cwd: &Path) -> Result<Vec<Value>, String> {
         let mut conn = Connection::open(&self.config, cwd)?;
-        conn.request(
+        let init = conn.request(
             "initialize",
             json!({"protocolVersion": PROTOCOL, "capabilities": {"roots": {}},
                    "clientInfo": {"name": "axio", "version": env!("CARGO_PKG_VERSION")}}),
             START_TIMEOUT,
         )?;
+        self.instructions = init["instructions"]
+            .as_str()
+            .map(str::trim)
+            .filter(|i| !i.is_empty())
+            .map(String::from);
         conn.initialized();
         conn.notify("notifications/initialized", json!({}))?;
         let mut tools = Vec::new();
@@ -797,6 +804,7 @@ impl Mcp {
                             config: c.clone(),
                             conn: None,
                             tools: Vec::new(),
+                            instructions: None,
                         };
                         let r = server.connect(cwd);
                         (server, r)
@@ -837,6 +845,30 @@ impl Mcp {
             mcp.servers.push(Mutex::new(server));
         }
         mcp
+    }
+
+    /// Servers' own instructions for the system prompt, as Claude Code
+    /// passes them; with `only`, just the servers owning one of those tools.
+    pub fn prompt_section(&self, only: Option<&[String]>) -> Option<String> {
+        let parts: Vec<String> = self
+            .servers
+            .iter()
+            .filter_map(|s| s.lock().ok())
+            .filter(|s| only.is_none_or(|names| s.tools.iter().any(|(n, _)| names.contains(n))))
+            .filter_map(|s| {
+                let text = s.instructions.as_ref()?;
+                Some(format!(
+                    "<mcp-server-instructions server=\"{}\">\n{text}\n</mcp-server-instructions>",
+                    s.config.name
+                ))
+            })
+            .collect();
+        (!parts.is_empty()).then(|| {
+            format!(
+                "Instructions from the MCP servers whose tools you have:\n\n{}",
+                parts.join("\n\n")
+            )
+        })
     }
 
     pub fn owns(&self, tool: &str) -> bool {
@@ -1019,7 +1051,8 @@ pub mod stub {
             };
             let result = match msg["method"].as_str().unwrap_or("") {
                 "initialize" => {
-                    json!({"protocolVersion": PROTOCOL, "capabilities": {"tools": {}}, "serverInfo": {"name": "stub"}})
+                    json!({"protocolVersion": PROTOCOL, "capabilities": {"tools": {}}, "serverInfo": {"name": "stub"},
+                           "instructions": "Call echo before anything else."})
                 }
                 "tools/list" if msg["params"]["cursor"].is_null() => json!({"tools": [
                     {"name": "echo", "description": "Echo the text", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}}
@@ -1253,6 +1286,25 @@ mod tests {
         assert_eq!(
             mcp.call_text("mcp__old__echo", &json!({"text": "hi"}), &mut || false),
             Ok("echo: hi".into())
+        );
+    }
+
+    #[test]
+    fn server_instructions_reach_the_prompt() {
+        let mcp = Mcp::start(&config(), &std::env::temp_dir());
+        let all = mcp
+            .prompt_section(None)
+            .expect("the stub sends instructions");
+        assert!(
+            all.contains("<mcp-server-instructions server=\"stub server\">"),
+            "{all}"
+        );
+        assert!(all.contains("Call echo before anything else."));
+        let granted = ["mcp__stub_server__echo".to_string()];
+        assert!(mcp.prompt_section(Some(&granted)).is_some());
+        assert_eq!(
+            mcp.prompt_section(Some(&["mcp__other__x".to_string()])),
+            None
         );
     }
 
