@@ -7,7 +7,7 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
-## [0.1.0] - 2026-11-12
+## [0.1.0] - 2026-11-13
 
 The first public beta. Everything below was built before the first release.
 
