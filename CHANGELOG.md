@@ -158,3 +158,19 @@ under Unreleased.
   logs moved from a shared `/tmp/axio` to `~/.axio/agent/logs` (#75).
 - Up and Down keep walking history past `/command` entries instead of
   stopping in the command menu (#69).
+
+### Security
+
+Found by a pre-release review.
+
+- A prefix allow rule such as `Bash(cat:*)` no longer approves commands with
+  process substitution, `${…}`, input redirection or here-documents; they ask.
+  Deny rules also see commands nested in `$(…)`, `<(…)`, backticks,
+  brackets, quotes and after `NAME=value`.
+- Path rules for Read, Edit and Write judge where a symlink really leads: an
+  allow rule must hold for both the written and the real path, and a deny
+  rule refuses either.
+- The sandbox no longer lets Write or Edit escape through a missing folder
+  followed by `..`.
+- Read-only sub-agents without a sandbox (Windows) ask before every command,
+  even ones the main agent's rules allow.
