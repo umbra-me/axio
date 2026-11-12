@@ -125,5 +125,8 @@ under Unreleased.
 - Sub-agents read keys saved in `auth.json` (#54).
 - A read-only sub-agent cannot change a project that lives in a temporary
   folder (#62).
+- Session transcripts, prompt history and tool output logs are private to
+  the user: `~/.axio/agent` is kept at 0700, new files are 0600, and output
+  logs moved from a shared `/tmp/axio` to `~/.axio/agent/logs` (#75).
 - Up and Down keep walking history past `/command` entries instead of
   stopping in the command menu (#69).

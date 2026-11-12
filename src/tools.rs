@@ -501,14 +501,13 @@ pub(crate) fn shorten(text: &str) -> String {
 }
 
 fn save_output(text: &str) -> std::io::Result<PathBuf> {
-    let dir = std::env::temp_dir().join("axio");
-    std::fs::create_dir_all(&dir)?;
+    let dir = crate::private::logs()?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let path = dir.join(format!("output-{}-{stamp}.log", std::process::id()));
-    std::fs::write(&path, text)?;
+    crate::private::write(&path, text.as_bytes())?;
     Ok(path)
 }
 
