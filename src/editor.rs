@@ -311,7 +311,13 @@ impl Editor {
     /// Commands matching a `/name` being typed: names that start with it,
     /// then names that contain it. Empty when the menu is closed.
     fn menu(&self) -> Vec<usize> {
-        if self.menu_closed || self.search.is_some() || self.cursor != self.buf.len() {
+        // A recalled history entry is not being typed, so Up and Down keep
+        // walking history through `/command` entries.
+        if self.menu_closed
+            || self.search.is_some()
+            || self.browsing.is_some()
+            || self.cursor != self.buf.len()
+        {
             return Vec::new();
         }
         let text = self.text();
@@ -357,6 +363,21 @@ impl Editor {
         let before = self.text();
         if let Some(outcome) = self.menu_key(&key) {
             return outcome;
+        }
+        // Editing a recalled entry makes it the text being typed.
+        if self.browsing.is_some() && !matches!(key, Key::Up | Key::Down) {
+            let edits = matches!(
+                key,
+                Key::Char(_)
+                    | Key::Paste(_)
+                    | Key::Backspace
+                    | Key::Delete
+                    | Key::AltBackspace
+                    | Key::Ctrl('w' | 'u' | 'k')
+            );
+            if edits {
+                self.browsing = None;
+            }
         }
         let outcome = self.edit(key);
         if self.text() != before {
@@ -810,6 +831,33 @@ mod tests {
         assert!(
             !e.layout(80).text.contains("show the session"),
             "closed once an argument starts"
+        );
+    }
+
+    #[test]
+    fn history_walks_past_slash_commands() {
+        let mut e = with_commands();
+        e.history = vec!["first".into(), "/new".into(), "last".into()];
+        let walk = |e: &mut Editor, k: Key| {
+            e.handle(k);
+            e.text()
+        };
+        assert_eq!(walk(&mut e, Key::Up), "last");
+        assert_eq!(walk(&mut e, Key::Up), "/new");
+        assert!(
+            !e.layout(80).text.contains("start a new"),
+            "no menu over a recalled entry"
+        );
+        assert_eq!(walk(&mut e, Key::Up), "first", "Up keeps walking history");
+        assert_eq!(walk(&mut e, Key::Down), "/new");
+        assert_eq!(walk(&mut e, Key::Down), "last");
+        walk(&mut e, Key::Up);
+        typed(&mut e, " ");
+        e.handle(Key::Backspace);
+        assert_eq!(e.text(), "/new");
+        assert!(
+            e.layout(80).text.contains("start a new"),
+            "editing brings the menu back"
         );
     }
 
