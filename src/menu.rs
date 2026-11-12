@@ -25,7 +25,7 @@ impl Choice {
 pub enum Step {
     Pending,
     Picked(usize),
-    /// Tab in a picker with an effort row: use the choice for this session only.
+    /// Ctrl-S in a picker with an effort row: use the choice for this session only.
     Session(usize),
     /// Enter on text no choice matches, when the picker allows that.
     Typed(String),
@@ -110,6 +110,18 @@ impl Picker {
         }
     }
 
+    /// The highlighted choice.
+    pub fn current(&self) -> Option<usize> {
+        self.filtered().get(self.selected).copied()
+    }
+
+    fn select(&mut self, choice: usize) {
+        if let Some(at) = self.filtered().iter().position(|&i| i == choice) {
+            self.selected = at;
+            self.scroll();
+        }
+    }
+
     /// The effort shown for the highlighted choice; `None` when it takes none.
     pub fn effort(&self) -> Option<String> {
         let (_, level) = self.effort.as_ref()?;
@@ -174,7 +186,7 @@ impl Picker {
                     None => self.typed().map_or(Step::Pending, Step::Typed),
                 };
             }
-            Key::Ctrl('i') if self.effort.is_some() => {
+            Key::Ctrl('s') if self.effort.is_some() => {
                 if let Some(&i) = shown.get(self.selected) {
                     return Step::Session(i);
                 }
@@ -208,17 +220,31 @@ impl Picker {
 
     /// The rows to draw, each cut to fit `width` so none wraps.
     pub fn lines(&self, width: usize, color: bool) -> Vec<String> {
-        let shown = self.filtered();
         let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
         let hint = if self.effort.is_some() {
             "type to filter · ↑↓ move"
         } else {
             "type to filter · ↑↓ move · Enter choose · Esc cancel"
         };
-        let mut out = vec![
-            format!("{}  {}", self.title, dim(hint)),
-            format!("› {}", self.query),
-        ];
+        let mut out = vec![format!("{}  {}", self.title, dim(hint))];
+        out.extend(self.body(width, color));
+        if self.effort.is_some() {
+            out.push(String::new());
+            out.push(self.effort_line(color));
+            out.push(String::new());
+            out.push(dim(&fit(
+                "Enter sets as default · Ctrl-S this session only · Esc cancel",
+                width,
+            )));
+        }
+        out
+    }
+
+    /// The filter line, the visible choices and a status line.
+    fn body(&self, width: usize, color: bool) -> Vec<String> {
+        let shown = self.filtered();
+        let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
+        let mut out = vec![format!("› {}", fit(&self.query, width.saturating_sub(2)))];
         let label_width = shown
             .iter()
             .skip(self.top)
@@ -245,30 +271,257 @@ impl Picker {
                 format!("  {label}  {}", dim(&detail))
             });
         }
-        if let Some(t) = self.typed().filter(|_| shown.is_empty()) {
-            out.push(dim(&format!("  nothing listed matches; Enter uses {t}")));
+        let status = if let Some(t) = self.typed().filter(|_| shown.is_empty()) {
+            format!("  nothing listed matches; Enter uses {t}")
         } else if shown.is_empty() {
-            out.push(dim("  nothing matches"));
+            "  nothing matches".to_string()
         } else if shown.len() > ROWS {
-            out.push(dim(&format!("  {} of {}", self.selected + 1, shown.len())));
-        }
-        if self.effort.is_some() {
-            out.push(String::new());
-            out.push(match self.effort() {
-                Some(level) => format!(
-                    "{} {} {}",
-                    crate::ui::paint(color, "\x1b[33m", "◉"),
-                    crate::ui::paint(color, "\x1b[1m", &format!("{level} effort")),
-                    dim("←/→ to adjust")
-                ),
-                None => dim("  this model has no effort setting"),
-            });
-            out.push(String::new());
-            out.push(dim(
-                "Enter sets as default · Tab this session only · Esc cancel",
-            ));
+            format!("  {} of {}", self.selected + 1, shown.len())
+        } else {
+            String::new()
+        };
+        if !status.is_empty() {
+            out.push(dim(&fit(&status, width)));
         }
         out
+    }
+
+    fn effort_line(&self, color: bool) -> String {
+        let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
+        match self.effort() {
+            Some(level) => format!(
+                "{} {} {}",
+                crate::ui::paint(color, "\x1b[33m", "◉"),
+                crate::ui::paint(color, "\x1b[1m", &format!("{level} effort")),
+                dim("←/→ to adjust")
+            ),
+            None => dim("  this model has no effort setting"),
+        }
+    }
+}
+
+/// One provider in the model browser.
+pub struct Group {
+    pub name: String,
+    pub signed_in: bool,
+    /// Its models; filtered and moved through when the models side has focus.
+    pub picker: Picker,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Browse {
+    Pending,
+    /// A provider's model, by group and choice.
+    Picked(usize, usize, Scope),
+    /// A model typed into a provider's list that the list does not hold.
+    Typed(usize, String, Scope),
+    /// A provider that is not set up yet.
+    SignIn(usize),
+    Cancelled,
+}
+
+/// Providers on the left, the highlighted provider's models on the right.
+/// Tab moves between the two sides.
+pub struct Browser {
+    groups: Vec<Group>,
+    at: usize,
+    /// Whether the models side has focus.
+    models: bool,
+}
+
+/// Below this width only the side with focus is drawn.
+const TWO_SIDES: usize = 60;
+
+/// The columns `s` takes on screen, leaving out colour codes.
+fn shown_width(s: &str) -> usize {
+    let mut plain = String::new();
+    let mut escape = false;
+    for c in s.chars() {
+        match (escape, c) {
+            (false, '\x1b') => escape = true,
+            (true, 'm') => escape = false,
+            (false, c) => plain.push(c),
+            _ => {}
+        }
+    }
+    crate::term::text_width(&plain)
+}
+
+impl Browser {
+    /// Opens on group `at`, on its choice `current` when given.
+    pub fn new(mut groups: Vec<Group>, at: usize, current: Option<usize>) -> Browser {
+        let at = at.min(groups.len().saturating_sub(1));
+        if let (Some(g), Some(c)) = (groups.get_mut(at), current) {
+            g.picker.select(c);
+        }
+        let models = groups.get(at).is_some_and(|g| g.signed_in);
+        Browser { groups, at, models }
+    }
+
+    pub fn picker(&self) -> &Picker {
+        &self.groups[self.at].picker
+    }
+
+    pub fn key(&mut self, key: Key) -> Browse {
+        if matches!(key, Key::Esc | Key::Ctrl('c') | Key::Ctrl('g')) {
+            return Browse::Cancelled;
+        }
+        let at = self.at;
+        if self.models {
+            let picker = &mut self.groups[at].picker;
+            return match key {
+                Key::Ctrl('i') => {
+                    self.models = false;
+                    Browse::Pending
+                }
+                Key::Ctrl('s') => picker
+                    .current()
+                    .map_or(Browse::Pending, |i| Browse::Picked(at, i, Scope::Session)),
+                k => match picker.key(k) {
+                    Step::Picked(i) => Browse::Picked(at, i, Scope::Default),
+                    Step::Session(i) => Browse::Picked(at, i, Scope::Session),
+                    Step::Typed(t) => Browse::Typed(at, t, Scope::Default),
+                    Step::Cancelled => Browse::Cancelled,
+                    Step::Pending => Browse::Pending,
+                },
+            };
+        }
+        let signed_in = self.groups[at].signed_in;
+        match key {
+            Key::Up | Key::Ctrl('p') => self.at = at.saturating_sub(1),
+            Key::Down | Key::Ctrl('n') => self.at = (at + 1).min(self.groups.len() - 1),
+            Key::Enter | Key::Right | Key::Ctrl('i') if !signed_in => return Browse::SignIn(at),
+            Key::Enter | Key::Right | Key::Ctrl('i') => self.models = true,
+            // Typing searches the highlighted provider's models.
+            k @ (Key::Char(_) | Key::Paste(_)) if signed_in => {
+                self.models = true;
+                self.groups[at].picker.key(k);
+            }
+            _ => {}
+        }
+        Browse::Pending
+    }
+
+    fn provider_rows(&self, width: usize, color: bool) -> Vec<String> {
+        let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
+        let mut out = vec![crate::ui::paint(color, "\x1b[1m", "Providers")];
+        for (i, g) in self.groups.iter().enumerate() {
+            let count = if g.signed_in {
+                g.picker.choices.len().to_string()
+            } else {
+                "sign in".into()
+            };
+            let name = fit(&g.name, width.saturating_sub(4 + count.chars().count()));
+            let gap = width.saturating_sub(2 + name.chars().count() + count.chars().count());
+            let row = format!("{name}{}{}", " ".repeat(gap), dim(&count));
+            out.push(match (i == self.at, self.models) {
+                (true, false) => format!(
+                    "{} {}",
+                    crate::ui::paint(color, "\x1b[1;36m", "›"),
+                    crate::ui::paint(color, "\x1b[1m", &row)
+                ),
+                (true, true) => format!("{} {}", crate::ui::paint(color, "\x1b[36m", "•"), row),
+                _ if g.signed_in => format!("  {row}"),
+                _ => format!("  {}", dim(&row)),
+            });
+        }
+        out
+    }
+
+    fn model_rows(&self, width: usize, color: bool) -> Vec<String> {
+        let g = &self.groups[self.at];
+        let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
+        let head = if g.signed_in {
+            format!("{} · {} models", g.name, g.picker.choices.len())
+        } else {
+            g.name.clone()
+        };
+        let mut out = vec![crate::ui::paint(color, "\x1b[1m", &fit(&head, width))];
+        if g.signed_in {
+            out.extend(g.picker.body(width, color));
+        } else {
+            out.push(String::new());
+            out.push(dim(&fit("  Not set up. Enter to sign in.", width)));
+        }
+        out
+    }
+
+    pub fn lines(&self, width: usize, color: bool) -> Vec<String> {
+        let dim = |s: &str| crate::ui::paint(color, crate::ui::DIM, s);
+        let mut out = vec![crate::ui::paint(color, "\x1b[1m", "Models")];
+        if width < TWO_SIDES {
+            if self.models {
+                out.extend(self.model_rows(width, color));
+            } else {
+                out.extend(self.provider_rows(width, color));
+            }
+        } else {
+            let left_width = self.left_width(width);
+            let left = self.provider_rows(left_width, color);
+            let right = self.model_rows(width.saturating_sub(left_width + 3), color);
+            for row in 0..left.len().max(right.len()) {
+                let l = left.get(row).map_or("", String::as_str);
+                let pad = left_width.saturating_sub(shown_width(l));
+                let r = right.get(row).map_or("", String::as_str);
+                out.push(format!("{l}{} {} {r}", " ".repeat(pad), dim("│")));
+            }
+        }
+        out.push(String::new());
+        if self.groups[self.at].signed_in && self.picker().effort.is_some() {
+            out.push(self.picker().effort_line(color));
+        }
+        let keys = if self.models {
+            "Tab providers · Enter sets as default · Ctrl-S this session only · Esc cancel"
+        } else {
+            "↑↓ provider · Enter or → models · type to search · Esc cancel"
+        };
+        out.push(dim(&fit(keys, width)));
+        out
+    }
+
+    fn left_width(&self, width: usize) -> usize {
+        self.groups
+            .iter()
+            .map(|g| g.name.chars().count() + 12)
+            .max()
+            .unwrap_or(20)
+            .clamp(18, 30)
+            .min(width / 3)
+    }
+
+    /// Where the cursor waits: on the filter line, or the highlighted provider.
+    fn cursor(&self, width: usize) -> (usize, usize) {
+        if !self.models {
+            return (2 + self.at, 0);
+        }
+        let left = if width < TWO_SIDES {
+            0
+        } else {
+            self.left_width(width) + 3
+        };
+        (2, left + 2 + crate::term::text_width(&self.picker().query))
+    }
+}
+
+/// Runs the browser until a model is chosen, a provider needs signing in,
+/// or it is cancelled.
+pub fn browse(keys: &mut Keys, browser: &mut Browser, color: bool) -> Browse {
+    let show = |b: &Browser, up| {
+        let width = crate::term::width();
+        draw(&b.lines(width, color), up, b.cursor(width))
+    };
+    let mut rows = show(browser, 0);
+    loop {
+        let step = match keys.next() {
+            Some(k) => browser.key(k),
+            None => Browse::Cancelled,
+        };
+        if step == Browse::Pending {
+            rows = show(browser, rows);
+        } else {
+            clear(rows);
+            return step;
+        }
     }
 }
 
@@ -308,7 +561,9 @@ impl Slider {
                 self.at = (self.at + 1).min(self.levels.len().saturating_sub(1));
             }
             Key::Enter => return Slide::Chosen(self.at, Scope::Default),
-            Key::Ctrl('i') | Key::Char('s') => return Slide::Chosen(self.at, Scope::Session),
+            Key::Char('s') | Key::Ctrl('s') | Key::Ctrl('i') => {
+                return Slide::Chosen(self.at, Scope::Session);
+            }
             Key::Esc | Key::Ctrl('c') | Key::Ctrl('g') => return Slide::Cancelled,
             _ => {}
         }
@@ -364,7 +619,7 @@ impl Slider {
         }
         out.push(String::new());
         out.push(dim(
-            "←/→ to adjust · Enter sets as default · Tab this session only · Esc cancel",
+            "←/→ to adjust · Enter sets as default · s this session only · Esc cancel",
         ));
         out
     }
@@ -629,7 +884,9 @@ mod tests {
         );
         let text = p.lines(80, false).join("\n");
         assert!(text.contains("no effort setting"), "{text}");
-        assert!(text.contains("Enter sets as default") && text.contains("Tab this session only"));
+        assert!(
+            text.contains("Enter sets as default") && text.contains("Ctrl-S this session only")
+        );
         p.key(Key::Up);
         assert_eq!(p.effort().as_deref(), Some("xhigh"));
         p.key(Key::Right);
@@ -644,7 +901,7 @@ mod tests {
             Some("high"),
             "clamped to what the model takes"
         );
-        assert_eq!(p.key(Key::Ctrl('i')), Step::Session(2));
+        assert_eq!(p.key(Key::Ctrl('s')), Step::Session(2));
         assert_eq!(p.key(Key::Enter), Step::Picked(2));
     }
 
@@ -672,7 +929,8 @@ mod tests {
         s.key(Key::Right);
         assert_eq!(s.key(Key::Enter), Slide::Chosen(4, Scope::Default));
         s.key(Key::Left);
-        assert_eq!(s.key(Key::Ctrl('i')), Slide::Chosen(3, Scope::Session));
+        assert_eq!(s.key(Key::Char('s')), Slide::Chosen(3, Scope::Session));
+        assert_eq!(s.key(Key::Ctrl('s')), Slide::Chosen(3, Scope::Session));
         assert_eq!(s.key(Key::Esc), Slide::Cancelled);
     }
 
@@ -711,5 +969,89 @@ mod tests {
             "high",
         );
         assert!(s.lines(80, false).join("\n").contains("Deeper reasoning"));
+    }
+
+    fn browser() -> Browser {
+        let group = |name: &str, signed: bool, models: &[&str]| Group {
+            name: name.into(),
+            signed_in: signed,
+            picker: Picker::new(
+                "",
+                models.iter().map(|m| Choice::new(*m, "")).collect(),
+                None,
+            ),
+        };
+        Browser::new(
+            vec![
+                group("anthropic", true, &["claude-haiku-4-5", "claude-opus-5-5"]),
+                group("chatgpt", true, &["gpt-6-luna", "gpt-6-sol"]),
+                group("openai", false, &[]),
+            ],
+            1,
+            Some(1),
+        )
+    }
+
+    #[test]
+    fn the_browser_opens_on_the_current_model() {
+        let mut b = browser();
+        assert_eq!(b.key(Key::Enter), Browse::Picked(1, 1, Scope::Default));
+        assert_eq!(b.key(Key::Ctrl('s')), Browse::Picked(1, 1, Scope::Session));
+    }
+
+    #[test]
+    fn tab_cycles_between_providers_and_their_models() {
+        let mut b = browser();
+        b.key(Key::Ctrl('i'));
+        b.key(Key::Up);
+        let text = b.lines(100, false).join("\n");
+        assert!(
+            text.contains("claude-opus-5-5"),
+            "previews the provider's models:\n{text}"
+        );
+        assert!(!text.contains("gpt-6-sol"));
+        b.key(Key::Enter);
+        b.key(Key::Down);
+        assert_eq!(b.key(Key::Enter), Browse::Picked(0, 1, Scope::Default));
+        b.key(Key::Ctrl('i'));
+        b.key(Key::Right);
+        assert_eq!(
+            b.key(Key::Enter),
+            Browse::Picked(0, 1, Scope::Default),
+            "→ enters models too"
+        );
+    }
+
+    #[test]
+    fn typing_on_the_providers_side_searches_that_provider() {
+        let mut b = browser();
+        b.key(Key::Ctrl('i'));
+        b.key(Key::Char('s'));
+        b.key(Key::Char('o'));
+        b.key(Key::Char('l'));
+        assert_eq!(b.key(Key::Enter), Browse::Picked(1, 1, Scope::Default));
+    }
+
+    #[test]
+    fn a_provider_not_set_up_offers_sign_in() {
+        let mut b = browser();
+        b.key(Key::Ctrl('i'));
+        b.key(Key::Down);
+        let text = b.lines(100, false).join("\n");
+        assert!(text.contains("Enter to sign in"), "{text}");
+        assert_eq!(b.key(Key::Enter), Browse::SignIn(2));
+        assert_eq!(b.key(Key::Esc), Browse::Cancelled);
+    }
+
+    #[test]
+    fn rows_fit_and_a_narrow_terminal_shows_one_side() {
+        let b = browser();
+        for width in [100, 50] {
+            for l in b.lines(width, false) {
+                assert!(crate::term::text_width(&l) <= width, "{width}: {l:?}");
+            }
+        }
+        let narrow = b.lines(50, false).join("\n");
+        assert!(narrow.contains("gpt-6-sol") && !narrow.contains("anthropic   "));
     }
 }

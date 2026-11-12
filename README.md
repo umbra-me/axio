@@ -200,26 +200,29 @@ to read it first. Dropping an image file on the terminal pastes its path as an
 
 Commands:
 
-- `/model` opens a picker of the models every signed-in provider lists (type to
-  filter; a name no list holds can be typed and used). `/model provider/model`
-  switches directly.
+- `/model` opens a model browser: providers on the left (`all` searches every
+  provider; ones not set up offer sign-in), the highlighted provider's models
+  on the right with their context size. It opens on the model in use. Tab
+  moves between the two sides, Up/Down move, Enter or Right goes into a
+  provider's models, typing filters them, and a name no list holds can be
+  typed and used. `/model provider/model` switches directly.
 - `/provider` picks a provider, signing in first when it is not set up, then
   one of its models. `/login [provider]` saves an API key, or a name, base URL
   and optional key for any other OpenAI-compatible endpoint; `/logout
   [provider]` removes one. Keys go to `~/.axio/agent/auth.json`.
 - `/effort` opens a slider of the levels the current model takes (with each
   level's description when the provider gives one); `/effort <level>` sets it.
-  The `/model` picker also shows the effort under the list: Left and Right
+  The model browser also shows the effort under the list: Left and Right
   change it for the highlighted model.
 - `/resume` picks a saved session from this directory to continue.
 - `/new`, `/undo` (put back the files the last turn wrote or edited),
   `/output` (the last tool call's full result), `/compact`, `/profile`,
   `/session`, `/help`, `/quit`, plus plugin commands and skills.
 
-In both pickers Enter makes the choice the default for new sessions (saved as
-`"model"` and `"effort"` in `~/.axio/agent/settings.json`) and Tab uses it for
-this session only; typing filters the model list, so Tab stands in for the `s`
-some tools use.
+In both, Enter makes the choice the default for new sessions (saved as
+`"model"` and `"effort"` in `~/.axio/agent/settings.json`) and Ctrl-S uses it
+for this session only (`s` in the effort slider; in the browser Tab switches
+sides and typing filters).
 Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out
