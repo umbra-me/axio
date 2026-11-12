@@ -360,3 +360,110 @@ fn the_parallel_setting_limits_running_sub_agents() {
         "the second child waited for the first"
     );
 }
+
+/// A one-tool MCP server: this test binary re-run with AXIO_TEST_MCP set.
+#[test]
+fn mcp_stub_server() {
+    if std::env::var_os("AXIO_TEST_MCP").is_none() {
+        return;
+    }
+    let mut out = std::io::stdout();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(msg) = serde_json::from_str::<Value>(&line.unwrap()) else {
+            continue;
+        };
+        let Some(id) = msg.get("id").cloned() else {
+            continue;
+        };
+        let result = match msg["method"].as_str().unwrap_or("") {
+            "initialize" => json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                                   "serverInfo": {"name": "echo"}}),
+            "tools/list" => json!({"tools": [{"name": "say", "description": "Says the text back",
+                "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}),
+            "tools/call" => json!({"content": [{"type": "text",
+                "text": format!("said: {} (pid {})", msg["params"]["arguments"]["text"].as_str().unwrap_or(""),
+                                std::process::id())}]}),
+            _ => continue,
+        };
+        writeln!(
+            out,
+            "{}",
+            json!({"jsonrpc": "2.0", "id": id, "result": result})
+        )
+        .unwrap();
+        out.flush().unwrap();
+    }
+}
+
+fn mcp_through_parent(body: &Value) -> Reply {
+    let messages = body["messages"].as_array().unwrap();
+    let tool_said = messages
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| m["content"].as_str().unwrap_or("").to_string())
+        .next();
+    if is_child(body) {
+        return match tool_said {
+            Some(said) => (Duration::ZERO, text(&format!("child got [{said}]"))),
+            None => (
+                Duration::ZERO,
+                calls(&[("m", "mcp__echo__say", json!({"text": "hi"}))]),
+            ),
+        };
+    }
+    match tool_said {
+        Some(_) => (Duration::ZERO, text("done")),
+        None => (
+            Duration::ZERO,
+            calls(&[(
+                "a",
+                "Agent",
+                json!({"description": "echo", "prompt": "say hi", "subagent_type": "echoer"}),
+            )]),
+        ),
+    }
+}
+
+#[test]
+fn sub_agents_use_the_main_agents_mcp_servers() {
+    let (port, seen) = serve(mcp_through_parent);
+    let home = home("mcp", port);
+    let exe = std::env::current_exe().unwrap();
+    std::fs::write(
+        home.join("mcp.json"),
+        json!({"mcpServers": {"echo": {"command": exe.display().to_string(),
+            "args": ["--exact", "mcp_stub_server", "--nocapture", "--quiet", "--test-threads=1"],
+            "env": {"AXIO_TEST_MCP": "1"}}}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join("agents")).unwrap();
+    std::fs::write(
+        home.join("agents/echoer.md"),
+        "---\nname: echoer\ndescription: Says things\ntools: mcp__echo__*\n---\nUse the echo tool.",
+    )
+    .unwrap();
+    let out = axio(&home, &["-p", "--no-session", "-m", "stub/main", "go"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let seen = seen.lock().unwrap();
+    let child = seen
+        .iter()
+        .find(|s| is_child(&s.body))
+        .expect("a child ran");
+    assert_eq!(tool_names(&child.body), ["mcp__echo__say"]);
+    let main_last = seen.iter().rev().find(|s| !is_child(&s.body)).unwrap();
+    let result = main_last.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(result.contains("child got [said: hi"), "{result}");
+}

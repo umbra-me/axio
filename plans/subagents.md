@@ -189,6 +189,10 @@ output before it enters the conversation, and background tasks.
    input closes, which is how Esc reaches its own commands. The `agents`
    module carries the tool; `minimal` leaves it out.
 5. MCP calls proxied through the parent.
+   Built: the spec carries the granted MCP tools' definitions; the child asks
+   with an `mcp_call` line and reads an `mcp_result` line on stdin; the
+   parent runs each call on its own thread against its running server and
+   refuses tools the child was not granted.
 6. `SubagentStart` / `SubagentStop` hooks; `axio import` offers Claude Code
    agents.
 7. Side jobs (compaction, long-output summaries) moved onto child mode.

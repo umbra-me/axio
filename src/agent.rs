@@ -38,6 +38,11 @@ pub trait Ui {
     fn ask(&mut self, _question: &str) -> bool {
         false
     }
+    /// Runs a tool someone else owns (a sub-agent's MCP tools, run by the
+    /// main agent); `None` when it is not one.
+    fn remote_tool(&mut self, _name: &str, _input: &Value) -> Option<Result<String, String>> {
+        None
+    }
     /// Sub-agents are running: one line on what they are doing.
     fn agents_running(&mut self, _line: &str) {}
     /// A sub-agent finished; `summary` is its tool calls and time.
@@ -138,6 +143,10 @@ impl Agent {
 
     pub fn tool_names(&self) -> Vec<&str> {
         self.tools.iter().map(|t| t.name.as_str()).collect()
+    }
+
+    pub fn add_tools(&mut self, specs: Vec<ToolSpec>) {
+        self.tools.extend(specs);
     }
 
     /// Offers only the named tools. Calls to any other tool are refused.
@@ -570,7 +579,7 @@ impl Agent {
                         .iter()
                         .map(|_| Err(format!("not run: {}", tools::STOPPED)))
                         .collect(),
-                    (None, false) => host.run_all(&plans, ui),
+                    (None, false) => host.run_all(&plans, self.mcp.clone(), ui),
                 };
                 for ((slot, id, input, context, _), out) in pending.into_iter().zip(outs) {
                     stopped = stopped || matches!(&out, Err(e) if e.ends_with(tools::STOPPED));
@@ -797,7 +806,9 @@ impl Agent {
                 if matches!(name, "Write" | "Edit") && !self.mcp.owns(name) {
                     self.remember_original(&input);
                 }
-                let r = if self.mcp.owns(name) {
+                let r = if let Some(r) = ui.remote_tool(name, &input) {
+                    r
+                } else if self.mcp.owns(name) {
                     self.mcp.call(name, &input, &mut || ui.interrupted())
                 } else {
                     tools::run_with(self.modules, name, &input, &self.cwd, &mut || {
@@ -842,6 +853,7 @@ impl Agent {
             tools: &names,
             sandboxed: crate::sandbox::active().is_some(),
             may_nest: host.children_may_nest(),
+            mcp: &self.mcp.specs,
         };
         let planned = match refusal {
             Some(r) => Err(r),

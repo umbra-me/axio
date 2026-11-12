@@ -90,6 +90,10 @@ work unchanged. `axio agents` lists them. Four are built in:
 | `review` | Read, Grep, Glob, Bash | the main agent's, high | rules | read-only |
 | `code` | Read, Write, Edit, Bash, Grep, Glob | the main agent's | rules | the main agent's |
 
+A role may list MCP tools by name or as `mcp__server__*`. Sub-agents start no
+MCP servers of their own: the main agent runs those calls on its servers and
+passes the results back, and refuses tools the role was not given.
+
 Add or replace roles in `~/.axio/agent/agents/<name>.md`, a plugin's
 `agents/` folder or a trusted project's `.axio/agents/`; a later one replaces
 a role of the same name.

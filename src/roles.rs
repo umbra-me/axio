@@ -190,6 +190,8 @@ pub struct Parent<'a> {
     pub sandboxed: bool,
     /// Whether the sub-agent may start sub-agents of its own.
     pub may_nest: bool,
+    /// The main agent's MCP tools, which it runs for sub-agents.
+    pub mcp: &'a [crate::tools::ToolSpec],
 }
 
 /// One request for a sub-agent.
@@ -283,9 +285,30 @@ pub fn spec(
         Some(list) => list.clone(),
         None => parent.tools.to_vec(),
     };
+    // `mcp__server__*` stands for all of that server's tools.
+    let wanted: Vec<String> = wanted
+        .into_iter()
+        .flat_map(|t| match t.strip_suffix('*') {
+            Some(prefix) if t.starts_with("mcp__") => parent
+                .mcp
+                .iter()
+                .filter(|m| m.name.starts_with(prefix))
+                .map(|m| m.name.clone())
+                .collect(),
+            _ => vec![t],
+        })
+        .collect();
     let mut tools = Vec::new();
     for t in wanted {
-        if t == "Agent" && !parent.may_nest {
+        if t.starts_with("mcp__") {
+            if parent.mcp.iter().any(|m| m.name == t) {
+                if !tools.contains(&t) {
+                    tools.push(t);
+                }
+            } else if role.tools.is_some() {
+                notes.push(format!("no MCP tool named {t} is running; left out"));
+            }
+        } else if t == "Agent" && !parent.may_nest {
             if role.tools.is_some() {
                 notes.push(
                     "sub-agents cannot start sub-agents here (subagents.nesting); Agent left out"
@@ -311,7 +334,6 @@ pub fn spec(
     Ok((
         Spec {
             task: call.task.clone(),
-            tools,
             instructions: role.instructions.clone(),
             cwd: Some(parent.cwd.to_path_buf()),
             model: Some(model),
@@ -322,6 +344,13 @@ pub fn spec(
             session_dir: None,
             sandbox,
             history: None,
+            mcp: parent
+                .mcp
+                .iter()
+                .filter(|m| tools.contains(&m.name))
+                .cloned()
+                .collect(),
+            tools,
         },
         notes,
     ))
@@ -345,6 +374,7 @@ mod tests {
             tools,
             sandboxed: false,
             may_nest: false,
+            mcp: &[],
         }
     }
 
@@ -515,6 +545,40 @@ mod tests {
         let open = role("---\nname: open\n---\nx");
         let (sp, notes) = resolve(&open, &call, &parent(&model, &tools), &s).unwrap();
         assert_eq!((sp.tools, notes.len()), (vec!["Read".to_string()], 0));
+    }
+
+    #[test]
+    fn mcp_tools_come_from_the_main_agents_servers() {
+        let model = Model::parse("anthropic/claude-opus-5-5");
+        let spec_of = |n: &str| crate::tools::ToolSpec {
+            name: n.into(),
+            description: String::new(),
+            schema: serde_json::json!({}),
+        };
+        let mcp = [
+            spec_of("mcp__a__one"),
+            spec_of("mcp__a__two"),
+            spec_of("mcp__b__x"),
+        ];
+        let tools: Vec<String> = mcp.iter().map(|m| m.name.clone()).collect();
+        let p = Parent {
+            mcp: &mcp,
+            ..parent(&model, &tools)
+        };
+        let call = Call {
+            task: "t".into(),
+            ..Call::default()
+        };
+        let s = Subagents::default();
+        let r = role("---\ntools: Read, mcp__a__*, mcp__c__gone\n---\nx");
+        let (sp, notes) = resolve(&r, &call, &p, &s).unwrap();
+        assert_eq!(sp.tools, ["Read", "mcp__a__one", "mcp__a__two"]);
+        let names: Vec<&str> = sp.mcp.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["mcp__a__one", "mcp__a__two"]);
+        assert!(notes[0].contains("mcp__c__gone"), "{notes:?}");
+        // A role with no list gets the main agent's MCP tools too.
+        let (sp, _) = resolve(&role("---\nname: open\n---\nx"), &call, &p, &s).unwrap();
+        assert_eq!(sp.mcp.len(), 3);
     }
 
     #[test]
