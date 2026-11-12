@@ -547,7 +547,9 @@ pub fn render(pending: &[&Item], versions: &dyn Fn(&str) -> Option<String>) -> S
             Support::Partly(n) => format!("partly: {n}"),
             Support::No(n) => format!("cannot run: {n}"),
         };
-        out.push_str(&format!("  {:<7} {:<34} {how}\n", i.label, name));
+        // A long name still keeps a gap before the verdict.
+        let width = 34.max(name.chars().count() + 1);
+        out.push_str(&format!("  {:<7} {name:<width$} {how}\n", i.label));
     }
     out
 }
@@ -762,6 +764,13 @@ mod tests {
         assert_eq!(
             text,
             "Found in other harnesses on this machine:\n\nPi 1.5.2\n  mcp     ida                                works as is\n  ext     ollama                             cannot run: TypeScript extension: axio runs no JavaScript\n"
+        );
+        let long = Item {
+            name: "background-terminals, charon, defuddle, impeccable".into(),
+            ..pending[0].clone()
+        };
+        assert!(
+            render(&[&long], &|_| None).ends_with("charon, defuddle, impeccable  works as is\n")
         );
         std::fs::remove_dir_all(h).unwrap();
     }
