@@ -210,6 +210,177 @@ pub fn plugin_provides(root: &Path) -> Vec<&'static str> {
     v
 }
 
+/// One part of the context window, for `/context`.
+pub struct Part {
+    pub label: String,
+    pub tokens: u64,
+}
+
+/// `/context`: a bar of the window, then each part with its tokens and
+/// share, the free space and where compaction starts.
+pub fn context_view(parts: &[Part], window: u64, compact_at: u64, color: bool) -> Vec<String> {
+    const CELLS: u64 = 50;
+    const MARKS: [&str; 8] = ["#", "=", "*", "+", "%", "@", "&", "~"];
+    const COLORS: [&str; 6] = [
+        "\x1b[36m", "\x1b[32m", "\x1b[33m", "\x1b[35m", "\x1b[34m", "\x1b[31m",
+    ];
+    let window = window.max(1);
+    let used: u64 = parts.iter().map(|p| p.tokens).sum();
+    let mark = |i: usize| {
+        if color {
+            crate::ui::paint(true, COLORS[i % COLORS.len()], "█")
+        } else {
+            MARKS[i % MARKS.len()].to_string()
+        }
+    };
+    let free_mark = if color {
+        crate::ui::paint(true, crate::ui::DIM, "░")
+    } else {
+        ".".to_string()
+    };
+    let mut bar = String::new();
+    let mut cells = 0;
+    for (i, p) in parts.iter().enumerate() {
+        let n = if p.tokens == 0 {
+            0
+        } else {
+            ((p.tokens * CELLS + window / 2) / window).max(1)
+        };
+        bar.push_str(&mark(i).repeat(n as usize));
+        cells += n;
+    }
+    bar.push_str(&free_mark.repeat(CELLS.saturating_sub(cells) as usize));
+    let pct = |t: u64| t * 100 / window;
+    let tok = crate::ui::tokens;
+    let mut lines = vec![
+        bar,
+        format!("{} of {} tokens ({}%)", tok(used), tok(window), pct(used)),
+    ];
+    for (i, p) in parts.iter().enumerate() {
+        lines.push(format!(
+            "  {} {:<14} {:>6} {:>3}%",
+            mark(i),
+            p.label,
+            tok(p.tokens),
+            pct(p.tokens)
+        ));
+    }
+    let free = window.saturating_sub(used);
+    lines.push(format!(
+        "  {free_mark} {:<14} {:>6} {:>3}%",
+        "Free space",
+        tok(free),
+        pct(free)
+    ));
+    lines.push(format!(
+        "compaction starts at {} ({}%)",
+        tok(compact_at),
+        pct(compact_at)
+    ));
+    lines
+}
+
+/// A setting `/settings` can change: its key path in settings.json, a
+/// label, the value now and what it does.
+pub struct Setting {
+    pub path: &'static [&'static str],
+    pub label: &'static str,
+    pub value: String,
+    pub about: &'static str,
+}
+
+/// The settings `/settings` lists, with their values in `s`.
+pub fn settings_rows(s: &crate::settings::Settings) -> Vec<Setting> {
+    let or = |v: Option<String>, default: &str| v.unwrap_or_else(|| format!("{default} (default)"));
+    let on = |v: Option<bool>| match v {
+        Some(true) => "on".to_string(),
+        Some(false) => "off".to_string(),
+        None => "off (default)".to_string(),
+    };
+    let num = |v: Option<usize>, d: usize| v.map_or(format!("{d} (default)"), |n| n.to_string());
+    let sa = &s.subagents;
+    vec![
+        Setting {
+            path: &["model"],
+            label: "Default model",
+            value: or(s.model.clone(), crate::provider::DEFAULT_MODEL),
+            about: "the model new sessions start on",
+        },
+        Setting {
+            path: &["effort"],
+            label: "Effort",
+            value: s.effort.clone().unwrap_or_else(|| "model default".into()),
+            about: "reasoning effort for new sessions",
+        },
+        Setting {
+            path: &["fastMode"],
+            label: "Fast mode by default",
+            value: on(s.fast_mode),
+            about: "faster output at a higher price, on models that have it",
+        },
+        Setting {
+            path: &["profile"],
+            label: "Profile",
+            value: or(s.profile.clone(), crate::profile::DEFAULT),
+            about: "which modules and plugins load",
+        },
+        Setting {
+            path: &["compactModel"],
+            label: "Compaction model",
+            value: s
+                .compact_model
+                .clone()
+                .unwrap_or_else(|| "main model (default)".into()),
+            about: "the model that writes compaction summaries",
+        },
+        Setting {
+            path: &["sandboxNetwork"],
+            label: "Sandbox network",
+            value: on(s.sandbox_network),
+            about: "lets sandboxed commands reach the network",
+        },
+        Setting {
+            path: &["importFromOtherHarnesses"],
+            label: "Import from other harnesses",
+            value: s
+                .import_from_other_harnesses
+                .clone()
+                .unwrap_or_else(|| "off (default)".into()),
+            about: "use hooks, plugins and servers from Claude Code, Codex, Grok and Pi",
+        },
+        Setting {
+            path: &["subagents", "parallel"],
+            label: "Sub-agents at once",
+            value: num(sa.parallel, crate::subagent::PARALLEL),
+            about: "how many sub-agents may run at the same time",
+        },
+        Setting {
+            path: &["subagents", "nesting"],
+            label: "Sub-agent nesting",
+            value: num(sa.nesting.map(|n| n as usize), 0),
+            about: "levels of sub-agents that may start their own",
+        },
+        Setting {
+            path: &["subagents", "fast"],
+            label: "Sub-agents use fast mode",
+            value: on(sa.fast),
+            about: "fast mode for sub-agents on models that have it",
+        },
+        Setting {
+            path: &["subagents", "fastModel"],
+            label: "Fast model",
+            value: or(sa.fast_model.clone(), "by provider"),
+            about: "what a role's `fast` model means",
+        },
+        Setting {
+            path: &["subagents", "resultLimit"],
+            label: "Sub-agent answer limit",
+            value: num(sa.result_limit, crate::child::RESULT_LIMIT),
+            about: "characters of a sub-agent's answer returned",
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,5 +549,72 @@ mod tests {
         std::fs::write(dir.join(".mcp.json"), "{}").unwrap();
         assert_eq!(plugin_provides(&dir), ["hooks", "MCP servers", "skills"]);
         assert_eq!(short("one two three\nmore", 8), "one two…");
+    }
+
+    #[test]
+    fn context_shows_each_part_and_the_free_space() {
+        let parts = [
+            Part {
+                label: "System prompt".into(),
+                tokens: 2_000,
+            },
+            Part {
+                label: "Tools".into(),
+                tokens: 6_000,
+            },
+            Part {
+                label: "Messages".into(),
+                tokens: 12_000,
+            },
+        ];
+        let lines = context_view(&parts, 100_000, 85_000, false);
+        // 50 cells: 1 + 3 + 6 used, 40 free.
+        assert_eq!(
+            lines[0],
+            format!(
+                "{}{}{}{}",
+                "#",
+                "=".repeat(3),
+                "*".repeat(6),
+                ".".repeat(40)
+            )
+        );
+        assert_eq!(lines[1], "20.0k of 100.0k tokens (20%)");
+        assert!(
+            lines.iter().any(|l| l == "  # System prompt    2.0k   2%"),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l == "  * Messages        12.0k  12%"),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l == "  . Free space      80.0k  80%"),
+            "{lines:?}"
+        );
+        assert_eq!(lines.last().unwrap(), "compaction starts at 85.0k (85%)");
+    }
+
+    #[test]
+    fn settings_rows_show_values_and_defaults() {
+        let s: crate::settings::Settings = serde_json::from_str(
+            r#"{"model": "anthropic/claude-opus-5-5", "fastMode": true, "subagents": {"parallel": 2}}"#,
+        )
+        .unwrap();
+        let rows = settings_rows(&s);
+        let value = |label: &str| {
+            rows.iter()
+                .find(|r| r.label == label)
+                .unwrap()
+                .value
+                .clone()
+        };
+        assert_eq!(value("Default model"), "anthropic/claude-opus-5-5");
+        assert_eq!(value("Fast mode by default"), "on");
+        assert_eq!(value("Effort"), "model default");
+        assert_eq!(value("Sub-agents at once"), "2");
+        assert_eq!(value("Sub-agent nesting"), "0 (default)");
+        assert_eq!(value("Compaction model"), "main model (default)");
+        assert!(rows.iter().all(|r| !r.about.is_empty()));
     }
 }

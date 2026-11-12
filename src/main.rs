@@ -76,9 +76,9 @@ Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
 Esc or Ctrl-C stops a running turn, Enter during one sends what you typed to
 the model at its next step, Ctrl-D exits. @path attaches a file.
-Commands: /new, /undo, /output, /compact, /status, /model <model>,
-/effort <level>, /fast, /mcp, /skills, /agents, /hooks, /plugins, /session,
-/help, /quit, plus your own
+Commands: /new, /undo, /output, /compact, /status, /context, /init,
+/model <model>, /effort <level>, /fast, /settings, /mcp, /skills, /agents,
+/hooks, /plugins, /session, /help, /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
 ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY, <NAME>_BASE_URL and
@@ -276,6 +276,86 @@ fn status_lines(
             }
         ),
     ]
+}
+
+/// `/init`: asks the model to write or improve the project's AGENTS.md.
+fn init_prompt(root: &std::path::Path, extra: &str) -> String {
+    let mut p = format!(
+        "Study this project and write an AGENTS.md at {} for coding agents who will work in it later. Include the exact commands to build, test, lint and run it, checked against the repository (package files, scripts, CI configuration); how the code is laid out; conventions and constraints that are not obvious from reading the code; and what commonly goes wrong. Keep it short and specific to this project: no generic advice and nothing a reader gets from the file tree. If an AGENTS.md or CLAUDE.md already exists, improve it rather than starting over, and keep what is still true. Fold in rules from .cursor/rules, .cursorrules or .github/copilot-instructions.md where they apply.",
+        root.join("AGENTS.md").display()
+    );
+    if !extra.is_empty() {
+        p.push_str(&format!("\n\nAlso: {extra}"));
+    }
+    p
+}
+
+/// `/context`: what fills the context window, part by part. Sizes are
+/// estimates at four characters a token, like compaction's.
+fn context_lines(
+    agent: &Agent,
+    library: &skills::Library,
+    cwd: &std::path::Path,
+    color: bool,
+) -> Vec<String> {
+    let tokens = |chars: usize| (chars / 4) as u64;
+    let project: usize = context::files(cwd)
+        .iter()
+        .map(|(p, t)| t.len() + p.display().to_string().len() + 50)
+        .sum();
+    let skills = library.prompt_section().map_or(0, |s| s.len());
+    let mcp_text = agent.mcp().prompt_section(None).map_or(0, |s| s.len());
+    let base = agent
+        .system
+        .len()
+        .saturating_sub(project + skills + mcp_text);
+    let mut builtin = 0;
+    let mut agent_tool = 0;
+    let mut servers: Vec<(String, usize)> = Vec::new();
+    for t in agent.tool_specs() {
+        let size = t.name.len() + t.description.len() + t.schema.to_string().len();
+        if t.name == "Agent" {
+            agent_tool += size;
+        } else if let Some(rest) = t.name.strip_prefix("mcp__") {
+            let server = rest.split("__").next().unwrap_or(rest).to_string();
+            match servers.iter_mut().find(|(s, _)| *s == server) {
+                Some((_, n)) => *n += size,
+                None => servers.push((server, size)),
+            }
+        } else {
+            builtin += size;
+        }
+    }
+    let part = |label: &str, tokens: u64| panels::Part {
+        label: label.into(),
+        tokens,
+    };
+    let mut parts = vec![
+        part("System prompt", tokens(base)),
+        part("AGENTS.md", tokens(project)),
+        part("Skills list", tokens(skills)),
+        part("MCP guidance", tokens(mcp_text)),
+        part("Built-in tools", tokens(builtin)),
+        part("Agent tool", tokens(agent_tool)),
+    ];
+    for (server, size) in servers {
+        parts.push(part(&format!("MCP: {server}"), tokens(size)));
+    }
+    parts.push(part("Messages", compact::estimate_tokens(&agent.messages)));
+    parts.retain(|p| p.tokens > 0);
+    let mut lines = panels::context_view(
+        &parts,
+        agent.model.context_window(),
+        agent.compact_at(),
+        color,
+    );
+    if agent.context > 0 {
+        lines.push(format!(
+            "the last reply measured {} in all",
+            ui::tokens(agent.context)
+        ));
+    }
+    lines
 }
 
 /// The status line under the prompt: model, context and what the session
@@ -659,7 +739,7 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 
 /// Built-in commands: name, arguments, what each does and its section in
 /// /help.
-const BUILTINS: [(&str, &str, &str, &str); 23] = [
+const BUILTINS: [(&str, &str, &str, &str); 26] = [
     ("new", "", "start a new session", "Session"),
     ("resume", "", "pick a saved session to continue", "Session"),
     ("compact", "", "summarize the conversation now", "Session"),
@@ -679,6 +759,13 @@ const BUILTINS: [(&str, &str, &str, &str); 23] = [
         "status",
         "",
         "model, profile, context and servers at a glance",
+        "Session",
+    ),
+    ("context", "", "what fills the context window", "Session"),
+    (
+        "init",
+        "[notes]",
+        "write or improve this project's AGENTS.md",
         "Session",
     ),
     ("session", "", "show the session file", "Session"),
@@ -731,6 +818,12 @@ const BUILTINS: [(&str, &str, &str, &str); 23] = [
         "profile",
         "",
         "show the profile, modules and plugins",
+        "Extensions",
+    ),
+    (
+        "settings",
+        "",
+        "change settings for new sessions",
         "Extensions",
     ),
     ("help", "", "list the commands", "Help"),
@@ -1348,6 +1441,13 @@ fn run() -> Result<ExitCode, String> {
                     );
                 }
             }
+            ("/settings", _) => interactive::settings(&mut agent, &mut term, &home, &mut models),
+            ("/context", _) => {
+                for l in context_lines(&agent, &library, &cwd, term.color) {
+                    eprintln!("  {l}");
+                }
+            }
+            ("/init", extra) => prompt = init_prompt(&settings::project_root(&cwd), extra),
             ("/status", _) => {
                 for l in status_lines(
                     &agent,

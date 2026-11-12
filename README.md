@@ -308,6 +308,15 @@ Commands:
   reads and writes, side jobs and sub-agents included). A ChatGPT sign-in
   shows "ChatGPT plan"; models without a known price show their tokens.
   `/status` repeats it.
+- `/context` shows what fills the context window: a bar, then the system
+  prompt, AGENTS.md, skills list, MCP guidance, built-in tools, the Agent
+  tool, each MCP server's tools and the messages, with the free space and
+  where compaction starts.
+- `/settings` lists every setting with its value; Enter toggles, picks or
+  asks for a new one and saves it in `~/.axio/agent/settings.json` for new
+  sessions.
+- `/init [notes]` asks the model to write or improve the project's
+  AGENTS.md.
 - Long tool output is collapsed to its end; Ctrl-O on an empty prompt (or
   `/output`) shows the last result in full.
 - `/mcp` lists MCP servers with their state (tools and transport, signed in,

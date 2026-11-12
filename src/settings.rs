@@ -124,6 +124,35 @@ pub fn set(home: &Path, key: &str, value: serde_json::Value) -> Result<(), Strin
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Sets a possibly nested key, such as `["subagents", "parallel"]`, in
+/// `home/settings.json`, keeping everything else.
+pub fn set_path(home: &Path, path: &[&str], value: serde_json::Value) -> Result<(), String> {
+    let Some((first, rest)) = path.split_first() else {
+        return Err("no setting named".into());
+    };
+    if rest.is_empty() {
+        return set(home, first, value);
+    }
+    let file = home.join("settings.json");
+    let doc: serde_json::Value = match std::fs::read_to_string(&file) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", file.display()))?,
+        Err(_) => serde_json::json!({}),
+    };
+    let mut section = doc
+        .get(*first)
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut at = &mut section;
+    for key in &rest[..rest.len() - 1] {
+        if !at[*key].is_object() {
+            at[*key] = serde_json::json!({});
+        }
+        at = at.get_mut(*key).expect("just set");
+    }
+    at[rest[rest.len() - 1]] = value;
+    set(home, first, section)
+}
+
 /// The nearest ancestor holding `.git` or `.axio`, else `cwd` itself.
 pub fn project_root(cwd: &Path) -> PathBuf {
     cwd.ancestors()
@@ -198,6 +227,29 @@ impl Trust {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_path_writes_nested_keys_and_keeps_the_rest() {
+        let home = std::env::temp_dir().join(format!("axio-set-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("settings.json"),
+            r#"{"effort": "high", "subagents": {"nesting": 1}}"#,
+        )
+        .unwrap();
+        set_path(&home, &["subagents", "parallel"], serde_json::json!(2)).unwrap();
+        set_path(&home, &["fastMode"], serde_json::json!(true)).unwrap();
+        let s = Settings::load(&home, None).unwrap();
+        assert_eq!(
+            (s.subagents.parallel, s.subagents.nesting),
+            (Some(2), Some(1))
+        );
+        assert_eq!(
+            (s.effort.as_deref(), s.fast_mode),
+            (Some("high"), Some(true))
+        );
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("axio-settings-{name}-{}", std::process::id()));
