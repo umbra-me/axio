@@ -195,6 +195,9 @@ type Part = Result<String, &'static str>;
 struct Word {
     text: String,
     dynamic: bool,
+    /// An unquoted expansion or glob: the shell may split it into several
+    /// words or file names.
+    split: bool,
 }
 
 /// Every simple command in `command`, nested ones included: `$(…)`,
@@ -225,6 +228,7 @@ fn deny_parts(command: &str) -> Vec<Part> {
                 Word {
                     text: String::new(),
                     dynamic: false,
+                    split: false,
                 },
             );
             self.in_word = false;
@@ -246,6 +250,7 @@ fn deny_parts(command: &str) -> Vec<Part> {
         word: Word {
             text: String::new(),
             dynamic: false,
+            split: false,
         },
         in_word: false,
         operand: false,
@@ -394,32 +399,113 @@ fn program(words: &[Word]) -> Option<Part> {
             !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
     };
+    let joined = |words: &[Word]| -> String {
+        words
+            .iter()
+            .map(|w| w.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
     let mut i = 0;
     loop {
-        while words.get(i).is_some_and(|w| {
+        while let Some(w) = words.get(i).filter(|w| {
             assignment(w)
                 || (!w.dynamic || w.text == "{" || w.text == "}") && SKIP.contains(&w.text.as_str())
         }) {
+            // After `env` an unquoted `FOO=$X` is split into more words.
+            if w.split {
+                return Some(Err("assigns a value the shell may split into more words"));
+            }
             i += 1;
         }
         let w = words.get(i)?;
         if w.dynamic && w.text != "[" {
             return Some(Err("builds its program's name as it runs"));
         }
-        if !WRAPPERS.contains(&name(&w.text).as_str()) {
+        let wrapper = name(&w.text);
+        if !WRAPPERS.contains(&wrapper.as_str()) {
             break;
         }
         i += 1;
-        match words.get(i) {
-            Some(o) if o.text == "--" => i += 1,
-            Some(o) if o.text.starts_with('-') => {
-                return Some(Err("gives options to a wrapper such as env or sudo"));
+        // The few wrapper options that change nothing about what runs.
+        while let Some(o) = words
+            .get(i)
+            .filter(|o| o.text.starts_with('-') || o.dynamic)
+        {
+            match (wrapper.as_str(), o.text.as_str()) {
+                (_, _) if o.dynamic => {
+                    return Some(Err("builds its program's name as it runs"));
+                }
+                (_, "--") => {
+                    i += 1;
+                    break;
+                }
+                // `command -v` looks a name up and runs nothing.
+                ("command", "-v" | "-V") => return Some(Ok(joined(&words[i - 1..]))),
+                ("time", "-p") | ("env", "-i") => i += 1,
+                ("env", "-u") | ("nice", "-n") => {
+                    if !words.get(i + 1).is_some_and(|v| !v.dynamic) {
+                        return Some(Err("gives options to a wrapper such as env or sudo"));
+                    }
+                    i += 2;
+                }
+                _ => return Some(Err("gives options to a wrapper such as env or sudo")),
             }
-            _ => {}
         }
     }
     let program = name(&words[i].text);
     let rest = &words[i + 1..];
+    let identifier = |t: &str| {
+        !t.is_empty()
+            && !t.starts_with(|c: char| c.is_ascii_digit())
+            && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    // `export` and `read` with fixed names and values evaluate nothing.
+    let fixed = rest.iter().all(|w| !w.dynamic);
+    let safe_builtin = match program.as_str() {
+        "export" => {
+            fixed
+                && rest
+                    .iter()
+                    .all(|w| identifier(w.text.split_once('=').map_or(&w.text, |(n, _)| n)))
+        }
+        "read" => {
+            let mut ok = fixed;
+            let mut k = 0;
+            while ok && k < rest.len() {
+                match rest[k].text.as_str() {
+                    "-r" | "-s" | "-e" => k += 1,
+                    "-p" | "-t" | "-n" | "-d" | "-u" => k += 2,
+                    t => {
+                        ok = identifier(t);
+                        k += 1;
+                    }
+                }
+            }
+            ok
+        }
+        _ => false,
+    };
+    if safe_builtin {
+        return Some(Ok(std::iter::once(program.clone())
+            .chain(rest.iter().map(|w| w.text.clone()))
+            .collect::<Vec<_>>()
+            .join(" ")));
+    }
+    // `test`, `[` and `wait` read an expanded word as an option or a name
+    // (`-v 'a[$(…)]'`); `printf` does so before its format string.
+    let expands_into_options = match program.as_str() {
+        "test" | "[" | "[[" | "wait" => rest
+            .iter()
+            .any(|w| w.dynamic && !matches!(w.text.as_str(), "]" | "]]")),
+        "printf" => rest.first().is_some_and(|w| w.dynamic) || rest.iter().any(|w| w.split),
+        _ => false,
+    };
+    if expands_into_options {
+        return Some(Err(
+            "passes an expansion that a builtin may read as an option",
+        ));
+    }
     let finds_and_runs = program == "find"
         && rest.iter().any(|w| {
             w.dynamic || matches!(w.text.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")
@@ -464,6 +550,7 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
     let mut word = Word {
         text: String::new(),
         dynamic: false,
+        split: false,
     };
     let mut in_word = false;
     let mut operand = false;
@@ -476,6 +563,7 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
                     Word {
                         text: String::new(),
                         dynamic: false,
+                        split: false,
                     },
                 );
                 if !std::mem::take(operand) {
@@ -485,7 +573,11 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
             }
         };
     // `$NAME` or `${NAME}`, after the `$`.
-    fn variable(it: &mut std::iter::Peekable<std::str::Chars>, word: &mut Word) -> bool {
+    fn variable(
+        it: &mut std::iter::Peekable<std::str::Chars>,
+        word: &mut Word,
+        quoted: bool,
+    ) -> bool {
         let braced = it.peek() == Some(&'{');
         if braced {
             it.next();
@@ -507,6 +599,7 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
         word.text.push('$');
         word.text.push_str(&name);
         word.dynamic = true;
+        word.split |= !quoted;
         true
     }
     while let Some(c) = it.next() {
@@ -581,7 +674,7 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
                     match it.next() {
                         Some('"') => break,
                         Some('$') => {
-                            if !variable(&mut it, &mut word) {
+                            if !variable(&mut it, &mut word, true) {
                                 return Err(OUTSIDE);
                             }
                         }
@@ -592,7 +685,7 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
             }
             '$' => {
                 in_word = true;
-                if !variable(&mut it, &mut word) {
+                if !variable(&mut it, &mut word, false) {
                     return Err(OUTSIDE);
                 }
             }
@@ -600,7 +693,17 @@ fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
                 in_word = true;
                 word.text.push(c);
                 word.dynamic = true;
+                word.split |= c != '~';
             }
+            // Outside quotes a backslash keeps the next character as it is;
+            // before a new line it joins lines, which is not plain.
+            '\\' => match it.next() {
+                Some(n) if n != '\n' => {
+                    in_word = true;
+                    word.text.push(n);
+                }
+                _ => return Err(OUTSIDE),
+            },
             c if c.is_ascii_alphanumeric() || "_./:=,+@%-".contains(c) => {
                 in_word = true;
                 word.text.push(c);
@@ -1121,8 +1224,6 @@ mod tests {
             "/tmp/fakebin/r? x",
             "$(echo rm) x",
             "env -S 'rm x'",
-            "env -i rm x",
-            "time -p rm x",
             "exec -a name rm x",
             "command -p rm x",
             "sudo -n rm x",
@@ -1146,6 +1247,8 @@ mod tests {
             "2>&1 rm x",
             "rm x 2>/dev/null",
             "if rm x; then :; fi",
+            "env -i rm x",
+            "time -p rm x",
             "x=1; rm v",
             "f(){ rm \"$@\"; }; f x",
             "echo a |& rm v",
@@ -1208,6 +1311,17 @@ mod tests {
             "echo \"${x@P}\"",
             "ls\u{a0}-la",
             "a[0]=x",
+            "X='x rm victim'; env FOO=$X",
+            "OP=-v; printf $OP 'a[$(rm victim)]' x",
+            "N='5 rm'; nice -n $N victim",
+            "[ $X = y ]",
+            "test $X",
+            "command -p rm v",
+            "export 'a[$(rm v)]'",
+            "read $X",
+            "echo a\\\nb",
+            "[ -f \"$HOME/x\" ]",
+            "printf \"$F\" x",
         ] {
             assert!(
                 !matches!(verdict(cmd), Verdict::Allow),
@@ -1227,9 +1341,145 @@ mod tests {
             "npm run build && npm test || echo failed",
             "echo hi >> log 2>/dev/null; cat < log",
             "printf '%s\\n' x # comment",
+            "command -v cargo",
+            "time -p cargo test",
+            "env -u RUST_LOG cargo test",
+            "env -i PATH=/usr/bin cargo test",
+            "nice -n 5 cargo build",
+            "export RUST_LOG=debug",
+            "read -r line < f",
+            "echo foo\\ bar",
+            "FOO=\"$HOME\" cargo test",
         ] {
             assert_eq!(verdict(cmd), Verdict::Allow, "{cmd:?}");
         }
+    }
+
+    /// Differential check against the real bash: random command lines from
+    /// tricky pieces, run with a fake `rm` on the PATH. A line that `decide`
+    /// allows under `Bash(rm:*)` must never run `rm`. Slow; run with
+    /// `cargo test -- --ignored allowed_lines_never_run_a_denied_program`.
+    #[test]
+    #[ignore]
+    #[cfg(unix)]
+    fn allowed_lines_never_run_a_denied_program() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("axio-deny-fuzz-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let marker = dir.join("ran");
+        let fake = bin.join("rm");
+        std::fs::write(&fake, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        for f in ["-v", "rm", "x", "a[$(rm v)]"] {
+            std::fs::write(work.join(f), "").unwrap();
+        }
+        let p = Permissions {
+            mode: Mode::Bypass,
+            deny: vec![rule("Bash(rm:*)")],
+            ..Permissions::default()
+        };
+        // Well-formed lines: simple commands of optional assignments, an
+        // optional wrapper and its options, a program and its arguments.
+        const ASSIGN: [&str; 4] = ["FOO=$X", "FOO=\"$X\"", "a=b", "FOO=x"];
+        const WRAP: [&[&str]; 10] = [
+            &["env"],
+            &["env", "-i"],
+            &["env", "-u", "Y"],
+            &["command"],
+            &["exec"],
+            &["time"],
+            &["time", "-p"],
+            &["nice", "-n", "5"],
+            &["nohup"],
+            &["env", "--"],
+        ];
+        const PROGRAM: [&str; 16] = [
+            "rm", "r\\m", "'rm'", "printf", "test", "[", "echo", "true", "read", "export", "find",
+            "$X", "\"$X\"", "${X}", "*", "?",
+        ];
+        const ARG: [&str; 16] = [
+            "$X",
+            "\"$X\"",
+            "${X}",
+            "-v",
+            "x",
+            "victim",
+            "*",
+            "?",
+            "~",
+            "--",
+            "'a[$(rm v)]'",
+            "FOO=$X",
+            ">f",
+            "2>&1",
+            "<x",
+            "]",
+        ];
+        const JOIN: [&str; 4] = [" ; ", " && ", " || ", " | "];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let rounds: usize = std::env::var("AXIO_FUZZ_ROUNDS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(3000);
+        let mut allowed = 0;
+        for _ in 0..rounds {
+            let mut line = String::new();
+            for c in 0..1 + next(2) {
+                if c > 0 {
+                    line.push_str(JOIN[next(4)]);
+                }
+                let mut words: Vec<&str> = Vec::new();
+                for _ in 0..next(2) {
+                    words.push(ASSIGN[next(4)]);
+                }
+                if next(2) == 0 {
+                    words.extend(WRAP[next(10)]);
+                    for _ in 0..next(2) {
+                        words.push(ASSIGN[next(4)]);
+                    }
+                }
+                words.push(PROGRAM[next(16)]);
+                for _ in 0..next(4) {
+                    words.push(ARG[next(16)]);
+                }
+                line.push_str(&words.join(" "));
+            }
+            if p.decide("Bash", &bash(&line), &work) != Verdict::Allow {
+                continue;
+            }
+            allowed += 1;
+            for x in ["x rm victim", "-v", "rm", "a[$(rm v)]", "*"] {
+                let _ = std::fs::remove_file(&marker);
+                let path = format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                );
+                let _ = std::process::Command::new("bash")
+                    .arg("-c")
+                    .arg(&line)
+                    .current_dir(&work)
+                    .env("PATH", path)
+                    .env("X", x)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+                assert!(!marker.exists(), "allowed {line:?} ran rm with X={x:?}");
+            }
+        }
+        eprintln!("{allowed} of {rounds} lines allowed and checked");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
