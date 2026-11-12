@@ -185,128 +185,220 @@ fn unsafe_to_match(command: &str) -> bool {
         || command.contains('<')
 }
 
-/// Every command a deny rule should see, nested ones included, as plain
-/// words: quotes and escapes resolved, `$(…)`, backticks, `<(…)` and
-/// brackets starting commands of their own (also inside double quotes),
-/// leading `NAME=value` assignments and wrappers such as `env` or `sudo`
-/// skipped, and the program named by its file name (`/bin/rm` is `rm`).
-/// Deny rules stay a best effort: `bash -c '…'` hides a command from them.
-fn deny_parts(command: &str) -> Vec<String> {
-    let mut commands: Vec<Vec<String>> = vec![Vec::new()];
-    let mut word = String::new();
-    let mut in_word = false;
+/// One simple command as a deny rule sees it: the program (by file name)
+/// and its arguments with quotes resolved, or why it cannot be read with
+/// certainty before it runs.
+type Part = Result<String, &'static str>;
+
+/// A word of a command, and whether the shell may still change it when the
+/// command runs (`$`, globs and braces outside single quotes).
+struct Word {
+    text: String,
+    dynamic: bool,
+}
+
+/// Every simple command in `command`, nested ones included: `$(…)`,
+/// backticks, `<(…)`, brackets and `"$(…)"` start commands of their own;
+/// redirections and their targets are set aside; quotes and escapes are
+/// resolved. This is not a shell parser; anything it cannot be sure of is
+/// reported through `program` rather than guessed.
+fn deny_parts(command: &str) -> Vec<Part> {
+    struct Lexer {
+        commands: Vec<Vec<Word>>,
+        word: Word,
+        in_word: bool,
+        // The next word is a redirection's target, not part of the command.
+        operand: bool,
+    }
+    impl Lexer {
+        fn push(&mut self, c: char, dynamic: bool) {
+            self.word.text.push(c);
+            self.word.dynamic |= dynamic;
+            self.in_word = true;
+        }
+        fn end_word(&mut self) {
+            if !self.in_word {
+                return;
+            }
+            let w = std::mem::replace(
+                &mut self.word,
+                Word {
+                    text: String::new(),
+                    dynamic: false,
+                },
+            );
+            self.in_word = false;
+            if std::mem::take(&mut self.operand) {
+                return;
+            }
+            self.commands.last_mut().expect("never empty").push(w);
+        }
+        fn end_command(&mut self) {
+            self.end_word();
+            self.operand = false;
+            if self.commands.last().is_some_and(|c| !c.is_empty()) {
+                self.commands.push(Vec::new());
+            }
+        }
+    }
+    let mut l = Lexer {
+        commands: vec![Vec::new()],
+        word: Word {
+            text: String::new(),
+            dynamic: false,
+        },
+        in_word: false,
+        operand: false,
+    };
     let mut quote: Option<char> = None;
     // `"$(…)"` and `` "`…`" ``: the closing character, and the quote to go
     // back to after it.
     let mut nested: Vec<(char, Option<char>)> = Vec::new();
     let mut it = command.chars().peekable();
-    fn end_word(commands: &mut [Vec<String>], word: &mut String, in_word: &mut bool) {
-        if *in_word {
-            commands
-                .last_mut()
-                .expect("never empty")
-                .push(std::mem::take(word));
-            *in_word = false;
-        }
-    }
-    fn end_command(commands: &mut Vec<Vec<String>>, word: &mut String, in_word: &mut bool) {
-        end_word(commands, word, in_word);
-        if commands.last().is_some_and(|c| !c.is_empty()) {
-            commands.push(Vec::new());
-        }
-    }
     while let Some(c) = it.next() {
         if quote.is_none() && nested.last().is_some_and(|n| n.0 == c) {
-            end_command(&mut commands, &mut word, &mut in_word);
+            l.end_command();
             quote = nested.pop().and_then(|n| n.1);
-            in_word = true;
+            l.in_word = true;
             continue;
         }
         match (quote, c) {
             (Some('\''), '\'') | (Some('"'), '"') => quote = None,
-            (Some('\''), c) => word.push(c),
-            (Some('"'), '\\') => word.extend(it.next()),
+            (Some('\''), c) => l.push(c, false),
+            (Some('"'), '\\') => {
+                if let Some(n) = it.next() {
+                    l.push(n, false);
+                }
+            }
             (Some('"'), '`') => {
-                end_command(&mut commands, &mut word, &mut in_word);
+                l.push('`', true);
+                l.end_command();
                 nested.push(('`', quote));
                 quote = None;
             }
             (Some('"'), '$') if it.peek() == Some(&'(') => {
                 it.next();
-                end_command(&mut commands, &mut word, &mut in_word);
+                l.push('$', true);
+                l.end_command();
                 nested.push((')', quote));
                 quote = None;
             }
-            (Some(_), c) => {
-                word.push(c);
-                in_word = true;
-            }
+            (Some(_), c) => l.push(c, c == '$'),
             (None, '\'' | '"') => {
                 quote = Some(c);
-                in_word = true;
+                l.in_word = true;
             }
             (None, '\\') => {
                 if let Some(n) = it.next().filter(|n| *n != '\n') {
-                    word.push(n);
-                    in_word = true;
+                    l.push(n, false);
                 }
             }
-            (None, ';' | '&' | '|' | '\n' | '(' | ')' | '`' | '{' | '}' | '<' | '>') => {
-                end_command(&mut commands, &mut word, &mut in_word)
+            (None, '<' | '>') => {
+                if it.peek() == Some(&'(') {
+                    it.next();
+                    l.end_command();
+                    continue;
+                }
+                // `2>`: the digits name a file descriptor.
+                if l.in_word && !l.word.dynamic && l.word.text.chars().all(|d| d.is_ascii_digit()) {
+                    l.word.text.clear();
+                    l.in_word = false;
+                } else {
+                    l.end_word();
+                }
+                while it
+                    .peek()
+                    .is_some_and(|n| matches!(n, '<' | '>' | '&' | '|' | '-'))
+                {
+                    it.next();
+                }
+                l.operand = true;
             }
-            (None, c) if c.is_whitespace() => end_word(&mut commands, &mut word, &mut in_word),
-            (None, c) => {
-                word.push(c);
-                in_word = true;
+            (None, '&') if it.peek() == Some(&'>') => {
+                l.end_word();
+                while it.peek().is_some_and(|n| *n == '>') {
+                    it.next();
+                }
+                l.operand = true;
             }
+            (None, ';' | '&' | '|' | '\n' | '\r' | '(' | ')' | '`') => l.end_command(),
+            (None, c) if c.is_whitespace() => l.end_word(),
+            (None, c) => l.push(
+                c,
+                matches!(c, '$' | '{' | '}' | '*' | '?' | '[' | ']' | '~'),
+            ),
         }
     }
-    end_word(&mut commands, &mut word, &mut in_word);
-    commands
-        .into_iter()
-        .filter_map(|words| program(&words))
+    l.end_word();
+    l.commands
+        .iter()
+        .filter_map(|words| program(words))
         .collect()
 }
 
-/// A command's words from its program on, past assignments and wrappers,
-/// with the program by its file name.
-fn program(words: &[String]) -> Option<String> {
+/// A command's words from its program on: past assignments, reserved words
+/// such as `if` or `{`, and wrappers such as `env` or `sudo`, with the
+/// program by its file name. An error when the program is not known before
+/// the command runs, or runs other commands itself.
+fn program(words: &[Word]) -> Option<Part> {
+    const SKIP: [&str; 11] = [
+        "{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "fi",
+    ];
     const WRAPPERS: [&str; 9] = [
         "command", "builtin", "exec", "env", "nohup", "time", "sudo", "doas", "nice",
     ];
-    // Wrapper options that take a value (`sudo -u root`, `nice -n 5`).
-    const WITH_VALUE: [&str; 8] = ["-u", "-g", "-n", "-C", "-p", "-U", "-h", "-S"];
+    const INDIRECT: [&str; 14] = [
+        "sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "source", ".", "xargs", "parallel",
+        "watch", "timeout", "su",
+    ];
     let name = |w: &str| w.rsplit(['/', '\\']).next().unwrap_or(w).to_string();
-    let assignment = |w: &str| {
-        w.split_once('=').is_some_and(|(n, _)| {
+    let assignment = |w: &Word| {
+        w.text.split_once('=').is_some_and(|(n, _)| {
             !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
     };
     let mut i = 0;
     loop {
-        while words.get(i).is_some_and(|w| assignment(w)) {
+        while words.get(i).is_some_and(|w| {
+            assignment(w)
+                || (!w.dynamic || w.text == "{" || w.text == "}") && SKIP.contains(&w.text.as_str())
+        }) {
             i += 1;
         }
-        if !words
-            .get(i)
-            .is_some_and(|w| WRAPPERS.contains(&name(w).as_str()))
-        {
+        let w = words.get(i)?;
+        if w.dynamic {
+            return Some(Err("builds its program's name as it runs"));
+        }
+        if !WRAPPERS.contains(&name(&w.text).as_str()) {
             break;
         }
         i += 1;
-        while let Some(w) = words.get(i).filter(|w| w.starts_with('-')) {
-            i += if WITH_VALUE.contains(&w.as_str()) {
-                2
-            } else {
-                1
-            };
+        match words.get(i) {
+            Some(o) if o.text == "--" => i += 1,
+            Some(o) if o.text.starts_with('-') => {
+                return Some(Err("gives options to a wrapper such as env or sudo"));
+            }
+            _ => {}
         }
     }
-    let (first, rest) = words.get(i..)?.split_first()?;
-    let words: Vec<String> = std::iter::once(name(first))
-        .chain(rest.iter().cloned())
+    let program = name(&words[i].text);
+    let rest = &words[i + 1..];
+    let finds_and_runs = program == "find"
+        && rest
+            .iter()
+            .any(|w| matches!(w.text.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir"));
+    if INDIRECT.contains(&program.as_str()) || finds_and_runs {
+        return Some(Err("runs commands through another program"));
+    }
+    let words: Vec<&str> = std::iter::once(program.as_str())
+        .chain(rest.iter().map(|w| w.text.as_str()))
         .collect();
-    Some(words.join(" "))
+    Some(Ok(words.join(" ")))
+}
+
+/// Why a command cannot be checked against Bash deny rules, if it cannot.
+fn unclear(command: &str) -> Option<&'static str> {
+    deny_parts(command).into_iter().find_map(Result::err)
 }
 
 /// `git log:*` is the prefix `git log` (as a whole word); anything else
@@ -364,7 +456,11 @@ fn denied_target(spec: &str, path: &Path) -> bool {
     };
     #[cfg(not(unix))]
     let linked = false;
-    named || linked
+    // A symlink to nothing yet: writing through it creates a file the rule
+    // cannot name in advance.
+    let dangling = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+        && std::fs::metadata(path).is_err();
+    named || linked || dangling
 }
 
 /// `.gitignore`-style: `/x` is from the working directory, a pattern with a
@@ -441,13 +537,37 @@ impl Permissions {
             return Verdict::Allow;
         }
         let changes = matches!(tool, "Write" | "Edit" | "Bash");
+        if self.mode == Mode::Plan && changes {
+            return Verdict::Deny(
+                "plan mode: files and commands are read-only; propose a plan instead, and the user will switch modes to carry it out"
+                    .into(),
+            );
+        }
+        // Deny rules hold in every mode, so a command they cannot be checked
+        // against asks first, even when bypassing permissions.
+        let command = input["command"].as_str().unwrap_or("");
+        if tool == "Bash"
+            && self
+                .deny
+                .iter()
+                .any(|r| r.tool == "Bash" && r.spec.is_some())
+            && let Some(why) = unclear(command)
+        {
+            let shown: String = command
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect();
+            return Verdict::Ask {
+                question: format!(
+                    "Run `{shown}`? It {why}, so axio cannot check it against your Bash deny rules"
+                ),
+                rule: None,
+            };
+        }
         match self.mode {
-            Mode::Plan if changes => {
-                return Verdict::Deny(
-                    "plan mode: files and commands are read-only; propose a plan instead, and the user will switch modes to carry it out"
-                        .into(),
-                );
-            }
             Mode::Bypass => return Verdict::Allow,
             Mode::AcceptEdits if matches!(tool, "Write" | "Edit") => return Verdict::Allow,
             _ => {}
@@ -558,7 +678,7 @@ fn denies(rule: &Rule, tool: &str, input: &Value, cwd: &Path) -> bool {
         let command = input["command"].as_str().unwrap_or("");
         return command_parts(command)
             .into_iter()
-            .chain(deny_parts(command))
+            .chain(deny_parts(command).into_iter().flatten())
             .any(|p| bash_matches(spec, &p));
     }
     rule_matches(rule, tool, input, cwd, true)
@@ -744,7 +864,6 @@ mod tests {
             "FOO='a b' BAR=1 rm -f v",
             "command rm -f v",
             "env X=y rm -f v",
-            "env -i rm -f v",
             "/bin/rm -f v",
             "sudo rm -f v",
             "nohup rm -f v",
@@ -769,6 +888,81 @@ mod tests {
     }
 
     #[test]
+    fn commands_a_deny_rule_cannot_read_ask_first() {
+        let c = cwd();
+        let p = Permissions {
+            mode: Mode::Bypass,
+            deny: vec![rule("Bash(rm:*)")],
+            ..Permissions::default()
+        };
+        let verdict = |cmd: &str| p.decide("Bash", &bash(cmd), &c);
+        for cmd in [
+            "$'rm' x",
+            "$\"rm\" x",
+            "{rm,x}",
+            "/tmp/fakebin/r? x",
+            "$(echo rm) x",
+            "env -S 'rm x'",
+            "env -i rm x",
+            "time -p rm x",
+            "exec -a name rm x",
+            "command -p rm x",
+            "sudo -n rm x",
+            "/usr/bin/time -o t rm x",
+            "bash -c 'rm x'",
+            "sh -c 'rm x'",
+            "eval rm x",
+            "xargs rm < list",
+            "find . -exec rm {} ;",
+            "source script.sh",
+        ] {
+            assert!(
+                matches!(verdict(cmd), Verdict::Ask { rule: None, .. }),
+                "{cmd}: {:?}",
+                verdict(cmd)
+            );
+        }
+        for cmd in [
+            ">out rm x",
+            "&>out rm x",
+            "2>&1 rm x",
+            "rm x 2>/dev/null",
+            "if rm x; then :; fi",
+            "x=1; rm v",
+            "f(){ rm \"$@\"; }; f x",
+            "echo a |& rm v",
+            "echo \"$(echo \"$(rm v)\")\"",
+        ] {
+            assert!(
+                matches!(verdict(cmd), Verdict::Deny(_)),
+                "{cmd}: {:?}",
+                verdict(cmd)
+            );
+        }
+        for cmd in [
+            "echo hi > rm",
+            "echo hi 2>rm",
+            "echo hi &>rm",
+            "cat < rm",
+            "git status",
+            "find . -name '*.rs'",
+            "cargo test 2>&1 | tail -5",
+            "for f in *.rs; do wc -l $f; done",
+        ] {
+            assert_eq!(verdict(cmd), Verdict::Allow, "{cmd}");
+        }
+        let open = Permissions {
+            mode: Mode::Bypass,
+            ..Permissions::default()
+        };
+        assert_eq!(
+            open.decide("Bash", &bash("bash -c 'x'"), &c),
+            Verdict::Allow,
+            "no deny rules, no questions"
+        );
+    }
+
+    #[test]
     fn deny_path_rules_see_link_targets_and_hard_links() {
         let dir = std::env::temp_dir().join(format!("axio-perm-deny-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -787,6 +981,12 @@ mod tests {
             assert!(
                 denies(&deny, "Write", &write("alias"), &proj),
                 "symlink to a denied name"
+            );
+            std::os::unix::fs::symlink(outside.join("missing-secret"), proj.join("dangling"))
+                .unwrap();
+            assert!(
+                denies(&deny, "Write", &write("dangling"), &proj),
+                "dangling symlink"
             );
             std::fs::hard_link(proj.join("secret"), proj.join("hard")).unwrap();
             assert!(
