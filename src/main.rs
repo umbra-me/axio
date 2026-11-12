@@ -852,6 +852,8 @@ fn run() -> Result<ExitCode, String> {
         .or(config.effort)
         .or(profile.effort.clone());
     agent.compact_ratio = profile.compact_at;
+    agent.compact_model = config.compact_model.clone();
+    agent.fast_model = config.subagents.fast_model.clone();
 
     let sessions = session::dir_for(&home, &cwd);
     let resume = match (args.session, args.resume_latest, args.pick_session) {

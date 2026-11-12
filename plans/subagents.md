@@ -201,6 +201,12 @@ output before it enters the conversation, and background tasks.
    8 times like Stop. Imported `~/.claude/agents` sit just below axio's own
    role folders; plugins with `agents/` now count as working.
 7. Side jobs (compaction, long-output summaries) moved onto child mode.
+   Built in-process instead: these jobs call no tools, so a child process
+   would add nothing; what they need is a small model and a clean context.
+   `compactModel` picks the compaction model (`fast`, `inherit`, a model;
+   the main model by default). WebFetch takes Claude Code's optional
+   `prompt`, answered from the page by the fast model without the main
+   effort, so long pages stay out of the conversation.
 
 Each step lands with a failing test first and is measured: child memory,
 start-to-first-request time, and system-prompt tokens per role.
