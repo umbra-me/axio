@@ -797,7 +797,7 @@ pub fn skills(term: &mut ui::Term, lib: &crate::skills::Library) -> Option<Strin
             &k.name,
             &[
                 crate::term::clean(&k.description),
-                format!("file: {}", k.path.display()),
+                crate::term::clean(&format!("file: {}", k.path.display())),
                 "the model reads it when a task matches".into(),
             ],
         );

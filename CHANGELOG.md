@@ -188,11 +188,16 @@ Found by a pre-release review.
   bodies is cleaned of terminal sequences before it is shown, so it cannot
   write the clipboard (OSC 52), add hidden links, clear the screen or move
   the cursor.
-- Bash deny rules read commands as the shell does: quoted words stay whole,
+- Bash deny rules split a command line into words and simple commands:
+  quoted words stay whole, redirections and their targets are set aside,
   `NAME=value` assignments and wrappers (`command`, `env`, `sudo`, `exec`,
   `nohup`, `time`, `nice`) are skipped, `/bin/rm` counts as `rm`, and commands
-  inside `"$(…)"` are seen.
+  inside `"$(…)"` are seen. A command they cannot be sure of (a program name
+  from an expansion, a wrapper with options, `bash -c`, `eval`, `xargs`,
+  `find -exec`) asks first, even in bypass mode. They remain a guard against
+  mistakes rather than a boundary; `SECURITY.md` lists the limits.
 - Path deny rules also refuse a symlink whose target has a denied name, even
-  outside the project, and any file with more than one hard link.
+  outside the project, a symlink to nothing yet, and any file with more than
+  one hard link.
 - WebFetch compares a redirect's port with the scheme's default, and resolves
   query-only and fragment-only redirects against the current page.
