@@ -30,7 +30,10 @@ cargo test --locked
 ## Layout
 
 - `src/main.rs`: arguments, terminal output, interactive loop
-- `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor
+- `src/term.rs`, `src/editor.rs`: raw keys through `stty`, the prompt editor and its slash-command menu
+- `src/ui.rs`, `src/markdown.rs`: drawing turns, tool calls and the recap; markdown in the terminal
+- `src/menu.rs`: pickers, the model browser (providers and their models) and the effort slider
+- `src/interactive.rs`: `/model`, `/login`, `/logout`, `/effort` and `/resume`
 - `src/import.rs`, `src/toml_lite.rs`: offers from other harnesses, and the TOML subset they need
 - `src/plugin_cli.rs`: `axio plugin install | list | update | remove`
 - `src/profile.rs`, `src/plugins.rs`: profiles and plugin folders
@@ -38,12 +41,15 @@ cargo test --locked
 - `src/skills.rs`: skills, slash commands and the small frontmatter reader
 - `src/auth.rs`: `auth.json` keys and tokens, `axio auth`
 - `src/oauth.rs`, `src/crypto.rs`: MCP sign-in, and the SHA-256/base64url/random it needs
+- `src/chatgpt.rs`: Sign in with ChatGPT (agent sign-in, token refresh under a lock, model list)
 - `src/mcp.rs`: MCP stdio client (tests run the test binary as a stub server)
 - `src/hooks.rs`: hook loading, matching, running and merging replies
 - `src/settings.rs`: settings files and project trust
 - `src/compact.rs`: compaction to recent user requests plus a summary
 - `src/agent.rs`: the turn loop (model, tools, repeat)
-- `src/provider/`: Anthropic Messages and OpenAI-compatible chat completions
+- `src/provider.rs`: model names, what model lists report (context, effort levels), retries
+- `src/provider/`: Anthropic Messages, OpenAI-compatible chat completions, and the Responses API for ChatGPT sign-ins
+- `src/message.rs`, `src/sse.rs`: message and block types; the server-sent events reader
 - `src/tools.rs`: read, write, edit, bash
 - `src/session.rs`: append-only JSONL transcripts
 - `src/context.rs`: system prompt and AGENTS.md discovery
