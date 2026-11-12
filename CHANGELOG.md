@@ -101,6 +101,11 @@ under Unreleased.
 
 **Project**
 - Licensed under Apache-2.0 (#67).
+- Windows (experimental): builds with the MSVC toolchain and runs in Windows
+  Terminal or the console; Bash and hooks run in Git Bash, and a stopped
+  command's whole process tree ends. Without a sandbox, read-only sub-agent roles are
+  kept read-only by permission rules: file changes are refused and commands
+  ask first.
 
 **Testing**
 - Terminal checks in `e2e/` (`sh e2e/all.sh target/release/axio`) and a Linux

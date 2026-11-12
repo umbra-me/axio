@@ -220,11 +220,22 @@ impl Reply {
     }
 }
 
+/// A path as it goes into a shell command: on Windows the command runs in
+/// Git Bash, which reads a backslash as an escape, so forward slashes.
+fn shell_path(p: &Path) -> String {
+    let s = p.display().to_string();
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s
+    }
+}
+
 fn expand(text: &str, root: Option<&Path>, project: &Path) -> String {
-    let mut out = text.replace("${AXIO_PROJECT_DIR}", &project.display().to_string());
-    out = out.replace("${CLAUDE_PROJECT_DIR}", &project.display().to_string());
+    let mut out = text.replace("${AXIO_PROJECT_DIR}", &shell_path(project));
+    out = out.replace("${CLAUDE_PROJECT_DIR}", &shell_path(project));
     if let Some(r) = root {
-        let r = r.display().to_string();
+        let r = shell_path(r);
         out = out.replace("${CLAUDE_PLUGIN_ROOT}", &r);
         out = out.replace("${AXIO_PLUGIN_ROOT}", &r);
     }
@@ -232,6 +243,10 @@ fn expand(text: &str, root: Option<&Path>, project: &Path) -> String {
 }
 
 fn run_one(hook: &Hook, stdin: &str, project: &Path) -> Reply {
+    // Hooks are shell commands; Windows has no `sh`, so Git Bash runs them.
+    #[cfg(windows)]
+    let mut cmd = Command::new(crate::sandbox::bash_program());
+    #[cfg(not(windows))]
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
         .arg(expand(&hook.command, hook.root.as_deref(), project))
@@ -282,6 +297,8 @@ fn run_one(hook: &Hook, stdin: &str, project: &Path) -> Reply {
                     .args(["-KILL", "--", &format!("-{}", child.id())])
                     .stderr(Stdio::null())
                     .status();
+                #[cfg(windows)]
+                crate::tools::kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 return Reply::failed(&format!(
@@ -582,12 +599,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("axio-hooks-plugin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("guard/hooks")).unwrap();
-        std::fs::write(
-            dir.join("guard/hooks/hooks.json"),
-            r#"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo \"{\\\"decision\\\":\\\"block\\\",\\\"reason\\\":\\\"$CLAUDE_PLUGIN_ROOT\\\"}\""}]}],
-                         "PermissionRequest": [{"hooks": [{"type": "command", "command": "true"}]}]}}"#,
-        )
-        .unwrap();
+        // The hook writes the variable to a file, so a Windows path with
+        // backslashes needs no escaping in JSON.
+        let hooks = serde_json::json!({"hooks": {
+            "Stop": [{"hooks": [{"type": "command",
+                "command": "printf %s \"$CLAUDE_PLUGIN_ROOT\" > \"${CLAUDE_PLUGIN_ROOT}/root.txt\"; echo '{\"decision\":\"block\",\"reason\":\"saw the root\"}'"}]}],
+            "PermissionRequest": [{"hooks": [{"type": "command", "command": "true"}]}]
+        }});
+        std::fs::write(dir.join("guard/hooks/hooks.json"), hooks.to_string()).unwrap();
         let mut h = Hooks {
             project_dir: dir.clone(),
             ..Hooks::default()
@@ -599,7 +618,12 @@ mod tests {
         assert_eq!(h.skipped.len(), 1);
         assert!(h.skipped[0].ends_with("PermissionRequest has no axio event"));
         let o = h.run(Event::Stop, None, Map::new());
-        assert_eq!(o.block, Some(dir.join("guard").display().to_string()));
+        assert_eq!(o.block.as_deref(), Some("saw the root"));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("guard").join("root.txt")).unwrap(),
+            dir.join("guard").display().to_string(),
+            "the plugin's own path, as the operating system writes it"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -65,7 +65,7 @@ fn dropped_image(pasted: &str, cwd: Option<&std::path::Path>) -> Option<String> 
     let mut chars = raw.chars();
     while let Some(c) = chars.next() {
         match c {
-            '\\' if !quoted => path.extend(chars.next()),
+            '\\' if !quoted && !cfg!(windows) => path.extend(chars.next()),
             c => path.push(c),
         }
     }
@@ -74,7 +74,7 @@ fn dropped_image(pasted: &str, cwd: Option<&std::path::Path>) -> Option<String> 
         None => cwd.map_or_else(|| path.clone().into(), |d| d.join(&path)),
     };
     (full.is_file() && crate::context::image_type(&full).is_some())
-        .then(|| format!("@{} ", path.replace(' ', "\\ ")))
+        .then(|| format!("{} ", crate::context::mention(&path)))
 }
 
 /// Completes `partial`, a path relative to `cwd`: the whole name when one
@@ -734,13 +734,19 @@ mod tests {
             cwd: Some(dir.clone()),
             ..Editor::default()
         };
-        e.handle(Key::Paste(abs.replace(' ', "\\ ")));
-        assert_eq!(e.text(), format!("@{} ", abs.replace(' ', "\\ ")));
+        // How a terminal hands over a dropped path with a space in it.
+        let dropped = if cfg!(windows) {
+            format!("\"{abs}\"")
+        } else {
+            abs.replace(' ', "\\ ")
+        };
+        e.handle(Key::Paste(dropped));
+        assert_eq!(e.text(), format!("{} ", crate::context::mention(&abs)));
         e.set("");
         e.handle(Key::Paste(format!("'{abs}'")));
         assert_eq!(
             e.text(),
-            format!("@{} ", abs.replace(' ', "\\ ")),
+            format!("{} ", crate::context::mention(&abs)),
             "quoted form too"
         );
         e.set("");

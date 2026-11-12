@@ -2,6 +2,7 @@
 //! bytes from the operating system. Small enough to keep the dependency list
 //! at three crates.
 
+#[cfg(not(windows))]
 use std::io::Read;
 
 const K: [u32; 64] = [
@@ -107,11 +108,37 @@ pub fn base64url(data: &[u8]) -> String {
 }
 
 /// Random bytes from the operating system.
+#[cfg(not(windows))]
 pub fn random(n: usize) -> Result<Vec<u8>, String> {
     let mut buf = vec![0u8; n];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut buf))
         .map_err(|e| format!("could not read random bytes: {e}"))?;
+    Ok(buf)
+}
+
+/// Windows has no /dev/urandom: the system's preferred generator instead.
+#[cfg(windows)]
+pub fn random(n: usize) -> Result<Vec<u8>, String> {
+    #[link(name = "bcrypt")]
+    unsafe extern "system" {
+        fn BCryptGenRandom(alg: *mut std::ffi::c_void, buf: *mut u8, len: u32, flags: u32) -> i32;
+    }
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x2;
+    let mut buf = vec![0u8; n];
+    let len = u32::try_from(n).map_err(|_| "too many random bytes asked for")?;
+    // SAFETY: the buffer is `len` bytes long and the call writes only those.
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            buf.as_mut_ptr(),
+            len,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status != 0 {
+        return Err(format!("could not read random bytes: status {status:#x}"));
+    }
     Ok(buf)
 }
 

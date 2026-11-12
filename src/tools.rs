@@ -458,7 +458,19 @@ pub(crate) fn kill(child: &mut std::process::Child) {
         // Children that ignored TERM, or outlived the shell, still hold the group.
         signal("-KILL");
     }
+    #[cfg(windows)]
+    kill_tree(child.id());
     let _ = child.kill();
+}
+
+/// Windows: ends a process and everything it started.
+#[cfg(windows)]
+pub(crate) fn kill_tree(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Long output keeps its first quarter and last three quarters of the budget,
@@ -768,6 +780,8 @@ mod tests {
         assert_eq!(shorten("short"), "short");
     }
 
+    // Windows has no SIGTERM to clean up on: taskkill ends the tree at once.
+    #[cfg(unix)]
     #[test]
     fn stopping_lets_the_command_clean_up_first() {
         let dir = tmp();

@@ -13,6 +13,12 @@ axio -c                   # continue the last session in this directory
 axio -r                   # pick one of this directory's recent sessions
 ```
 
+Runs on macOS and Linux. Windows support is experimental: it builds and
+passes the test suite, and needs [Git for Windows](https://gitforwindows.org)
+for `Bash` and hooks (`AXIO_BASH` points at another bash). Windows has no
+`sandbox` module; read-only sub-agents are held to read-only by permission
+rules instead.
+
 ## What it does
 
 - **Four tools**: `Read`, `Write`, `Edit`, `Bash`, with Claude Code's names and
@@ -54,7 +60,7 @@ A profile picks built-in modules, which plugins load, and defaults.
 | `background` | `Bash` with `run_in_background`: output goes to a log the model reads, `TaskStop` ends it, and the model hears when it exits. Tasks end when axio exits |
 | `agents` | `Agent`: sub-agents, below |
 | `web` | `WebFetch`: an http(s) GET, with HTML reduced to text and links kept. With a `prompt`, the fast model answers it from the page and only the answer enters the conversation |
-| `sandbox` | Bash may write only in the project and temporary folders, and has no network unless `"sandboxNetwork": true`; Write and Edit follow the same limits. Seatbelt on macOS, bubblewrap on Linux. Hooks and MCP servers are not sandboxed |
+| `sandbox` | Bash may write only in the project and temporary folders, and has no network unless `"sandboxNetwork": true`; Write and Edit follow the same limits. Seatbelt on macOS, bubblewrap on Linux; not available on Windows. Hooks and MCP servers are not sandboxed |
 
 Choose one with `--profile`, `AXIO_PROFILE` or `"profile"` in settings;
 `/profile` shows the current one. `axio profile full` (or `min`, `standard`,
