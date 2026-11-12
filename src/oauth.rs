@@ -77,7 +77,7 @@ fn decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn form(pairs: &[(&str, &str)]) -> String {
+pub(crate) fn form(pairs: &[(&str, &str)]) -> String {
     pairs
         .iter()
         .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
@@ -85,7 +85,7 @@ fn form(pairs: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-fn query(s: &str) -> Map<String, Value> {
+pub(crate) fn query(s: &str) -> Map<String, Value> {
     s.split('&')
         .filter_map(|p| p.split_once('='))
         .map(|(k, v)| (decode(k), Value::String(decode(v))))
@@ -199,7 +199,7 @@ fn discover(url: &str, challenge: &str) -> Result<AuthServer, String> {
     })
 }
 
-fn token_request(endpoint: &str, pairs: &[(&str, &str)]) -> Result<Value, String> {
+pub(crate) fn token_request(endpoint: &str, pairs: &[(&str, &str)]) -> Result<Value, String> {
     let resp = agent()
         .post(endpoint)
         .header("content-type", "application/x-www-form-urlencoded")

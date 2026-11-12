@@ -22,6 +22,12 @@ axio -r                   # pick one of this directory's recent sessions
   `openrouter/<vendor>/<id>`, or `<name>/<id>` with `<NAME>_BASE_URL`).
   Several can be signed in at once, and `/model` switches between them in the
   middle of a conversation, tool calls included.
+- **Sign in with ChatGPT**: `/login chatgpt` uses a ChatGPT subscription
+  instead of an API key, through OpenAI's sign-in for third-party agents (it
+  lists axio by name on your account). Models are `chatgpt/<model>`, run
+  through the Responses API; the token is kept in `auth.json` and refreshed
+  before it expires. When the browser is on another machine, paste the address
+  it ends on into axio.
 - **Context**: `~/.axio/agent/AGENTS.md`, then every `AGENTS.md` (or
   `CLAUDE.md`) from the filesystem root down to the working directory.
 - **Sessions**: append-only JSONL under `~/.axio/agent/sessions/`, grouped by
