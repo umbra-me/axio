@@ -26,37 +26,113 @@ fn note(term: &ui::Term, s: &str) {
     eprintln!("{}", term.dim(s));
 }
 
-/// One choice per listed model, the one in use first selected. A model in
-/// use that no list holds is kept at the top so Enter leaves it alone.
-fn model_choices(
+/// A provider's models as the browser shows them, with the full
+/// `provider/model` name of each.
+struct ModelGroup {
+    name: String,
+    signed_in: bool,
+    choices: Vec<Choice>,
+    specs: Vec<String>,
+}
+
+/// `262144` as `262k`, `1000000` as `1M`.
+fn short_tokens(n: u64) -> String {
+    if n >= 1_000_000 && n.is_multiple_of(1_000_000) {
+        format!("{}M", n / 1_000_000)
+    } else if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else {
+        format!("{}k", n / 1000)
+    }
+}
+
+fn model_detail(spec: &str, provider: &str, current: &str, default: Option<&str>) -> String {
+    let info = provider::info(spec);
+    let model = Model::parse(spec);
+    // Size and marks first: a long description is what gets cut short.
+    let mut parts = Vec::new();
+    // Context sizes axio knows rather than guesses: listed, or Claude's.
+    let window = info
+        .as_ref()
+        .and_then(|i| i.window)
+        .or((model.api == provider::Api::Anthropic).then(|| model.context_window()));
+    if let Some(w) = window {
+        parts.push(short_tokens(w));
+    }
+    if Some(spec) == default {
+        parts.push("default".into());
+    }
+    if spec == current {
+        parts.push("in use".into());
+    }
+    parts.push(
+        info.and_then(|i| i.about)
+            .unwrap_or_else(|| display_name(provider)),
+    );
+    parts.join(" · ")
+}
+
+/// The browser's groups: All, each signed-in provider, then providers that
+/// are not set up. Returns them with the group and choice to open on.
+fn model_groups(
     lists: &[(String, Vec<String>)],
+    not_set_up: &[String],
     current: &str,
     default: Option<&str>,
-) -> (Vec<Choice>, usize) {
-    let mut choices: Vec<Choice> = lists
-        .iter()
-        .flat_map(|(p, ids)| {
-            ids.iter().map(move |id| {
-                let about = provider::info(id).and_then(|i| i.about);
-                let mut detail = about.unwrap_or_else(|| display_name(p));
-                if Some(id.as_str()) == default {
-                    detail.push_str(" · default");
-                }
-                Choice::new(id, detail)
+) -> (Vec<ModelGroup>, usize, Option<usize>) {
+    let current_provider = current.split('/').next().unwrap_or("");
+    let mut groups = vec![ModelGroup {
+        name: "all".into(),
+        signed_in: true,
+        choices: Vec::new(),
+        specs: Vec::new(),
+    }];
+    for (p, ids) in lists {
+        let mut specs = ids.clone();
+        // A model in use that its list lacks stays first, so Enter keeps it.
+        if p == current_provider && !specs.iter().any(|s| s == current) {
+            specs.insert(0, current.to_string());
+        }
+        let choices = specs
+            .iter()
+            .map(|spec| {
+                let short = spec.strip_prefix(&format!("{p}/")).unwrap_or(spec);
+                let detail = if !ids.contains(spec) {
+                    "in use".to_string()
+                } else {
+                    model_detail(spec, p, current, default)
+                };
+                Choice::new(short, detail)
             })
-        })
-        .collect();
-    let at = match choices.iter().position(|c| c.label == current) {
-        Some(i) => {
-            choices[i].detail.push_str(" · in use");
-            i
-        }
-        None => {
-            choices.insert(0, Choice::new(current, "in use"));
-            0
-        }
-    };
-    (choices, at)
+            .collect::<Vec<_>>();
+        groups[0].choices.extend(
+            specs
+                .iter()
+                .zip(&choices)
+                .map(|(spec, c)| Choice::new(spec, c.detail.clone())),
+        );
+        groups[0].specs.extend(specs.iter().cloned());
+        groups.push(ModelGroup {
+            name: p.clone(),
+            signed_in: true,
+            choices,
+            specs,
+        });
+    }
+    for p in not_set_up.iter().cloned().chain(["other".to_string()]) {
+        groups.push(ModelGroup {
+            name: p,
+            signed_in: false,
+            choices: Vec::new(),
+            specs: Vec::new(),
+        });
+    }
+    let at = groups
+        .iter()
+        .position(|g| g.name == current_provider)
+        .unwrap_or(0);
+    let chosen = groups[at].specs.iter().position(|s| s == current);
+    (groups, at, chosen)
 }
 
 /// Fetches the model lists of `providers` at once, reusing earlier lists.
@@ -102,56 +178,85 @@ pub fn pick_model(
     cache: &mut ModelCache,
     only: Option<&str>,
 ) {
-    let mut providers = match only {
-        Some(p) => vec![p.to_string()],
-        None => provider::signed_in(),
-    };
-    if only.is_none() && !providers.contains(&agent.model.provider) {
-        providers.push(agent.model.provider.clone());
-    }
-    load_models(&providers, cache, term);
-    let lists: Vec<(String, Vec<String>)> = providers
-        .iter()
-        .filter_map(|p| cache.get(p).map(|ids| (p.clone(), ids.clone())))
-        .collect();
-    let current = agent.model.to_string();
     let home = crate::context::home();
-    let default = crate::settings::Settings::load(&home, None)
-        .ok()
-        .and_then(|s| s.model);
-    let (choices, at) = model_choices(&lists, &current, default.as_deref());
-    let title = match only {
-        Some(p) => format!("Model from {}", display_name(p)),
-        None => "Model".into(),
-    };
-    let labels: Vec<String> = choices.iter().map(|c| c.label.clone()).collect();
-    let levels = labels.iter().map(|l| Model::parse(l).efforts()).collect();
-    let effort = agent
-        .effort
-        .clone()
-        .or_else(|| agent.model.default_effort());
-    let keys = term.keys.as_mut().expect("keys");
-    // A bare name typed in stays with the provider being shown, or in use.
-    let prefix = format!("{}/", only.unwrap_or(&agent.model.provider));
-    let mut picker = Picker::new(&title, choices, Some(at))
-        .allow_typed(&prefix)
-        .with_effort(levels, effort.as_deref());
-    let (spec, scope) = match menu::choose(keys, &mut picker, term.color) {
-        menu::Step::Picked(i) => (labels[i].clone(), menu::Scope::Default),
-        menu::Step::Session(i) => (labels[i].clone(), menu::Scope::Session),
-        // A model the list did not show, such as on a server with no list.
-        menu::Step::Typed(id) => (id, menu::Scope::Default),
-        _ => return note(term, &format!("model: {} (unchanged)", agent.model)),
-    };
-    agent.model = Model::parse(&spec);
-    if let Some(e) = picker.effort() {
-        agent.effort = Some(e);
+    let mut open_on = only.map(String::from);
+    loop {
+        let mut providers = provider::signed_in();
+        if !providers.contains(&agent.model.provider) {
+            providers.push(agent.model.provider.clone());
+        }
+        load_models(&providers, cache, term);
+        let lists: Vec<(String, Vec<String>)> = providers
+            .iter()
+            .map(|p| (p.clone(), cache.get(p).cloned().unwrap_or_default()))
+            .collect();
+        let not_set_up: Vec<String> = provider::KNOWN
+            .iter()
+            .filter(|p| !providers.iter().any(|q| q == *p))
+            .map(|p| p.to_string())
+            .collect();
+        let default = crate::settings::Settings::load(&home, None)
+            .ok()
+            .and_then(|s| s.model);
+        let current = agent.model.to_string();
+        let (groups, mut at, mut chosen) =
+            model_groups(&lists, &not_set_up, &current, default.as_deref());
+        if let Some(p) = open_on.take()
+            && let Some(i) = groups.iter().position(|g| g.name == p)
+            && i != at
+        {
+            (at, chosen) = (i, None);
+        }
+        let effort = agent
+            .effort
+            .clone()
+            .or_else(|| agent.model.default_effort());
+        let specs: Vec<Vec<String>> = groups.iter().map(|g| g.specs.clone()).collect();
+        let names: Vec<String> = groups.iter().map(|g| g.name.clone()).collect();
+        let menu_groups = groups
+            .into_iter()
+            .map(|g| {
+                let levels = g.specs.iter().map(|s| Model::parse(s).efforts()).collect();
+                // A bare name typed in stays with this provider, or the one in use.
+                let prefix = match g.name.as_str() {
+                    "all" => format!("{}/", agent.model.provider),
+                    p => format!("{p}/"),
+                };
+                menu::Group {
+                    name: g.name,
+                    signed_in: g.signed_in,
+                    picker: Picker::new("", g.choices, None)
+                        .allow_typed(&prefix)
+                        .with_effort(levels, effort.as_deref()),
+                }
+            })
+            .collect();
+        let mut browser = menu::Browser::new(menu_groups, at, chosen);
+        let keys = term.keys.as_mut().expect("keys");
+        let (spec, scope) = match menu::browse(keys, &mut browser, term.color) {
+            menu::Browse::Picked(g, i, scope) => (specs[g][i].clone(), scope),
+            // A model the list did not show, such as on a server with no list.
+            menu::Browse::Typed(_, id, scope) => (id, scope),
+            menu::Browse::SignIn(g) => {
+                if let Some(name) = login_to(term, &names[g]) {
+                    cache.remove(&name);
+                    open_on = Some(name);
+                    continue;
+                }
+                return;
+            }
+            _ => return note(term, &format!("model: {} (unchanged)", agent.model)),
+        };
+        agent.model = Model::parse(&spec);
+        if let Some(e) = browser.picker().effort() {
+            agent.effort = Some(e);
+        }
+        let saved = match scope {
+            menu::Scope::Default => save_default(&home, &agent.model, agent.effort.as_deref()),
+            menu::Scope::Session => Ok("this session"),
+        };
+        return report_choice(term, agent, saved);
     }
-    let saved = match scope {
-        menu::Scope::Default => save_default(&home, &agent.model, agent.effort.as_deref()),
-        menu::Scope::Session => Ok("this session"),
-    };
-    report_choice(term, agent, saved);
 }
 
 /// Saves the model and effort for new sessions.
@@ -550,7 +655,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn model_choices_start_on_the_model_in_use() {
+    fn groups_list_every_provider_with_the_current_model_selected() {
         let lists = vec![
             (
                 "anthropic".to_string(),
@@ -561,25 +666,56 @@ mod tests {
             ),
             ("local".to_string(), vec!["local/qwen".to_string()]),
         ];
-        let (c, at) = model_choices(&lists, "anthropic/claude-opus-5-5", None);
-        assert_eq!(at, 1);
-        assert_eq!(c[1].detail, "Anthropic · in use");
-        assert_eq!(c[2].detail, "local (OpenAI-compatible)");
         provider::learn(
             "local/qwen",
             provider::Info {
-                about: Some("Qwen on this machine".into()),
+                about: Some("Qwen here".into()),
+                window: Some(262_144),
                 ..provider::Info::default()
             },
         );
-        let (c, _) = model_choices(&lists, "anthropic/claude-opus-5-5", Some("local/qwen"));
-        assert_eq!(c[2].detail, "Qwen on this machine · default");
-        let (c, at) = model_choices(&lists, "openai/gpt-5", None);
-        assert_eq!((at, c.len()), (0, 4));
-        assert_eq!(
-            (c[0].label.as_str(), c[0].detail.as_str()),
-            ("openai/gpt-5", "in use")
+        let (groups, at, current) = model_groups(
+            &lists,
+            &["openai".to_string()],
+            "anthropic/claude-opus-5-5",
+            Some("local/qwen"),
         );
+        let names: Vec<(&str, bool)> = groups
+            .iter()
+            .map(|g| (g.name.as_str(), g.signed_in))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("all", true),
+                ("anthropic", true),
+                ("local", true),
+                ("openai", false),
+                ("other", false)
+            ]
+        );
+        assert_eq!(
+            (at, current),
+            (1, Some(1)),
+            "opens on the provider and model in use"
+        );
+        assert_eq!(groups[0].specs.len(), 3);
+        assert_eq!(
+            groups[0].choices[2].label, "local/qwen",
+            "All shows full names"
+        );
+        assert_eq!(
+            groups[2].choices[0].label, "qwen",
+            "a provider shows short names"
+        );
+        assert_eq!(groups[2].choices[0].detail, "262k · default · Qwen here");
+        assert_eq!(groups[2].specs[0], "local/qwen");
+        assert_eq!(groups[1].choices[1].detail, "1M · in use · Anthropic");
+        // A model in use that no list holds is kept at the top of its provider.
+        let (groups, at, current) = model_groups(&lists, &[], "local/llama", None);
+        assert_eq!((at, current), (2, Some(0)));
+        assert_eq!(groups[2].specs[0], "local/llama");
+        assert_eq!(groups[2].choices[0].detail, "in use");
     }
 
     #[test]
