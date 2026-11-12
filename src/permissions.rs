@@ -347,9 +347,46 @@ fn program(words: &[Word]) -> Option<Part> {
     const WRAPPERS: [&str; 9] = [
         "command", "builtin", "exec", "env", "nohup", "time", "sudo", "doas", "nice",
     ];
-    const INDIRECT: [&str; 14] = [
-        "sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "source", ".", "xargs", "parallel",
-        "watch", "timeout", "su",
+    // Programs that run other commands, or builtins that evaluate a
+    // variable name's subscript (`a[$(…)]`) or rebind what a name runs.
+    const INDIRECT: [&str; 37] = [
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "fish",
+        "eval",
+        "source",
+        ".",
+        "xargs",
+        "parallel",
+        "watch",
+        "timeout",
+        "su",
+        "trap",
+        "coproc",
+        "fc",
+        "history",
+        "let",
+        "declare",
+        "typeset",
+        "local",
+        "readonly",
+        "export",
+        "read",
+        "mapfile",
+        "readarray",
+        "getopts",
+        "unset",
+        "alias",
+        "function",
+        "select",
+        "hash",
+        "enable",
+        "bind",
+        "complete",
+        "compgen",
     ];
     let name = |w: &str| w.rsplit(['/', '\\']).next().unwrap_or(w).to_string();
     let assignment = |w: &Word| {
@@ -366,7 +403,7 @@ fn program(words: &[Word]) -> Option<Part> {
             i += 1;
         }
         let w = words.get(i)?;
-        if w.dynamic {
+        if w.dynamic && w.text != "[" {
             return Some(Err("builds its program's name as it runs"));
         }
         if !WRAPPERS.contains(&name(&w.text).as_str()) {
@@ -384,10 +421,15 @@ fn program(words: &[Word]) -> Option<Part> {
     let program = name(&words[i].text);
     let rest = &words[i + 1..];
     let finds_and_runs = program == "find"
+        && rest.iter().any(|w| {
+            w.dynamic || matches!(w.text.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")
+        });
+    // `printf -v name`, `test -v name`, `wait -p name` take a variable name.
+    let names_a_variable = matches!(program.as_str(), "printf" | "test" | "[" | "[[" | "wait")
         && rest
             .iter()
-            .any(|w| matches!(w.text.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir"));
-    if INDIRECT.contains(&program.as_str()) || finds_and_runs {
+            .any(|w| matches!(w.text.as_str(), "-v" | "-p" | "-R"));
+    if INDIRECT.contains(&program.as_str()) || finds_and_runs || names_a_variable {
         return Some(Err("runs commands through another program"));
     }
     let words: Vec<&str> = std::iter::once(program.as_str())
@@ -396,9 +438,185 @@ fn program(words: &[Word]) -> Option<Part> {
     Some(Ok(words.join(" ")))
 }
 
-/// Why a command cannot be checked against Bash deny rules, if it cannot.
+/// Why a command cannot be checked against Bash deny rules, if it cannot:
+/// it must be plain shell (see `plain`), and every program in it known.
 fn unclear(command: &str) -> Option<&'static str> {
-    deny_parts(command).into_iter().find_map(Result::err)
+    match plain(command) {
+        Err(why) => Some(why),
+        Ok(commands) => commands
+            .iter()
+            .filter_map(|words| program(words))
+            .find_map(Result::err),
+    }
+}
+
+/// The simple commands of `command` when it is written in the plain shell
+/// axio checks with certainty, otherwise why not. Plain shell is: words of
+/// letters, digits and `_ . / : = , + @ % -`; globs and `~` in them;
+/// `'single quotes'`; `"double quotes"` holding at most `$NAME`; `$NAME` and
+/// `${NAME}`; `;`, `&`, `&&`, `||`, `|` and new lines; redirections to such
+/// words (`>`, `>>`, `<`, `2>`, `&>`, `2>&1`); and `#` comments. Everything
+/// else (here-documents, backslashes, `!`, brackets, `$(…)`, `$((…))`,
+/// other expansions) is outside it.
+fn plain(command: &str) -> Result<Vec<Vec<Word>>, &'static str> {
+    const OUTSIDE: &str = "uses shell syntax axio does not check";
+    let mut commands: Vec<Vec<Word>> = vec![Vec::new()];
+    let mut word = Word {
+        text: String::new(),
+        dynamic: false,
+    };
+    let mut in_word = false;
+    let mut operand = false;
+    let mut it = command.chars().peekable();
+    let end_word =
+        |commands: &mut Vec<Vec<Word>>, word: &mut Word, in_word: &mut bool, operand: &mut bool| {
+            if *in_word {
+                let w = std::mem::replace(
+                    word,
+                    Word {
+                        text: String::new(),
+                        dynamic: false,
+                    },
+                );
+                if !std::mem::take(operand) {
+                    commands.last_mut().expect("never empty").push(w);
+                }
+                *in_word = false;
+            }
+        };
+    // `$NAME` or `${NAME}`, after the `$`.
+    fn variable(it: &mut std::iter::Peekable<std::str::Chars>, word: &mut Word) -> bool {
+        let braced = it.peek() == Some(&'{');
+        if braced {
+            it.next();
+        }
+        let mut name = String::new();
+        while let Some(&c) = it
+            .peek()
+            .filter(|c| c.is_ascii_alphanumeric() || **c == '_')
+        {
+            name.push(c);
+            it.next();
+        }
+        if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+            return false;
+        }
+        if braced && it.next() != Some('}') {
+            return false;
+        }
+        word.text.push('$');
+        word.text.push_str(&name);
+        word.dynamic = true;
+        true
+    }
+    while let Some(c) = it.next() {
+        match c {
+            ' ' | '\t' => end_word(&mut commands, &mut word, &mut in_word, &mut operand),
+            '\n' | ';' | '|' | '&' => {
+                if c == '&' && it.peek() == Some(&'>') {
+                    it.next();
+                    if it.peek() == Some(&'>') {
+                        it.next();
+                    }
+                    end_word(&mut commands, &mut word, &mut in_word, &mut operand);
+                    operand = true;
+                    continue;
+                }
+                if (c == '|' || c == '&') && it.peek() == Some(&c) {
+                    it.next();
+                }
+                // A redirection with nothing to redirect to.
+                if operand && !in_word {
+                    return Err(OUTSIDE);
+                }
+                end_word(&mut commands, &mut word, &mut in_word, &mut operand);
+                if commands.last().is_some_and(|c| !c.is_empty()) {
+                    commands.push(Vec::new());
+                }
+            }
+            '>' | '<' => {
+                if in_word && !word.dynamic && word.text.chars().all(|d| d.is_ascii_digit()) {
+                    word.text.clear();
+                    in_word = false;
+                } else {
+                    end_word(&mut commands, &mut word, &mut in_word, &mut operand);
+                }
+                if operand {
+                    return Err(OUTSIDE);
+                }
+                match (c, it.peek()) {
+                    ('>', Some('>')) => {
+                        it.next();
+                    }
+                    ('>', Some('&')) => {
+                        it.next();
+                        if !it.next().is_some_and(|d| d.is_ascii_digit() || d == '-') {
+                            return Err(OUTSIDE);
+                        }
+                        continue;
+                    }
+                    (_, Some('<' | '>' | '(' | '&' | '|')) => return Err(OUTSIDE),
+                    _ => {}
+                }
+                operand = true;
+            }
+            '#' if !in_word => {
+                while it.peek().is_some_and(|c| *c != '\n') {
+                    it.next();
+                }
+            }
+            '\'' => {
+                in_word = true;
+                loop {
+                    match it.next() {
+                        Some('\'') => break,
+                        Some(c) => word.text.push(c),
+                        None => return Err(OUTSIDE),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match it.next() {
+                        Some('"') => break,
+                        Some('$') => {
+                            if !variable(&mut it, &mut word) {
+                                return Err(OUTSIDE);
+                            }
+                        }
+                        Some('`' | '\\' | '!') | None => return Err(OUTSIDE),
+                        Some(c) => word.text.push(c),
+                    }
+                }
+            }
+            '$' => {
+                in_word = true;
+                if !variable(&mut it, &mut word) {
+                    return Err(OUTSIDE);
+                }
+            }
+            '*' | '?' | '[' | ']' | '~' => {
+                in_word = true;
+                word.text.push(c);
+                word.dynamic = true;
+            }
+            c if c.is_ascii_alphanumeric() || "_./:=,+@%-".contains(c) => {
+                in_word = true;
+                word.text.push(c);
+            }
+            c if c.is_alphabetic() => {
+                in_word = true;
+                word.text.push(c);
+            }
+            _ => return Err(OUTSIDE),
+        }
+    }
+    if operand && !in_word {
+        return Err(OUTSIDE);
+    }
+    end_word(&mut commands, &mut word, &mut in_word, &mut operand);
+    Ok(commands)
 }
 
 /// `git log:*` is the prefix `git log` (as a whole word); anything else
@@ -960,6 +1178,58 @@ mod tests {
             Verdict::Allow,
             "no deny rules, no questions"
         );
+    }
+
+    #[test]
+    fn with_deny_rules_bypass_runs_only_plain_shell() {
+        let c = cwd();
+        let p = Permissions {
+            mode: Mode::Bypass,
+            deny: vec![rule("Bash(rm:*)")],
+            ..Permissions::default()
+        };
+        let verdict = |cmd: &str| p.decide("Bash", &bash(cmd), &c);
+        for cmd in [
+            "\"r\\\nm\" victim",
+            "cat <<-EOF\n\t'\n\tEOF\nexec rm victim",
+            "coproc rm victim",
+            "trap 'rm victim' EXIT; true",
+            "set -H; history -s 'rm victim'; !!",
+            "x='a[$(rm victim)]'; (( x ))",
+            "op=-exec; find . \"$op\" rm {} \\;",
+            "function f { rm victim; }; f",
+            "declare -i x; x='a[$(rm v)]'",
+            "read 'a[$(rm v)]' < f",
+            "unset 'a[$(rm v)]'",
+            "printf -v 'a[$(rm v)]' x",
+            "[ -v 'a[$(rm v)]' ]",
+            "hash -p /bin/rm safe; safe v",
+            "echo $[1+1]",
+            "echo \"${x@P}\"",
+            "ls\u{a0}-la",
+            "a[0]=x",
+        ] {
+            assert!(
+                !matches!(verdict(cmd), Verdict::Allow),
+                "{cmd:?} ran without asking"
+            );
+        }
+        for cmd in [
+            "[ -f Cargo.toml ]",
+            "git status",
+            "cargo test 2>&1 | tail -5",
+            "find . -name '*.rs'",
+            "for f in *.rs; do wc -l $f; done",
+            "echo \"$HOME/x\" ${HOME}",
+            "ls ~/x src/*.rs",
+            "grep -E 'a|b' src/*.rs",
+            "sed -e 's/a/{b}/' f > out.txt",
+            "npm run build && npm test || echo failed",
+            "echo hi >> log 2>/dev/null; cat < log",
+            "printf '%s\\n' x # comment",
+        ] {
+            assert_eq!(verdict(cmd), Verdict::Allow, "{cmd:?}");
+        }
     }
 
     #[test]
