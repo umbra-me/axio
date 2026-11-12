@@ -14,6 +14,59 @@ pub struct Settings {
     pub import_from_other_harnesses: Option<String>,
     /// Lets sandboxed commands reach the network.
     pub sandbox_network: Option<bool>,
+    #[serde(default)]
+    pub subagents: Subagents,
+}
+
+/// `"subagents"` in settings.json.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Subagents {
+    /// Levels below the main agent that may start sub-agents (0 by default).
+    pub nesting: Option<u32>,
+    /// Sub-agents that may run at once (4 by default).
+    pub parallel: Option<usize>,
+    /// The model a role's `fast` means.
+    pub fast_model: Option<String>,
+    /// Models the main agent may pick for roles set to `choose`.
+    pub choices: Option<Vec<String>>,
+    /// Characters of a sub-agent's answer returned to the main agent.
+    pub result_limit: Option<usize>,
+    /// Per-role changes that win over the role file.
+    #[serde(default)]
+    pub roles: std::collections::BTreeMap<String, RoleSettings>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoleSettings {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub context: Option<String>,
+    pub max_turns: Option<usize>,
+    pub sandbox: Option<String>,
+}
+
+impl Subagents {
+    /// Fields set in `over` win; roles merge field by field.
+    fn overlay(mut self, over: Subagents) -> Subagents {
+        for (name, o) in over.roles {
+            let r = self.roles.entry(name).or_default();
+            r.model = o.model.or(r.model.take());
+            r.effort = o.effort.or(r.effort.take());
+            r.context = o.context.or(r.context.take());
+            r.max_turns = o.max_turns.or(r.max_turns);
+            r.sandbox = o.sandbox.or(r.sandbox.take());
+        }
+        Subagents {
+            nesting: over.nesting.or(self.nesting),
+            parallel: over.parallel.or(self.parallel),
+            fast_model: over.fast_model.or(self.fast_model),
+            choices: over.choices.or(self.choices),
+            result_limit: over.result_limit.or(self.result_limit),
+            roles: self.roles,
+        }
+    }
 }
 
 impl Settings {
@@ -35,6 +88,7 @@ impl Settings {
                 .import_from_other_harnesses
                 .or(self.import_from_other_harnesses),
             sandbox_network: over.sandbox_network.or(self.sandbox_network),
+            subagents: self.subagents.overlay(over.subagents),
         }
     }
 
@@ -72,11 +126,16 @@ pub fn project_root(cwd: &Path) -> PathBuf {
 /// Files in a project that only load once the project is trusted, because
 /// they can make axio run programs.
 pub fn project_config(root: &Path) -> Vec<PathBuf> {
-    [".axio/settings.json", ".axio/plugins", ".mcp.json"]
-        .iter()
-        .map(|p| root.join(p))
-        .filter(|p| p.exists())
-        .collect()
+    [
+        ".axio/settings.json",
+        ".axio/plugins",
+        ".axio/agents",
+        ".mcp.json",
+    ]
+    .iter()
+    .map(|p| root.join(p))
+    .filter(|p| p.exists())
+    .collect()
 }
 
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]

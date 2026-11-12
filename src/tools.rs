@@ -24,6 +24,8 @@ pub struct Modules {
     pub background: bool,
     pub web: bool,
     pub sandbox: bool,
+    /// The Agent tool: sub-agents.
+    pub agents: bool,
 }
 
 impl Modules {
@@ -34,9 +36,10 @@ impl Modules {
                 "search" => m.search = true,
                 "plan" => m.plan = true,
                 "background" => m.background = true,
+                "agents" => m.agents = true,
                 other => {
                     return Err(format!(
-                        "unknown module {other}: known are search, plan, background"
+                        "unknown module {other}: known are search, plan, background, agents"
                     ));
                 }
             }
@@ -49,6 +52,7 @@ impl Modules {
             ("search", self.search),
             ("plan", self.plan),
             ("background", self.background),
+            ("agents", self.agents),
         ]
         .into_iter()
         .filter_map(|(n, on)| on.then_some(n))

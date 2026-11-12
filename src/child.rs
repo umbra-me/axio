@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const RESULT_LIMIT: usize = 8000;
 pub const MAX_TURNS: usize = 50;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, serde::Serialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Spec {
     /// The brief: everything the sub-agent knows about its work.
@@ -31,16 +31,32 @@ pub struct Spec {
     /// Characters of the final answer returned; the session keeps it all.
     pub result_limit: Option<usize>,
     pub session_dir: Option<PathBuf>,
+    /// Limits on the child's commands, tighter than none.
+    pub sandbox: Option<Confine>,
+    /// For `context: fork`, a transcript of the main agent's conversation.
+    pub history: Option<String>,
+}
+
+/// A sandbox for a sub-agent's Bash, Write and Edit.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Confine {
+    /// Writes only in temporary folders, no network.
+    ReadOnly,
+    /// Writes in the project and temporary folders, no network.
+    Project,
 }
 
 /// What the sub-agent sees besides its brief.
-#[derive(Deserialize, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Deserialize, serde::Serialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Sees {
     #[default]
     Brief,
     /// The brief plus AGENTS.md / CLAUDE.md.
     Rules,
+    /// The rules plus a copy of the main agent's conversation.
+    Fork,
 }
 
 /// The modules a tool list needs. Background tasks would outlive the child,
@@ -55,19 +71,34 @@ fn modules_for(tools: &[String]) -> Modules {
     }
 }
 
+/// Set when the main agent closes an attached child's input: stop the turn.
+static CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The sub-agent for `spec`, with its own session in `session_dir`, by
-/// default an `agents` folder that `-c` and `-r` do not list.
-pub fn agent(spec: &Spec, home: &Path, cwd: PathBuf) -> Result<Agent, String> {
+/// default an `agents` folder that `-c` and `-r` do not list. `host` runs
+/// its own sub-agents when its tools include Agent.
+pub fn agent(
+    spec: &Spec,
+    home: &Path,
+    cwd: PathBuf,
+    host: Option<crate::subagent::Host>,
+) -> Result<Agent, String> {
     let model = spec
         .model
         .as_deref()
         .unwrap_or(crate::provider::DEFAULT_MODEL);
     let system =
-        crate::context::sub_agent_prompt(&cwd, &spec.instructions, spec.context == Sees::Rules);
+        crate::context::sub_agent_prompt(&cwd, &spec.instructions, spec.context != Sees::Brief);
+    if spec.context == Sees::Fork && spec.history.is_none() {
+        return Err("context fork needs the main agent's conversation".into());
+    }
     let mut a = Agent::new(Model::parse(model), cwd.clone(), system);
     a.effort = spec.effort.clone();
     a.max_turns = Some(spec.max_turns.unwrap_or(MAX_TURNS));
     a.set_tools(modules_for(&spec.tools), crate::mcp::Mcp::default());
+    if let Some(h) = host {
+        a.set_subagents(h);
+    }
     a.keep_tools(&spec.tools)?;
     let dir = match &spec.session_dir {
         Some(d) => d.clone(),
@@ -113,7 +144,7 @@ impl Ui for Lines<'_> {
         self.usage.cache_write += u.cache_write;
     }
     fn interrupted(&mut self) -> bool {
-        self.gone
+        self.gone || CANCEL.load(std::sync::atomic::Ordering::Relaxed)
     }
     fn notice(&mut self, text: &str) {
         self.emit(json!({"type": "notice", "text": text}));
@@ -132,7 +163,14 @@ pub fn drive(mut agent: Agent, spec: &Spec, out: &mut dyn Write) -> bool {
     let tools = agent.tool_names();
     let model = format!("{}/{}", agent.model.provider, agent.model.id);
     lines.emit(json!({"type": "start", "model": model, "tools": tools, "session": session}));
-    let result = agent.prompt(&spec.task, &mut lines);
+    let task = match &spec.history {
+        Some(h) => format!(
+            "<conversation-so-far>\n{h}</conversation-so-far>\n\nThe conversation above is the main agent's, for context. Your task:\n\n{}",
+            spec.task
+        ),
+        None => spec.task.clone(),
+    };
+    let result = agent.prompt(&task, &mut lines);
     let u = lines.usage;
     let usage = json!({"input": u.input, "output": u.output,
                        "cacheRead": u.cache_read, "cacheWrite": u.cache_write});
@@ -160,10 +198,24 @@ pub fn drive(mut agent: Agent, spec: &Spec, out: &mut dyn Write) -> bool {
     }
 }
 
-/// `axio agent`: reads the spec from stdin and runs it.
-pub fn main() -> Result<bool, String> {
+/// `axio agent [--attached]`: reads the spec from stdin and runs it. An
+/// attached child reads one line and then stops its turn when its input
+/// closes, so the main agent can stop it, and it stops if the main agent dies.
+pub fn main(args: &[String]) -> Result<bool, String> {
+    let attached = args.iter().any(|a| a == "--attached");
     let mut text = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| e.to_string())?;
+    let mut stdin = std::io::stdin().lock();
+    if attached {
+        std::io::BufRead::read_line(&mut stdin, &mut text).map_err(|e| e.to_string())?;
+        drop(stdin);
+        std::thread::spawn(|| {
+            let mut sink = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut sink);
+            CANCEL.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    } else {
+        std::io::Read::read_to_string(&mut stdin, &mut text).map_err(|e| e.to_string())?;
+    }
     let spec: Spec = serde_json::from_str(&text).map_err(|e| format!("task spec: {e}"))?;
     let cwd = match &spec.cwd {
         Some(c) => c.clone(),
@@ -172,8 +224,36 @@ pub fn main() -> Result<bool, String> {
     let home = crate::context::home();
     // Keys and base URLs saved with `axio auth` or /login.
     crate::auth::set_home(&home);
-    let agent = agent(&spec, &home, cwd)?;
+    if let Some(c) = spec.sandbox {
+        let root = crate::settings::project_root(&cwd);
+        crate::sandbox::activate(match c {
+            Confine::ReadOnly => crate::sandbox::Sandbox::read_only(),
+            Confine::Project => crate::sandbox::Sandbox::for_project(&root, false),
+        })?;
+    }
+    let host = if spec.tools.iter().any(|t| t == "Agent") {
+        Some(nested_host(&home, &cwd)?)
+    } else {
+        None
+    };
+    let agent = agent(&spec, &home, cwd, host)?;
     Ok(drive(agent, &spec, &mut std::io::stdout().lock()))
+}
+
+/// Sub-agents of a sub-agent: the same roles and settings, read without
+/// asking about trust (only a project trusted earlier counts).
+fn nested_host(home: &Path, cwd: &Path) -> Result<crate::subagent::Host, String> {
+    let root = crate::settings::project_root(cwd);
+    let trusted =
+        crate::settings::Trust::load(home).decision(&root) == crate::settings::Decision::Trusted;
+    let project = trusted.then_some(root.as_path());
+    let settings = crate::settings::Settings::load(home, project)?;
+    let plugins: Vec<PathBuf> = crate::plugins::list(&home.join("plugins"), None)
+        .into_iter()
+        .map(|p| p.root)
+        .collect();
+    let (roles, _) = crate::roles::load(&crate::roles::dirs(home, project, &plugins));
+    crate::subagent::Host::new(roles, settings.subagents, crate::subagent::depth())
 }
 
 #[cfg(test)]
@@ -208,7 +288,11 @@ mod tests {
         let s = spec(r#"{"task": "t", "tools": [], "context": "rules", "maxTurns": 3}"#).unwrap();
         assert_eq!((s.context, s.max_turns), (Sees::Rules, Some(3)));
         assert!(spec(r#"{"task": "t", "tools": [], "maxTurn": 3}"#).is_err());
-        assert!(spec(r#"{"task": "t", "tools": [], "context": "fork"}"#).is_err());
+        let fork = spec(r#"{"task": "t", "tools": [], "context": "fork"}"#).unwrap();
+        let err = agent(&fork, &temp("fork"), temp("fork"), None)
+            .err()
+            .unwrap();
+        assert!(err.contains("fork"), "{err}");
     }
 
     #[test]
@@ -230,7 +314,7 @@ mod tests {
             dir.join("sessions").display().to_string()
         ))
         .unwrap();
-        let mut a = agent(&s, &dir, dir.clone()).unwrap();
+        let mut a = agent(&s, &dir, dir.clone(), None).unwrap();
         a.set_complete(|req, _| {
             assert!(req.system.contains("ROLE TEXT"));
             assert!(
@@ -300,7 +384,7 @@ mod tests {
     fn a_failed_task_ends_with_an_error_line() {
         let dir = temp("fail");
         let s = spec(r#"{"task": "t", "tools": ["Read"]}"#).unwrap();
-        let mut a = agent(&s, &dir, dir.clone()).unwrap();
+        let mut a = agent(&s, &dir, dir.clone(), None).unwrap();
         a.set_complete(|_, _| Err("boom".into()));
         a.max_retries = 0;
         let mut out = Vec::new();
@@ -315,7 +399,7 @@ mod tests {
     fn an_unknown_tool_is_refused_before_any_call() {
         let dir = temp("unknown");
         let s = spec(r#"{"task": "t", "tools": ["Read", "Teleport"]}"#).unwrap();
-        let err = agent(&s, &dir, dir.clone()).err().unwrap();
+        let err = agent(&s, &dir, dir.clone(), None).err().unwrap();
         assert!(err.contains("Teleport"), "{err}");
     }
 }

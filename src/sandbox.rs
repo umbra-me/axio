@@ -48,7 +48,16 @@ fn real(p: &Path) -> PathBuf {
 impl Sandbox {
     /// The project root plus the temporary folders.
     pub fn for_project(root: &Path, network: bool) -> Sandbox {
-        let mut writable = vec![real(root), real(&std::env::temp_dir())];
+        let mut s = Sandbox::read_only();
+        s.writable.insert(0, real(root));
+        s.writable.dedup();
+        s.network = network;
+        s
+    }
+
+    /// Only the temporary folders, and no network.
+    pub fn read_only() -> Sandbox {
+        let mut writable = vec![real(&std::env::temp_dir())];
         if cfg!(target_os = "macos") {
             writable.push(PathBuf::from("/private/tmp"));
             writable.push(PathBuf::from("/private/var/folders"));
@@ -56,7 +65,10 @@ impl Sandbox {
             writable.push(PathBuf::from("/tmp"));
         }
         writable.dedup();
-        Sandbox { writable, network }
+        Sandbox {
+            writable,
+            network: false,
+        }
     }
 
     /// Whether Write or Edit may change `path`. A file that does not exist
