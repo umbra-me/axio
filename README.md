@@ -302,6 +302,13 @@ Commands:
   The model browser also shows the effort under the list: Left and Right
   change it for the highlighted model.
 - `/resume` picks a saved session from this directory to continue.
+- Esc twice on an empty prompt (or `/rewind`) lists your messages in this
+  session; choosing one cuts the conversation back to just before it and
+  puts it in the prompt to edit and send again. When files were written or
+  edited since, it offers to put them back too (commands are not undone).
+  Resuming the session keeps the rewind.
+- `/history` picks any prompt you typed before, in any session, into the
+  prompt to edit.
 - A dim status line under the prompt shows the model, how full the context
   is and what the session has cost so far: an estimate from each reply's
   token counts and the published prices of Claude models (fast mode, cache
