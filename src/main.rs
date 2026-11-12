@@ -58,7 +58,7 @@ Options:
       --no-session      Do not save this session
       --profile <name>  minimal, standard (default), full or one in
                         ~/.axio/agent/profiles/ (env AXIO_PROFILE)
-      --trust           Trust this project's configuration without asking
+      --trust           Trust this project's configuration for this run
       --no-project-config  Ignore this project's .axio/ and .mcp.json
       --no-import       Skip hooks, plugins and servers from other harnesses
   -h, --help            Show this help
@@ -289,10 +289,7 @@ fn trusted_project(
     let mut trust = settings::Trust::load(home);
     let trusted = match trust.decision(&root) {
         settings::Decision::Trusted => true,
-        _ if args.trust => {
-            trust.record(home, &root, true)?;
-            true
-        }
+        _ if args.trust => true,
         settings::Decision::Declined => false,
         settings::Decision::Unknown if interactive => {
             eprintln!("This project has configuration that can make axio run programs:");
@@ -761,8 +758,10 @@ fn run() -> Result<ExitCode, String> {
     } else {
         "startup"
     };
+    let mut resumed = 0;
     if let Some(path) = resume {
         agent.messages = session::load(&path)?;
+        resumed = agent.messages.len();
         agent.session = Some(session::Session::open(path)?);
     } else if !args.no_session {
         agent.session = Some(session::Session::create(&sessions, &cwd)?);
@@ -806,7 +805,13 @@ fn run() -> Result<ExitCode, String> {
 
     let mut prompt = args.prompt.join(" ");
     if args.print || !io::stdin().is_terminal() {
-        if prompt.is_empty() || !io::stdin().is_terminal() {
+        // With a prompt argument, stdin is extra input (`git diff | axio -p
+        // "review"`); wait a little for it rather than forever.
+        let has_input = prompt.is_empty() || term::input_within(Duration::from_secs(3));
+        if !has_input {
+            eprintln!("axio: nothing arrived on stdin within 3s; going on without it");
+        }
+        if has_input && (prompt.is_empty() || !io::stdin().is_terminal()) {
             let mut piped = String::new();
             io::stdin()
                 .read_to_string(&mut piped)
@@ -848,11 +853,9 @@ fn run() -> Result<ExitCode, String> {
             )
         ))
     );
-    let resumed = if agent.messages.is_empty() {
-        String::new()
-    } else {
-        let n = agent.messages.len();
-        format!("resumed {n} message{} · ", if n == 1 { "" } else { "s" })
+    let resumed = match resumed {
+        0 => String::new(),
+        n => format!("resumed {n} message{} · ", if n == 1 { "" } else { "s" }),
     };
     eprintln!(
         "{}",
@@ -1008,6 +1011,37 @@ fn run() -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_flag_decides_one_run_only() {
+        let root = std::env::temp_dir().join(format!("axio-trust-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, project) = (root.join("home"), root.join("project"));
+        std::fs::create_dir_all(project.join(".axio")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(project.join(".axio/settings.json"), "{}").unwrap();
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let trusting = Args {
+            trust: true,
+            ..Args::default()
+        };
+        assert!(
+            trusted_project(&home, &project, &trusting, false)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            settings::Trust::load(&home).decision(&project.canonicalize().unwrap()),
+            settings::Decision::Unknown,
+            "--trust is not remembered"
+        );
+        assert!(
+            trusted_project(&home, &project, &Args::default(), false)
+                .unwrap()
+                .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn slash_input_is_a_command_only_when_it_names_one() {

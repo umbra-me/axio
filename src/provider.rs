@@ -185,9 +185,23 @@ pub(crate) fn post_stream(
     let mut body = resp.into_body();
     if !(200..300).contains(&status) {
         let text = body.read_to_string().unwrap_or_default();
-        return Err(format!("{status} from {url}{retry_after}: {}", text.trim()));
+        return Err(format!(
+            "{status} from {url}{retry_after}: {}",
+            error_body(&text)
+        ));
     }
     Ok(BufReader::new(body.into_reader()))
+}
+
+/// The API's `type: message` from a JSON error body, else the body itself.
+fn error_body(text: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+    let e = &v["error"];
+    match (e["type"].as_str(), e["message"].as_str()) {
+        (Some(t), Some(m)) => format!("{t}: {m}"),
+        (None, Some(m)) => m.to_string(),
+        _ => text.trim().to_string(),
+    }
 }
 
 /// Why a failed call is worth trying again, or `None` when it is not:
@@ -240,6 +254,24 @@ pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_errors_read_as_type_and_message() {
+        assert_eq!(
+            error_body(
+                r#"{"type":"error","error":{"type":"not_found_error","message":"model: x"},"request_id":"req_1"}"#
+            ),
+            "not_found_error: model: x"
+        );
+        assert_eq!(
+            error_body(r#"{"error":{"message":"bad key","type":"invalid_request_error"}}"#),
+            "invalid_request_error: bad key"
+        );
+        assert_eq!(
+            error_body("  <html>gateway</html> "),
+            "<html>gateway</html>"
+        );
+    }
 
     #[test]
     fn context_windows_by_model() {

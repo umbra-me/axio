@@ -293,7 +293,10 @@ impl Agent {
     pub fn start(&mut self, source: &str, ui: &mut dyn Ui) -> Result<(), String> {
         let o = self.hook(Hook::SessionStart, None, json!({"source": source}), ui);
         for c in o.context {
-            self.push(Message::user_text(c))?;
+            // Labelled so it is never mistaken for something the user typed.
+            self.push(Message::user_text(format!(
+                "[Context from a SessionStart hook:]\n{c}"
+            )))?;
         }
         Ok(())
     }
@@ -887,7 +890,8 @@ mod tests {
         assert_eq!(log.events, ["prompt blocked by a hook: secret-check"]);
 
         let mut a = agent(|req, _| {
-            assert!(req.messages[0].text().starts_with("branch: main"));
+            let first = req.messages[0].text();
+            assert!(first.starts_with('[') && first.contains("branch: main"));
             reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1)
         });
         with_hooks(
@@ -899,7 +903,12 @@ mod tests {
         );
         a.start("startup", &mut Log::default()).unwrap();
         a.prompt("hello", &mut Log::default()).unwrap();
-        assert_eq!(a.messages[0].text(), "branch: mainhelloit is Tuesday");
+        assert!(
+            a.messages[0]
+                .text()
+                .ends_with("\nbranch: mainhelloit is Tuesday")
+        );
+        assert_eq!(crate::ui::recap(&a.messages)[0], "› hello");
     }
 
     #[test]

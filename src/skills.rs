@@ -145,7 +145,7 @@ impl Library {
                 }
                 self.commands.push(Command {
                     name,
-                    description: f.get("description").cloned().unwrap_or_default(),
+                    description: command_description(&f, body),
                     template: body.to_string(),
                 });
             }
@@ -207,6 +207,23 @@ fn fill(template: &str, args: &str) -> String {
     out.trim().to_string()
 }
 
+/// The frontmatter description, or else the body's first line, so `/help`
+/// says something about every command.
+fn command_description(f: &HashMap<String, String>, body: &str) -> String {
+    if let Some(d) = f.get("description") {
+        return d.clone();
+    }
+    let first = body
+        .lines()
+        .map(|l| l.trim().trim_start_matches('#').trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    match first.char_indices().nth(77) {
+        Some((i, _)) => format!("{}…", first[..i].trim_end()),
+        None => first.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +242,21 @@ mod tests {
         assert!(f.is_empty() && body == "no frontmatter");
         let (f, _) = frontmatter("---\ndescription: |\n  line one\n  line two\n---\n");
         assert_eq!(f["description"], "line one\nline two");
+    }
+
+    #[test]
+    fn commands_without_a_description_show_their_first_line() {
+        let (f, body) =
+            frontmatter("Count the lines in $ARGUMENTS with `wc -l`.\nReply with the number.");
+        assert_eq!(
+            command_description(&f, body),
+            "Count the lines in $ARGUMENTS with `wc -l`."
+        );
+        let (f, body) = frontmatter("---\ndescription: Review a file\n---\nReview it.");
+        assert_eq!(command_description(&f, body), "Review a file");
+        let long = format!("# {}", "word ".repeat(40));
+        let (f, body) = frontmatter(&long);
+        assert!(command_description(&f, body).chars().count() <= 80);
     }
 
     #[test]

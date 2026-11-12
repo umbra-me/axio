@@ -49,7 +49,7 @@ fn body(req: &Request) -> Value {
         "tools": tools,
         "messages": req.messages.iter().map(message).collect::<Vec<_>>(),
     });
-    if let Some(effort) = req.effort {
+    if let Some(effort) = supported_effort(&req.model.id, req.effort) {
         body["output_config"] = json!({ "effort": effort });
     }
     if summarizes_thinking(&req.model.id) {
@@ -60,21 +60,38 @@ fn body(req: &Request) -> Value {
     body
 }
 
+/// Claude models from before adaptive thinking (Claude 3 and 4 up to 4.5).
+/// Anything newer, including models released after this list, counts as
+/// current.
+fn before_adaptive(id: &str) -> bool {
+    let current_4 = ["opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6"];
+    !id.starts_with("claude-")
+        || id.starts_with("claude-3")
+        || (id.contains("-4") && !current_4.iter().any(|m| id.contains(m)))
+}
+
 /// Models that take adaptive thinking with a display setting.
 fn summarizes_thinking(id: &str) -> bool {
-    [
-        "fable",
-        "mythos",
-        "opus-5",
-        "sonnet-5",
-        "haiku-5",
-        "opus-4-6",
-        "opus-4-7",
-        "opus-4-8",
-        "sonnet-4-6",
-    ]
-    .iter()
-    .any(|m| id.contains(m))
+    !before_adaptive(id)
+}
+
+/// The effort to send, if any: earlier models reject it or some levels.
+fn supported_effort<'a>(id: &str, effort: Option<&'a str>) -> Option<&'a str> {
+    let effort = effort?;
+    if id.contains("opus-4-5") {
+        return Some(if matches!(effort, "xhigh" | "max") {
+            "high"
+        } else {
+            effort
+        });
+    }
+    if before_adaptive(id) && id.starts_with("claude-") {
+        return None;
+    }
+    if id.contains("-4-6") && effort == "xhigh" {
+        return Some("high");
+    }
+    Some(effort)
 }
 
 fn message(m: &Message) -> Value {
@@ -328,6 +345,39 @@ data: {"type":"message_stop"}
                 input: json!({"command":"ls"})
             }
         );
+    }
+
+    #[test]
+    fn effort_and_thinking_follow_the_model() {
+        let sent = |id: &str, effort: &'static str| {
+            let model = crate::provider::Model::parse(&format!("anthropic/{id}"));
+            super::super::with_request(false, |r| {
+                let b = body(&Request {
+                    model: &model,
+                    effort: Some(effort),
+                    ..*r
+                });
+                (
+                    b["output_config"]["effort"].as_str().map(str::to_string),
+                    b["thinking"]["type"].as_str().map(str::to_string),
+                )
+            })
+        };
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(sent("claude-haiku-4-5", "high"), (None, None));
+        assert_eq!(sent("claude-sonnet-4-5", "low"), (None, None));
+        assert_eq!(sent("claude-3-7-sonnet-latest", "low"), (None, None));
+        assert_eq!(sent("claude-opus-4-5", "max"), (s("high"), None));
+        assert_eq!(sent("claude-opus-4-5", "low"), (s("low"), None));
+        assert_eq!(sent("claude-opus-4-6", "xhigh"), (s("high"), s("adaptive")));
+        assert_eq!(sent("claude-sonnet-4-6", "max"), (s("max"), s("adaptive")));
+        assert_eq!(
+            sent("claude-opus-5-5", "xhigh"),
+            (s("xhigh"), s("adaptive"))
+        );
+        assert_eq!(sent("claude-haiku-5-5", "low"), (s("low"), s("adaptive")));
+        // A model newer than this list is treated as current.
+        assert_eq!(sent("claude-opus-6", "xhigh"), (s("xhigh"), s("adaptive")));
     }
 
     #[test]
