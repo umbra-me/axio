@@ -750,7 +750,14 @@ pub fn tool_lines(
             .collect(),
         "Grep" | "Glob" => {
             let n = count(text);
-            let mut out: Vec<String> = text.lines().take(3).map(|l| paint(DIM, l)).collect();
+            let prefix = std::env::current_dir()
+                .map(|d| format!("{}/", d.display()))
+                .unwrap_or_default();
+            let mut out: Vec<String> = text
+                .lines()
+                .take(3)
+                .map(|l| paint(DIM, l.strip_prefix(prefix.as_str()).unwrap_or(l)))
+                .collect();
             if n > 3 {
                 out.push(paint(DIM, &format!("… {} in all", plural(n, "result"))));
             }
@@ -1105,6 +1112,23 @@ mod tests {
             content: vec![text("old ask"), text("older fix"), text(&summary)],
         }];
         assert_eq!(recap(&just_compacted), ["› older fix"]);
+    }
+
+    #[test]
+    fn search_results_show_paths_from_the_working_directory() {
+        let cwd = std::env::current_dir().unwrap();
+        let text = format!(
+            "{0}/src/config.rs:1:pub fn parse_config\n{0}/src/main.rs\n/etc/hosts",
+            cwd.display()
+        );
+        assert_eq!(
+            tool_lines("Grep", &json!({}), &Ok(text), None, false),
+            [
+                "src/config.rs:1:pub fn parse_config",
+                "src/main.rs",
+                "/etc/hosts"
+            ]
+        );
     }
 
     #[test]

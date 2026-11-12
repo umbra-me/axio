@@ -368,6 +368,43 @@ fn ioctl_width() -> Option<usize> {
     None
 }
 
+/// Whether stdin has input (or its end) within `wait`. A pipe nobody writes
+/// to, such as an open socket from a task runner, would otherwise block a
+/// read forever.
+#[cfg(not(unix))]
+pub fn input_within(_wait: std::time::Duration) -> bool {
+    true
+}
+
+/// Whether stdin has input (or its end) within `wait`. A pipe nobody writes
+/// to, such as an open socket from a task runner, would otherwise block a
+/// read forever.
+#[cfg(unix)]
+pub fn input_within(wait: std::time::Duration) -> bool {
+    #[repr(C)]
+    struct PollFd {
+        fd: i32,
+        events: i16,
+        revents: i16,
+    }
+    #[cfg(target_os = "linux")]
+    type Nfds = std::ffi::c_ulong;
+    #[cfg(not(target_os = "linux"))]
+    type Nfds = std::ffi::c_uint;
+    unsafe extern "C" {
+        fn poll(fds: *mut PollFd, nfds: Nfds, timeout: i32) -> i32;
+    }
+    const POLLIN: i16 = 1;
+    let mut fd = PollFd {
+        fd: 0,
+        events: POLLIN,
+        revents: 0,
+    };
+    let ms = i32::try_from(wait.as_millis()).unwrap_or(i32::MAX);
+    // SAFETY: one valid pollfd for the length of the call.
+    unsafe { poll(&mut fd, 1, ms) > 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
