@@ -958,7 +958,11 @@ impl Ui for Term {
         self.unspin();
         self.tool = None;
         let line = match result {
-            Ok(_) => format!("{} {label} {}", self.paint(GREEN, "✓"), self.dim(summary)),
+            Ok(_) => format!(
+                "{} {label} {}",
+                self.paint(GREEN, "✓"),
+                self.dim(&format!("· {summary}"))
+            ),
             Err(e) => format!(
                 "{} {label} {}",
                 self.paint(RED, "✗"),
