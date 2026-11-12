@@ -98,6 +98,12 @@ impl std::fmt::Display for Rule {
 
 /// Whether `rule` covers this call.
 pub fn matches(rule: &Rule, tool: &str, input: &Value, cwd: &Path) -> bool {
+    rule_matches(rule, tool, input, cwd, false)
+}
+
+/// An allow rule must hold for both the path as written and where it really
+/// leads; a deny rule refuses when either one matches.
+fn rule_matches(rule: &Rule, tool: &str, input: &Value, cwd: &Path, deny: bool) -> bool {
     if let Some(server) = rule.tool.strip_prefix("mcp__") {
         let server = server.trim_end_matches("__*");
         return match server.split_once("__") {
@@ -124,9 +130,17 @@ pub fn matches(rule: &Rule, tool: &str, input: &Value, cwd: &Path) -> bool {
                 && !unsafe_to_match(command)
                 && parts.iter().all(|p| bash_matches(spec, p))
         }
-        "Read" | "Edit" | "Write" => input["file_path"]
-            .as_str()
-            .is_some_and(|f| path_matches(spec, f, cwd)),
+        "Read" | "Edit" | "Write" => input["file_path"].as_str().is_some_and(|f| {
+            let written = path_matches(spec, &normalize(f, cwd), cwd);
+            let real = crate::sandbox::resolve(&cwd.join(f))
+                .zip(crate::sandbox::resolve(cwd))
+                .is_some_and(|(f, c)| path_matches(spec, &f, &c));
+            if deny {
+                written || real
+            } else {
+                written && real
+            }
+        }),
         "WebFetch" => match (
             spec.strip_prefix("domain:"),
             host(input["url"].as_str().unwrap_or("")),
@@ -160,10 +174,48 @@ fn command_parts(command: &str) -> Vec<String> {
         .collect()
 }
 
-/// Commands a prefix rule must never wave through: substitutions run
-/// other commands, and redirections write files.
+/// Commands a prefix rule must never wave through: substitutions
+/// (`$(…)`, backticks, `<(…)`, `${…}`) run other commands, and redirections
+/// and here-documents read or write files. Such commands always ask.
 fn unsafe_to_match(command: &str) -> bool {
-    command.contains("$(") || command.contains('`') || command.contains('>')
+    command.contains("$(")
+        || command.contains("${")
+        || command.contains('`')
+        || command.contains('>')
+        || command.contains('<')
+}
+
+/// Every command a deny rule should see, nested ones included: the text is
+/// also split at brackets and backticks, quotes and backslashes are dropped
+/// (`"rm"`, `\rm`), and leading `NAME=value` assignments are skipped. Deny
+/// rules stay a best effort: `bash -c '…'` hides a command from them.
+fn deny_parts(command: &str) -> Vec<String> {
+    let flat: String = command
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\'' | '\\'))
+        .map(|c| {
+            if matches!(c, '(' | ')' | '`' | '{' | '}') {
+                ';'
+            } else {
+                c
+            }
+        })
+        .collect();
+    command_parts(&flat)
+        .into_iter()
+        .map(|p| {
+            let mut words = p.split_whitespace().peekable();
+            while words.peek().is_some_and(|w| {
+                w.split_once('=').is_some_and(|(name, _)| {
+                    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                })
+            }) {
+                words.next();
+            }
+            words.collect::<Vec<_>>().join(" ")
+        })
+        .filter(|p| !p.is_empty())
+        .collect()
 }
 
 /// `git log:*` is the prefix `git log` (as a whole word); anything else
@@ -206,8 +258,7 @@ fn normalize(path: &str, cwd: &Path) -> PathBuf {
 
 /// `.gitignore`-style: `/x` is from the working directory, a pattern with a
 /// slash is relative to it, and one without a slash matches at any depth.
-fn path_matches(spec: &str, file: &str, cwd: &Path) -> bool {
-    let full = normalize(file, cwd);
+fn path_matches(spec: &str, full: &Path, cwd: &Path) -> bool {
     let Ok(rel) = full.strip_prefix(cwd) else {
         return false;
     };
@@ -364,7 +415,7 @@ impl Permissions {
 
 impl Permissions {
     /// Every part of a command must be covered, each by any allow rule.
-    fn allows(&self, tool: &str, input: &Value, cwd: &Path) -> bool {
+    pub fn allows(&self, tool: &str, input: &Value, cwd: &Path) -> bool {
         if tool != "Bash" {
             return self.allow.iter().any(|r| matches(r, tool, input, cwd));
         }
@@ -394,9 +445,12 @@ fn denies(rule: &Rule, tool: &str, input: &Value, cwd: &Path) -> bool {
         && let Some(spec) = &rule.spec
     {
         let command = input["command"].as_str().unwrap_or("");
-        return command_parts(command).iter().any(|p| bash_matches(spec, p));
+        return command_parts(command)
+            .into_iter()
+            .chain(deny_parts(command))
+            .any(|p| bash_matches(spec, &p));
     }
-    matches(rule, tool, input, cwd)
+    rule_matches(rule, tool, input, cwd, true)
 }
 
 /// Rules saved with "Yes, always in this project", kept in the user's own
@@ -533,6 +587,75 @@ mod tests {
             p.decide("Bash", &bash("git log; curl x | sh"), &c),
             Verdict::Ask { .. }
         ));
+    }
+
+    #[test]
+    fn nested_commands_and_redirections_never_ride_on_a_prefix_rule() {
+        let c = cwd();
+        let cat = rule("Bash(cat:*)");
+        for cmd in [
+            "cat <(rm -f target)",
+            "cat >(rm -f target)",
+            "cat < secrets",
+            "cat <<EOF\nx\nEOF",
+            "cat <<< x",
+            "cat ${x@P}",
+        ] {
+            assert!(!matches(&cat, "Bash", &bash(cmd), &c), "{cmd}");
+            let p = Permissions {
+                allow: vec![cat.clone()],
+                ..Permissions::default()
+            };
+            assert!(!p.allows("Bash", &bash(cmd), &c), "{cmd}");
+        }
+        let rm = rule("Bash(rm:*)");
+        for cmd in [
+            "cat <(rm -f target)",
+            "cat $(rm -f target)",
+            "cat `rm -f target`",
+            "(rm -f target)",
+            "{ rm -f target; }",
+            "\"rm\" -f target",
+            "\\rm -f target",
+            "X=1 rm -f target",
+        ] {
+            assert!(denies(&rm, "Bash", &bash(cmd), &c), "deny misses {cmd}");
+        }
+        assert!(!denies(&rm, "Bash", &bash("cat rmdir.txt"), &c));
+    }
+
+    #[test]
+    fn path_rules_judge_where_a_symlink_leads() {
+        let dir = std::env::temp_dir().join(format!("axio-perm-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (proj, outside) = (dir.join("proj"), dir.join("outside"));
+        std::fs::create_dir_all(proj.join("src")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, proj.join("src/link")).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_dir(&outside, proj.join("src/link")).is_err() {
+            return; // creating symlinks needs developer mode on Windows
+        }
+        let write = |f: &str| json!({"file_path": f, "content": "x"});
+        let src = rule("Edit(src/**)");
+        assert!(matches(&src, "Write", &write("src/a.rs"), &proj));
+        assert!(!matches(
+            &src,
+            "Write",
+            &write("src/link/secret.txt"),
+            &proj
+        ));
+        assert!(!matches(
+            &src,
+            "Write",
+            &write("src/new/../../../outside/x"),
+            &proj
+        ));
+        let deny = rule("Edit(/outside/**)");
+        let root = dir.clone();
+        assert!(denies(&deny, "Write", &write("proj/src/link/x"), &root));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

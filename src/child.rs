@@ -406,7 +406,8 @@ pub fn main(args: &[String]) -> Result<bool, String> {
 }
 
 /// Where no sandbox exists, a read-only role keeps its promise by rule:
-/// file changes are refused and every command needs the user's yes. A
+/// file changes are refused and every command needs the user's yes, even
+/// one the main agent's rules allow. A
 /// project sandbox only stops writes outside the project, which the main
 /// agent's own permissions already govern, so it adds nothing.
 fn without_sandbox(
@@ -417,6 +418,7 @@ fn without_sandbox(
     if c == Confine::ReadOnly {
         p.deny
             .extend(["Edit", "Write"].into_iter().filter_map(Rule::parse));
+        p.allow.retain(|r| r.tool != "Bash");
         if matches!(p.mode, Mode::Bypass | Mode::AcceptEdits) {
             p.mode = Mode::Default;
         }
@@ -496,6 +498,19 @@ mod tests {
             without_sandbox(plan.clone(), Confine::ReadOnly).mode,
             Mode::Plan,
             "stricter modes stay"
+        );
+        let allowed = Permissions {
+            allow: vec![crate::permissions::Rule::parse("Bash(cargo test:*)").unwrap()],
+            ..Permissions::default()
+        };
+        let p = without_sandbox(allowed, Confine::ReadOnly);
+        assert!(
+            !p.allows(
+                "Bash",
+                &serde_json::json!({"command": "cargo test"}),
+                std::path::Path::new("/w")
+            ),
+            "every command asks, whatever the parent allowed"
         );
         let open = without_sandbox(Permissions::default(), Confine::Project);
         assert!(

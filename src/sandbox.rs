@@ -19,6 +19,29 @@ pub struct Sandbox {
 
 static ACTIVE: OnceLock<Sandbox> = OnceLock::new();
 
+/// Where `path` really leads: its nearest existing ancestor with symlinks
+/// resolved, then the part that does not exist yet. `None` when that part
+/// has a `..`, since the filesystem resolves it only once the folders exist,
+/// possibly somewhere else.
+pub fn resolve(path: &Path) -> Option<PathBuf> {
+    let mut probe = path.to_path_buf();
+    loop {
+        if let Ok(mut out) = probe.canonicalize() {
+            for c in path.strip_prefix(&probe).ok()?.components() {
+                match c {
+                    std::path::Component::Normal(n) => out.push(n),
+                    std::path::Component::CurDir => {}
+                    _ => return None,
+                }
+            }
+            return Some(out);
+        }
+        if !probe.pop() {
+            return None;
+        }
+    }
+}
+
 /// Whether this platform has a sandbox at all (Windows has none).
 pub fn supported() -> bool {
     cfg!(any(target_os = "macos", target_os = "linux"))
@@ -85,14 +108,8 @@ impl Sandbox {
     /// Whether Write or Edit may change `path`. A file that does not exist
     /// yet is judged by its nearest existing parent.
     pub fn allows_write(&self, path: &Path) -> bool {
-        let mut probe = path.to_path_buf();
-        let resolved = loop {
-            if let Ok(r) = probe.canonicalize() {
-                break r.join(path.strip_prefix(&probe).unwrap_or(Path::new("")));
-            }
-            if !probe.pop() {
-                return false;
-            }
+        let Some(resolved) = resolve(path) else {
+            return false;
         };
         self.writable.iter().any(|w| resolved.starts_with(w))
             && !self.protected.iter().any(|p| resolved.starts_with(p))
@@ -262,6 +279,24 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_missing_folder_then_dotdot_cannot_leave_the_project() {
+        let d = project("dotdot");
+        let proj = d.join("project");
+        std::fs::create_dir_all(&proj).unwrap();
+        let s = Sandbox {
+            writable: vec![real(&proj)],
+            network: false,
+            protected: vec![],
+        };
+        assert!(s.allows_write(&proj.join("new/file.txt")));
+        assert!(!s.allows_write(&proj.join("new/../../escaped.txt")));
+        assert!(
+            !s.allows_write(&proj.join("new/../file.txt")),
+            "fails closed"
+        );
     }
 
     #[cfg(target_os = "macos")]
