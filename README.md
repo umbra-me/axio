@@ -315,6 +315,9 @@ Commands:
   reads and writes, side jobs and sub-agents included). A ChatGPT sign-in
   shows "ChatGPT plan"; models without a known price show their tokens.
   `/status` repeats it.
+- The line after each turn shows the output speed (output tokens a second,
+  timed from each reply's first token to its end) and the wait for the first
+  token; `/status` gives the session average.
 - `/context` shows what fills the context window: a bar, then the system
   prompt, AGENTS.md, skills list, MCP guidance, built-in tools, the Agent
   tool, each MCP server's tools and the messages, with the free space and

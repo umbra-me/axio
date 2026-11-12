@@ -266,6 +266,15 @@ fn status_lines(
             ui::tokens(term.total_out),
             cost_label(agent)
         ),
+        format!(
+            "speed      {}",
+            agent
+                .session_speed()
+                .label()
+                .map_or("not measured yet".to_string(), |l| format!(
+                    "{l} (session average)"
+                ))
+        ),
         format!("MCP        {mcp}"),
         format!(
             "sub-agents {}",
@@ -1522,10 +1531,11 @@ fn run() -> Result<ExitCode, String> {
                         eprintln!("{}", term.paint("\x1b[31m", &format!("axio: {e}")));
                     }
                 }
-                eprintln!(
-                    "{}",
-                    term.status(agent.context, agent.model.context_window())
-                );
+                let mut line = term.status(agent.context, agent.model.context_window());
+                if let Some(speed) = agent.turn_speed().label() {
+                    line.push_str(&term.dim(&format!(" · {speed}")));
+                }
+                eprintln!("{line}");
                 let left = term.take_queued();
                 if !left.is_empty() {
                     prompt = left.join("\n");
