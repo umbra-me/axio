@@ -33,6 +33,8 @@ pub struct ServerConfig {
     /// Set for servers reached over streamable HTTP instead of a process.
     pub url: Option<String>,
     pub headers: Vec<(String, String)>,
+    /// The older HTTP+SSE transport: `url` is the event stream.
+    pub sse: bool,
 }
 
 /// `${VAR}` from the environment, so tokens stay out of config files.
@@ -92,7 +94,7 @@ impl Config {
                 "stdio"
             });
             let url = match kind {
-                "http" | "streamable-http" => match s["url"].as_str() {
+                "http" | "streamable-http" | "sse" => match s["url"].as_str() {
                     Some(u) => Some(expand_env(&expand(u, root))),
                     None => {
                         self.skipped
@@ -102,13 +104,10 @@ impl Config {
                 },
                 "stdio" => None,
                 other => {
-                    let why = if other == "sse" {
-                        "the older SSE transport is not supported; use the server's streamable HTTP endpoint".to_string()
-                    } else {
-                        format!("unknown transport {other}")
-                    };
-                    self.skipped
-                        .push(format!("{}: {name}: {why}", source.display()));
+                    self.skipped.push(format!(
+                        "{}: {name}: unknown transport {other}",
+                        source.display()
+                    ));
                     continue;
                 }
             };
@@ -151,6 +150,7 @@ impl Config {
                     .filter_map(|(k, v)| Some((k.clone(), expand_env(v.as_str()?))))
                     .collect(),
                 url,
+                sse: kind == "sse",
             });
         }
     }
@@ -288,8 +288,10 @@ fn sign_in_hint(name: &str) -> String {
     format!("{SIGN_IN}: run `axio mcp login {name}` (or set an Authorization header)")
 }
 
+/// `token_url` is the configured server URL a stored sign-in belongs to.
 fn http_post(
     url: &str,
+    token_url: &str,
     headers: &[(String, String)],
     session: &Mutex<Option<String>>,
     initialized: bool,
@@ -326,12 +328,12 @@ fn http_post(
     let token = if own {
         None
     } else {
-        crate::oauth::bearer(url, false)
+        crate::oauth::bearer(token_url, false)
     };
     let mut resp = send(token.as_deref())?;
     if resp.status().as_u16() == 401
         && token.is_some()
-        && let Some(fresh) = crate::oauth::bearer(url, true)
+        && let Some(fresh) = crate::oauth::bearer(token_url, true)
     {
         resp = send(Some(&fresh))?;
     }
@@ -375,7 +377,7 @@ impl HttpConn {
         let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         std::thread::spawn(move || {
             let result = (|| {
-                let resp = http_post(&url, &headers, &session, initialized, &msg)?;
+                let resp = http_post(&url, &url, &headers, &session, initialized, &msg)?;
                 let kind = resp
                     .headers()
                     .get("content-type")
@@ -403,7 +405,7 @@ impl HttpConn {
                     };
                     if m.get("method").is_some() {
                         if let Some(reply) = answer_server_request(&m, &cwd) {
-                            http_post(&url, &headers, &session, true, &reply)?;
+                            http_post(&url, &url, &headers, &session, true, &reply)?;
                         }
                         return Ok(true);
                     }
@@ -425,6 +427,7 @@ impl HttpConn {
         let msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
         http_post(
             &self.url,
+            &self.url,
             &self.headers,
             &self.session,
             self.initialized,
@@ -434,14 +437,189 @@ impl HttpConn {
     }
 }
 
+/// The older HTTP+SSE transport: a GET opens an event stream whose first
+/// event names the endpoint to POST messages to; replies, and the server's
+/// own requests, come back as events on that stream.
+struct SseConn {
+    url: String,
+    endpoint: String,
+    headers: Vec<(String, String)>,
+    session: Arc<Mutex<Option<String>>>,
+    pending: Pending,
+    open: Arc<std::sync::atomic::AtomicBool>,
+    initialized: bool,
+    next_id: u64,
+}
+
+/// `endpoint` as an absolute URL: absolute already, from the root of
+/// `base`'s host, or next to `base`.
+fn resolve_url(base: &str, endpoint: &str) -> String {
+    if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        return endpoint.to_string();
+    }
+    let host_end = base
+        .find("://")
+        .and_then(|i| base[i + 3..].find('/').map(|j| i + 3 + j))
+        .unwrap_or(base.len());
+    if endpoint.starts_with('/') {
+        format!("{}{endpoint}", &base[..host_end])
+    } else {
+        let dir = base[..base
+            .rfind('/')
+            .filter(|&i| i >= host_end)
+            .unwrap_or(base.len())]
+            .to_string();
+        format!("{dir}/{endpoint}")
+    }
+}
+
+impl SseConn {
+    fn open(cfg: &ServerConfig, url: &str, cwd: &Path) -> Result<SseConn, String> {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let own = cfg
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+        let get = |token: Option<&str>| {
+            let mut req = agent.get(url).header("accept", "text/event-stream");
+            for (k, v) in &cfg.headers {
+                req = req.header(k, v);
+            }
+            if let Some(t) = token {
+                req = req.header("authorization", &format!("Bearer {t}"));
+            }
+            req.call()
+                .map_err(|e| format!("could not reach {url}: {e}"))
+        };
+        let token = if own {
+            None
+        } else {
+            crate::oauth::bearer(url, false)
+        };
+        let mut resp = get(token.as_deref())?;
+        if resp.status().as_u16() == 401
+            && token.is_some()
+            && let Some(fresh) = crate::oauth::bearer(url, true)
+        {
+            resp = get(Some(&fresh))?;
+        }
+        match resp.status().as_u16() {
+            200..=299 => {}
+            401 | 403 => return Err(SIGN_IN.into()),
+            code => return Err(format!("{url} returned {code}")),
+        }
+        let pending: Pending = Arc::default();
+        let open = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (endpoint_tx, endpoint_rx) = mpsc::channel();
+        let (p, alive, base, headers, cwd) = (
+            pending.clone(),
+            open.clone(),
+            url.to_string(),
+            cfg.headers.clone(),
+            cwd.to_path_buf(),
+        );
+        std::thread::spawn(move || {
+            let mut endpoint: Option<String> = None;
+            let reader = BufReader::new(resp.into_body().into_reader());
+            let session = Mutex::new(None);
+            let _ = crate::sse::read(reader, |data| {
+                let Ok(msg) = serde_json::from_str::<Value>(data) else {
+                    // The first event is the endpoint, a URL rather than JSON.
+                    if endpoint.is_none() {
+                        let e = resolve_url(&base, data.trim());
+                        endpoint = Some(e.clone());
+                        let _ = endpoint_tx.send(e);
+                    }
+                    return Ok(true);
+                };
+                if msg.get("method").is_some() {
+                    if let (Some(reply), Some(e)) = (answer_server_request(&msg, &cwd), &endpoint) {
+                        let _ = http_post(e, &base, &headers, &session, true, &reply);
+                    }
+                    return Ok(true);
+                }
+                if let Some(id) = msg["id"].as_u64() {
+                    let result = match msg.get("error") {
+                        Some(e) => Err(e["message"].as_str().unwrap_or("error").to_string()),
+                        None => Ok(msg["result"].clone()),
+                    };
+                    if let Some(tx) = p.lock().ok().and_then(|mut p| p.remove(&id)) {
+                        let _ = tx.send(result);
+                    }
+                }
+                Ok(true)
+            });
+            alive.store(false, std::sync::atomic::Ordering::Relaxed);
+            if let Ok(mut p) = p.lock() {
+                for (_, tx) in p.drain() {
+                    let _ = tx.send(Err("the server closed its event stream".into()));
+                }
+            }
+        });
+        let endpoint = endpoint_rx
+            .recv_timeout(START_TIMEOUT)
+            .map_err(|_| format!("{url} did not say where to send messages"))?;
+        Ok(SseConn {
+            url: url.to_string(),
+            endpoint,
+            headers: cfg.headers.clone(),
+            session: Arc::default(),
+            pending,
+            open,
+            initialized: false,
+            next_id: 1,
+        })
+    }
+
+    fn post(&self, msg: &Value) -> Result<(), String> {
+        http_post(
+            &self.endpoint,
+            &self.url,
+            &self.headers,
+            &self.session,
+            self.initialized,
+            msg,
+        )
+        .map(|_| ())
+    }
+
+    fn start(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<(u64, Receiver<Result<Value, String>>), String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let (tx, rx) = mpsc::channel();
+        self.pending.lock().map_err(|_| "poisoned")?.insert(id, tx);
+        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        if let Err(e) = self.post(&msg) {
+            if let Ok(mut p) = self.pending.lock() {
+                p.remove(&id);
+            }
+            return Err(e);
+        }
+        Ok((id, rx))
+    }
+
+    fn notify(&self, method: &str, params: Value) -> Result<(), String> {
+        self.post(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
+    }
+}
+
 enum Connection {
     Stdio(StdioConn),
     Http(HttpConn),
+    Sse(SseConn),
 }
 
 impl Connection {
     fn open(cfg: &ServerConfig, cwd: &Path) -> Result<Connection, String> {
         Ok(match &cfg.url {
+            Some(url) if cfg.sse => Connection::Sse(SseConn::open(cfg, url, cwd)?),
             Some(url) => Connection::Http(HttpConn {
                 url: url.clone(),
                 headers: cfg.headers.clone(),
@@ -462,6 +640,7 @@ impl Connection {
         match self {
             Connection::Stdio(c) => c.start(method, params),
             Connection::Http(c) => c.start(method, params),
+            Connection::Sse(c) => c.start(method, params),
         }
     }
 
@@ -475,13 +654,16 @@ impl Connection {
         match self {
             Connection::Stdio(c) => c.notify(method, params),
             Connection::Http(c) => c.notify(method, params),
+            Connection::Sse(c) => c.notify(method, params),
         }
     }
 
     /// After `initialize`: HTTP requests then carry the protocol version.
     fn initialized(&mut self) {
-        if let Connection::Http(c) = self {
-            c.initialized = true;
+        match self {
+            Connection::Http(c) => c.initialized = true,
+            Connection::Sse(c) => c.initialized = true,
+            Connection::Stdio(_) => {}
         }
     }
 
@@ -489,14 +671,18 @@ impl Connection {
         match self {
             Connection::Stdio(c) => matches!(c.child.try_wait(), Ok(None)),
             Connection::Http(_) => true,
+            Connection::Sse(c) => c.open.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
     /// Stops waiting for a request the user cancelled.
     fn forget(&self, id: u64) {
-        if let Connection::Stdio(c) = self
-            && let Ok(mut p) = c.pending.lock()
-        {
+        let pending = match self {
+            Connection::Stdio(c) => &c.pending,
+            Connection::Sse(c) => &c.pending,
+            Connection::Http(_) => return,
+        };
+        if let Ok(mut p) = pending.lock() {
             p.remove(&id);
         }
     }
@@ -960,23 +1146,127 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["missing", "remote", "stub server"]
+            ["missing", "old", "remote", "stub server"]
         );
-        assert_eq!(c.servers[1].url.as_deref(), Some("http://127.0.0.1:9/mcp"));
+        assert_eq!(c.servers[1].url.as_deref(), Some("http://127.0.0.1:9/sse"));
+        assert!(c.servers[1].sse && !c.servers[2].sse);
+        assert_eq!(c.servers[2].url.as_deref(), Some("http://127.0.0.1:9/mcp"));
+        assert!(c.skipped.is_empty(), "{:?}", c.skipped);
+    }
+
+    /// An MCP server on the older HTTP+SSE transport: GET opens the event
+    /// stream, whose first event names the endpoint for POSTs; replies come
+    /// back on the stream.
+    fn sse_server() -> String {
+        use std::net::{TcpListener, TcpStream};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let stream: Arc<Mutex<Option<TcpStream>>> = Arc::default();
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let stream = stream.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(conn.try_clone().unwrap());
+                    let mut first = String::new();
+                    reader.read_line(&mut first).unwrap();
+                    let mut length = 0;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).unwrap();
+                        if line == "\r\n" || line.is_empty() {
+                            break;
+                        }
+                        if let Some(v) = line.to_lowercase().strip_prefix("content-length:") {
+                            length = v.trim().parse().unwrap();
+                        }
+                    }
+                    let mut conn = conn;
+                    if first.starts_with("GET /sse ") {
+                        write!(conn, "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\nevent: endpoint\ndata: /messages?sessionId=abc\n\n").unwrap();
+                        conn.flush().unwrap();
+                        *stream.lock().unwrap() = Some(conn);
+                        return;
+                    }
+                    assert!(
+                        first.starts_with("POST /messages?sessionId=abc "),
+                        "{first}"
+                    );
+                    let mut body = vec![0; length];
+                    std::io::Read::read_exact(&mut reader, &mut body).unwrap();
+                    write!(
+                        conn,
+                        "HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    let msg: Value = serde_json::from_slice(&body).unwrap();
+                    let Some(id) = msg.get("id") else { return };
+                    let result = match msg["method"].as_str().unwrap_or("") {
+                        "initialize" => {
+                            json!({"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "old"}})
+                        }
+                        "tools/list" => {
+                            json!({"tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}]})
+                        }
+                        "tools/call" => {
+                            json!({"content": [{"type": "text", "text": format!("echo: {}", msg["params"]["arguments"]["text"].as_str().unwrap_or(""))}]})
+                        }
+                        _ => return,
+                    };
+                    let reply = json!({"jsonrpc": "2.0", "id": id, "result": result});
+                    let mut s = stream.lock().unwrap();
+                    let s = s.as_mut().expect("the stream is open");
+                    write!(s, "event: message\ndata: {reply}\n\n").unwrap();
+                    s.flush().unwrap();
+                });
+            }
+        });
+        format!("{base}/sse")
+    }
+
+    #[test]
+    fn sse_endpoints_resolve_against_the_stream_url() {
+        let base = "https://h.example:8443/v1/sse?x=1";
         assert_eq!(
-            c.skipped,
-            [
-                "mcp.json: old: the older SSE transport is not supported; use the server's streamable HTTP endpoint"
-            ]
+            resolve_url(base, "/messages?s=1"),
+            "https://h.example:8443/messages?s=1"
+        );
+        assert_eq!(
+            resolve_url(base, "messages?s=1"),
+            "https://h.example:8443/v1/messages?s=1"
+        );
+        assert_eq!(resolve_url(base, "http://o/m"), "http://o/m");
+        assert_eq!(resolve_url("http://h", "/m"), "http://h/m");
+    }
+
+    #[test]
+    fn speaks_the_older_sse_transport() {
+        let mut c = Config::default();
+        c.add(
+            &json!({"mcpServers": {"old": {"type": "sse", "url": sse_server()}}}),
+            None,
+            Path::new("mcp.json"),
+        );
+        let mcp = Mcp::start(&c, &std::env::temp_dir());
+        assert!(mcp.failed.is_empty(), "{:?}", mcp.failed);
+        let names: Vec<&str> = mcp.specs.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["mcp__old__echo"]);
+        assert_eq!(
+            mcp.call_text("mcp__old__echo", &json!({"text": "hi"}), &mut || false),
+            Ok("echo: hi".into())
         );
     }
 
     #[test]
     fn lists_and_calls_tools_across_pages() {
         let mcp = Mcp::start(&config(), &std::env::temp_dir());
-        assert_eq!(mcp.failed.len(), 2);
+        assert_eq!(mcp.failed.len(), 3);
         assert!(mcp.failed[0].starts_with("missing: could not start"));
-        assert!(mcp.failed[1].starts_with("remote: could not reach"));
+        assert!(
+            mcp.failed[1].starts_with("old: could not reach"),
+            "{:?}",
+            mcp.failed
+        );
+        assert!(mcp.failed[2].starts_with("remote: could not reach"));
         let names: Vec<&str> = mcp.specs.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,

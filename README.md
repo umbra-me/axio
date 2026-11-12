@@ -220,6 +220,10 @@ axio starts MCP servers listed in `~/.axio/agent/mcp.json`, in plugins'
 {"mcpServers": {"github": {"command": "github-mcp", "args": ["stdio"], "env": {"TOKEN": "…"}}}}
 ```
 
+Remote servers use streamable HTTP (`"type": "http"`, or just a `url`) or the
+older HTTP+SSE transport (`"type": "sse"`), with `headers` and sign-ins
+(`axio mcp login <name>`) working the same for both.
+
 Their tools appear as `mcp__<server>__<tool>`, so hooks can match them with
 `mcp__github__.*`. Local servers run over stdio for the session; a server that
 exits is restarted on its next call, and Esc cancels a running call. `timeout`
@@ -246,8 +250,7 @@ axio mcp logout tracker
 
 Sign-in follows the MCP authorization spec (protected-resource discovery,
 dynamic client registration, PKCE, resource indicators). Tokens are kept in
-the `mcp` section of `~/.axio/agent/auth.json`. The older SSE transport
-is skipped.
+the `mcp` section of `~/.axio/agent/auth.json`.
 
 ## Keys
 
