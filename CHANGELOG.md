@@ -69,6 +69,11 @@ under Unreleased.
 - `compactModel`, and an optional `prompt` for WebFetch answered by the fast
   model (#58).
 
+**Models**
+- Fast mode as an opt-in toggle on models that have it: `/fast`,
+  `"fastMode"` in settings, the price shown when it turns on, standard speed
+  when the provider refuses it (#66).
+
 **Testing**
 - Terminal checks in `e2e/` (`sh e2e/all.sh target/release/axio`) and a Linux
   container run (`sh e2e/linux.sh`) (#59).
@@ -81,7 +86,8 @@ under Unreleased.
   default; a smaller model is opt-in per role (#64).
 
 ### Removed
-- Fast mode, added in #19, was removed in #20.
+- Fast mode, added in #19, was removed in #20 (back as an opt-in toggle in
+  #66).
 
 ### Fixed
 - Resumed sessions compact correctly, and refused tool calls are shown (#11).

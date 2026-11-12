@@ -21,8 +21,39 @@ fn connection() -> Result<super::Connection, String> {
     Ok((base.trim_end_matches('/').to_string(), headers))
 }
 
+/// Fast mode on a model: its price per million tokens (input / output) and
+/// whether it is a research preview, which needs a beta header.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fast {
+    pub price: (u32, u32),
+    pub preview: bool,
+}
+
+const FAST_BETA: &str = "fast-mode-2026-02-01";
+
+/// The models with fast mode (`speed: "fast"`), as of 2026-11.
+pub fn fast_mode(id: &str) -> Option<Fast> {
+    let (price, preview) = match id {
+        "claude-opus-5-5" => ((8, 40), false),
+        "claude-fable-5-2" | "claude-mythos-5-2" => ((16, 80), false),
+        "claude-opus-5" | "claude-opus-4-8" => ((10, 50), true),
+        _ => return None,
+    };
+    Some(Fast { price, preview })
+}
+
+fn beta_headers(req: &Request) -> Vec<String> {
+    match fast_mode(&req.model.id) {
+        Some(f) if req.fast && f.preview => vec![FAST_BETA.to_string()],
+        _ => Vec::new(),
+    }
+}
+
 pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
-    let (base, headers) = connection()?;
+    let (base, mut headers) = connection()?;
+    for beta in beta_headers(req) {
+        headers.push(("anthropic-beta", beta));
+    }
     let reader = post_stream(&format!("{base}/v1/messages"), &headers, &body(req))?;
     parse_stream(reader, req, on)
 }
@@ -71,6 +102,9 @@ fn body(req: &Request) -> Value {
     });
     if let Some(effort) = supported_effort(&req.model.id, req.effort) {
         body["output_config"] = json!({ "effort": effort });
+    }
+    if req.fast && fast_mode(&req.model.id).is_some() {
+        body["speed"] = json!("fast");
     }
     if summarizes_thinking(&req.model.id) {
         // Summaries cost nothing extra and let the interface show progress;
@@ -411,6 +445,34 @@ data: {"type":"message_stop"}
         assert_eq!(sent("claude-haiku-5-5", "low"), (s("low"), s("adaptive")));
         // A model newer than this list is treated as current.
         assert_eq!(sent("claude-opus-6", "xhigh"), (s("xhigh"), s("adaptive")));
+    }
+
+    #[test]
+    fn fast_mode_only_where_the_model_has_it() {
+        let sent = |id: &str, fast: bool| {
+            let model = crate::provider::Model::parse(&format!("anthropic/{id}"));
+            super::super::with_request(false, |r| {
+                let req = Request {
+                    model: &model,
+                    fast,
+                    ..*r
+                };
+                (
+                    body(&req)["speed"].as_str().map(str::to_string),
+                    beta_headers(&req),
+                )
+            })
+        };
+        let fast = Some("fast".to_string());
+        let preview = vec!["fast-mode-2026-02-01".to_string()];
+        assert_eq!(sent("claude-opus-5-5", true), (fast.clone(), vec![]));
+        assert_eq!(sent("claude-fable-5-2", true), (fast.clone(), vec![]));
+        assert_eq!(sent("claude-mythos-5-2", true), (fast.clone(), vec![]));
+        assert_eq!(sent("claude-opus-5", true), (fast.clone(), preview.clone()));
+        assert_eq!(sent("claude-opus-4-8", true), (fast, preview));
+        assert_eq!(sent("claude-sonnet-5-5", true), (None, vec![]));
+        assert_eq!(sent("claude-opus-4-7", true), (None, vec![]));
+        assert_eq!(sent("claude-opus-5-5", false), (None, vec![]));
     }
 
     #[test]
