@@ -463,13 +463,8 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 }
 
 /// Built-in commands: name, arguments and what each does.
-const BUILTINS: [(&str, &str, &str); 17] = [
+const BUILTINS: [(&str, &str, &str); 16] = [
     ("model", "[provider/model]", "pick or switch the model"),
-    (
-        "provider",
-        "",
-        "pick a provider, signing in to it if needed",
-    ),
     ("login", "[provider]", "save an API key for a provider"),
     ("logout", "[provider]", "remove a provider's saved key"),
     ("effort", "[level]", "pick or set reasoning effort"),
@@ -963,7 +958,6 @@ fn run() -> Result<ExitCode, String> {
             ("/model" | "/models", "") => {
                 interactive::pick_model(&mut agent, &mut term, &mut models, None);
             }
-            ("/provider", _) => interactive::pick_provider(&mut agent, &mut term, &mut models),
             ("/login", p) => interactive::login(&mut agent, &mut term, &mut models, p),
             ("/logout", p) => interactive::logout(&mut term, &mut models, p),
             ("/effort", "") => interactive::pick_effort(&mut agent, &mut term),

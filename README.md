@@ -206,8 +206,7 @@ Commands:
   moves between the two sides, Up/Down move, Enter or Right goes into a
   provider's models, typing filters them, and a name no list holds can be
   typed and used. `/model provider/model` switches directly.
-- `/provider` picks a provider, signing in first when it is not set up, then
-  one of its models. `/login [provider]` saves an API key, or a name, base URL
+- `/login [provider]` saves an API key, or a name, base URL
   and optional key for any other OpenAI-compatible endpoint; `/logout
   [provider]` removes one. Keys go to `~/.axio/agent/auth.json`.
 - `/effort` opens a slider of the levels the current model takes (with each
