@@ -1,6 +1,7 @@
 # Sub-agents
 
-Status: draft for later, not scheduled. Owner decisions so far are at the end.
+Status: approved 2026-11-12; being built in the order below. Owner decisions
+so far are at the end.
 
 ## Goal
 
@@ -166,6 +167,15 @@ output before it enters the conversation, and background tasks.
 ## Order of work
 
 1. `axio agent` child mode: JSON spec in, JSON lines out, summary capped.
+   Built: the spec (`task`, `tools`, `instructions`, `cwd`, `model`,
+   `effort`, `context`, `maxTurns`, `resultLimit`, `sessionDir`; unknown
+   fields are refused) and the lines `start`, `tool`, `tool_end`, `notice`,
+   then `result` or `error`. Tools not in the list are refused even when
+   called. After `maxTurns` rounds of tools (50 by default) the model gets
+   one reply to answer without them. Sessions go to an `agents` folder that
+   `-c` and `-r` skip. Measured against a local stub server: 3.8 MB peak,
+   about 4 ms to the first request, 644 system-prompt characters for a
+   brief role.
 2. Role files and the four shipped roles; `fast` model resolution.
 3. The `Agent` tool in the parent, progress lines, Esc stopping the group.
 4. Settings: nesting, parallel, result limit, per-role overrides.

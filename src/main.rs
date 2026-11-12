@@ -2,6 +2,7 @@ mod agent;
 mod auth;
 mod background;
 mod chatgpt;
+mod child;
 mod compact;
 mod context;
 mod crypto;
@@ -697,6 +698,14 @@ fn run() -> Result<ExitCode, String> {
             }
         );
         return Ok(ExitCode::SUCCESS);
+    }
+    // Hidden: a sub-agent's process, started by a parent axio.
+    if all.first().is_some_and(|a| a == "agent") {
+        return Ok(if child::main()? {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        });
     }
     if all.first().is_some_and(|a| a == "profile") {
         let home = context::home();

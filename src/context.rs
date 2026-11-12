@@ -168,29 +168,57 @@ pub fn files(cwd: &Path) -> Vec<(PathBuf, String)> {
     found
 }
 
+const SUB_AGENT: &str = "You are a sub-agent in axio, a minimal coding agent harness. Another agent gave you the task in the first message. You cannot ask it questions, so make reasonable choices and say what you assumed. Use only the tools you have. Only say something is done, fixed or tested when tool output shows it. Your final reply is all the other agent receives: answer the task completely and concisely, and name files by their paths.";
+
 pub fn system_prompt(cwd: &Path, skills: Option<&str>) -> String {
     let mut prompt = BASE.to_string();
     if let Some(skills) = skills {
         prompt.push_str("\n\n");
         prompt.push_str(skills);
     }
+    prompt.push_str(&project_instructions(cwd));
+    prompt.push_str(&place(cwd));
+    prompt
+}
+
+/// A sub-agent's system prompt: its role, the project's instructions when
+/// `rules` is set, and where it works.
+pub fn sub_agent_prompt(cwd: &Path, instructions: &str, rules: bool) -> String {
+    let mut prompt = SUB_AGENT.to_string();
+    if !instructions.trim().is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(instructions.trim());
+    }
+    if rules {
+        prompt.push_str(&project_instructions(cwd));
+    }
+    prompt.push_str(&place(cwd));
+    prompt
+}
+
+fn project_instructions(cwd: &Path) -> String {
     let found = files(cwd);
     if found.is_empty() {
-        prompt.push_str("\n\nNo AGENTS.md or CLAUDE.md applies to the working directory.");
+        return "\n\nNo AGENTS.md or CLAUDE.md applies to the working directory.".into();
     }
-    for (path, text) in found {
-        prompt.push_str(&format!(
-            "\n\n<project-instructions path=\"{}\">\n{}\n</project-instructions>",
-            path.display(),
-            text.trim()
-        ));
-    }
-    prompt.push_str(&format!(
+    found
+        .into_iter()
+        .map(|(path, text)| {
+            format!(
+                "\n\n<project-instructions path=\"{}\">\n{}\n</project-instructions>",
+                path.display(),
+                text.trim()
+            )
+        })
+        .collect()
+}
+
+fn place(cwd: &Path) -> String {
+    format!(
         "\n\nDate: {}\nWorking directory: {}",
         today(),
         cwd.display()
-    ));
-    prompt
+    )
 }
 
 fn today() -> String {
