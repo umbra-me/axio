@@ -196,8 +196,12 @@ Found by a pre-release review.
   only plain shell without asking (words, quotes, `$NAME`, `;`, `&&`, `||`,
   `|`, simple redirections); anything else, a program named by an expansion,
   a wrapper with options, or a command that runs others (`bash -c`, `eval`,
-  `xargs`, `find -exec`, `trap`, `declare`) asks first. They remain a guard
-  against mistakes rather than a boundary; `SECURITY.md` lists the limits.
+  `xargs`, `find -exec`, `trap`, `declare`) asks first, as does an unquoted
+  expansion that bash could split into more words or options (`env FOO=$X`,
+  `printf $OP`). A randomized test runs thousands of allowed lines through
+  the real bash with a stand-in `rm` and fails if one runs it. They remain a
+  guard against mistakes rather than a boundary; `SECURITY.md` lists the
+  limits.
 - Path deny rules also refuse a symlink whose target has a denied name, even
   outside the project, a symlink to nothing yet, and any file with more than
   one hard link.

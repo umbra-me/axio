@@ -42,3 +42,5 @@ jobs:
       - run: rustup toolchain install
       - run: cargo build --release --locked
       - run: sh e2e/all.sh target/release/axio
+      # Deny-rule checker against the real bash on this runner.
+      - run: cargo test --locked --bin axio -- --ignored allowed_lines_never_run_a_denied_program
