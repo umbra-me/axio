@@ -7,8 +7,10 @@ mod crypto;
 mod editor;
 mod hooks;
 mod import;
+mod interactive;
 mod markdown;
 mod mcp;
+mod menu;
 mod message;
 mod oauth;
 mod plan;
@@ -459,26 +461,68 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
     )
 }
 
-const BUILTIN_COMMANDS: [&str; 11] = [
-    "new", "undo", "output", "model", "effort", "compact", "profile", "session", "help", "quit",
-    "exit",
+/// Built-in commands: name, arguments and what each does.
+const BUILTINS: [(&str, &str, &str); 17] = [
+    ("model", "[provider/model]", "pick or switch the model"),
+    (
+        "provider",
+        "",
+        "pick a provider, signing in to it if needed",
+    ),
+    ("login", "[provider]", "save an API key for a provider"),
+    ("logout", "[provider]", "remove a provider's saved key"),
+    ("effort", "[level]", "pick or set reasoning effort"),
+    ("new", "", "start a new session"),
+    ("resume", "", "pick a saved session to continue"),
+    (
+        "undo",
+        "",
+        "put back the files the last turn wrote or edited",
+    ),
+    ("output", "", "show the last tool call's full result"),
+    ("compact", "", "summarize the conversation now"),
+    ("profile", "", "show the profile, modules and plugins"),
+    ("session", "", "show the session file"),
+    ("help", "", "list the commands"),
+    ("quit", "", "exit (or Ctrl-D)"),
+    ("exit", "", "exit (or Ctrl-D)"),
+    ("clear", "", "start a new session"),
+    ("models", "", "pick the model"),
 ];
 
+/// Other names for built-ins, which work but stay out of the menu and help.
+const ALIASES: [&str; 3] = ["exit", "clear", "models"];
+
+/// Every slash command with what it does, built-ins first.
+fn command_list(lib: &skills::Library) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = BUILTINS
+        .iter()
+        .filter(|(n, _, _)| !ALIASES.contains(n))
+        .map(|(n, _, about)| (n.to_string(), about.to_string()))
+        .collect();
+    for c in &lib.commands {
+        rows.push((c.name.clone(), c.description.clone()));
+    }
+    for k in lib.skills.iter().filter(|k| k.invocable) {
+        let about: String = k.description.chars().take(70).collect();
+        rows.push((k.name.clone(), format!("{about} (skill)")));
+    }
+    rows
+}
+
 fn help(lib: &skills::Library) -> String {
-    let mut rows: Vec<(String, String)> = [
-        ("/new", "start a new session"),
-        ("/undo", "put back the files the last turn wrote or edited"),
-        ("/output", "show the last tool call's full result"),
-        ("/model [provider/model]", "show or switch the model"),
-        ("/effort [level]", "show or set reasoning effort"),
-        ("/compact", "summarize the conversation now"),
-        ("/profile", "show the profile, modules and plugins"),
-        ("/session", "show the session file"),
-        ("/help", "this list"),
-        ("/quit", "exit (or Ctrl-D)"),
-    ]
-    .map(|(a, b)| (a.to_string(), b.to_string()))
-    .into();
+    let mut rows: Vec<(String, String)> = BUILTINS
+        .iter()
+        .filter(|(n, _, _)| !ALIASES.contains(n))
+        .map(|(n, args, about)| {
+            let usage = if args.is_empty() {
+                format!("/{n}")
+            } else {
+                format!("/{n} {args}")
+            };
+            (usage, about.to_string())
+        })
+        .collect();
     for c in &lib.commands {
         rows.push((format!("/{}", c.name), c.description.clone()));
     }
@@ -495,7 +539,7 @@ fn help(lib: &skills::Library) -> String {
         .iter()
         .map(|(a, b)| format!("  {a:width$}  {b}\n"))
         .collect();
-    s.push_str("\n  Enter sends · Alt-Enter or a trailing \\ adds a line · Up/Down history · Esc stops a turn");
+    s.push_str("\n  / opens the command menu · Enter sends · Alt-Enter or a trailing \\ adds a line · Up/Down history · Esc stops a turn");
     s
 }
 
@@ -888,18 +932,9 @@ fn run() -> Result<ExitCode, String> {
     let mut editor = editor::Editor::default();
     editor.history = load_history();
     editor.cwd = Some(cwd.clone());
-    editor.commands = BUILTIN_COMMANDS
-        .iter()
-        .map(|c| c.to_string())
-        .chain(library.commands.iter().map(|c| c.name.clone()))
-        .chain(
-            library
-                .skills
-                .iter()
-                .filter(|k| k.invocable)
-                .map(|k| k.name.clone()),
-        )
-        .collect();
+    editor.commands = command_list(&library);
+    let mut models = interactive::ModelCache::new();
+    editor.color = term.color;
     loop {
         if prompt.is_empty() {
             println!();
@@ -920,7 +955,15 @@ fn run() -> Result<ExitCode, String> {
         {
             ("", _) => continue,
             ("/quit" | "/exit", _) => break,
-            ("/new", _) => {
+            ("/model" | "/models", "") => {
+                interactive::pick_model(&mut agent, &mut term, &mut models, None);
+            }
+            ("/provider", _) => interactive::pick_provider(&mut agent, &mut term, &mut models),
+            ("/login", p) => interactive::login(&mut agent, &mut term, &mut models, p),
+            ("/logout", p) => interactive::logout(&mut term, &mut models, p),
+            ("/effort", "") => interactive::pick_effort(&mut agent, &mut term),
+            ("/resume", _) => interactive::resume(&mut agent, &mut term, &sessions),
+            ("/new" | "/clear", _) => {
                 agent.messages.clear();
                 agent.context = 0;
                 if agent.session.is_some() {
@@ -933,7 +976,6 @@ fn run() -> Result<ExitCode, String> {
                 Ok(false) => eprintln!("{}", term.dim("nothing older to compact")),
                 Err(e) => eprintln!("axio: {e}"),
             },
-            ("/model", "") => eprintln!("{}", term.dim(&model_line(&agent))),
             ("/output", _) => match &term.last_output {
                 Some((title, text)) => {
                     eprintln!("{}", term.dim(&format!("── {title}")));
@@ -951,13 +993,6 @@ fn run() -> Result<ExitCode, String> {
                 }
                 Err(e) => eprintln!("{}", term.dim(&e)),
             },
-            ("/effort", "") => eprintln!(
-                "{}",
-                term.dim(&format!(
-                    "effort: {} (low, medium, high, xhigh, max)",
-                    agent.effort.as_deref().unwrap_or("the model's default")
-                ))
-            ),
             ("/effort", level) => {
                 agent.effort = Some(level.to_string());
                 eprintln!("{}", term.dim(&format!("effort: {level} for this session")));

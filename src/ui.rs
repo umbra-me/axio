@@ -16,7 +16,7 @@ const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
-const DIM: &str = "\x1b[2m";
+pub const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
@@ -649,7 +649,7 @@ fn line_diff(a: &[&str], b: &[&str]) -> Vec<Op> {
 }
 
 /// `s` in colour `code`, or plain when colour is off.
-fn paint(color: bool, code: &str, s: &str) -> String {
+pub fn paint(color: bool, code: &str, s: &str) -> String {
     if color {
         format!("{code}{s}{RESET}")
     } else {

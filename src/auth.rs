@@ -110,6 +110,35 @@ fn get_from(path: Option<&Path>, env: &str, provider: &str, field: &str) -> Opti
         })
 }
 
+/// Saves `provider.field`, keeping the provider's other fields.
+pub fn save(path: &Path, provider: &str, field: &str, value: &str) -> Result<(), String> {
+    let mut all = read(path);
+    let entry = all
+        .entry(provider.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    entry[field] = Value::String(value.to_string());
+    write(path, &all)
+}
+
+/// Removes a provider's saved entry; `false` when there was none.
+pub fn forget(path: &Path, provider: &str) -> Result<bool, String> {
+    let mut all = read(path);
+    if all.remove(provider).is_none() {
+        return Ok(false);
+    }
+    write(path, &all)?;
+    Ok(true)
+}
+
+/// Providers with something saved, leaving out MCP sign-ins.
+pub fn saved(path: &Path) -> Vec<String> {
+    read(path)
+        .into_iter()
+        .map(|(k, _)| k)
+        .filter(|k| k != "mcp")
+        .collect()
+}
+
 /// Whether `provider` lacks the key it needs. Providers axio has no
 /// built-in endpoint for treat their key as optional.
 pub fn missing_key(provider: &str) -> bool {
@@ -171,7 +200,7 @@ const USAGE: &str = "Usage: axio auth list
 /// terminal) and never printed in full.
 pub fn main(args: &[String], home: &Path) -> Result<(), String> {
     let path = home.join("auth.json");
-    let mut all = read(&path);
+    let all = read(&path);
     match args
         .iter()
         .map(String::as_str)
@@ -218,19 +247,14 @@ pub fn main(args: &[String], home: &Path) -> Result<(), String> {
             if value.is_empty() {
                 return Err("nothing entered; nothing changed".into());
             }
-            let entry = all
-                .entry(provider.to_string())
-                .or_insert_with(|| Value::Object(Map::new()));
-            entry[field] = Value::String(value);
-            write(&path, &all)?;
+            save(&path, provider, field, &value)?;
             println!("saved {provider} {field} to {}", path.display());
             Ok(())
         }
         ["remove", provider] => {
-            if all.remove(*provider).is_none() {
+            if !forget(&path, provider)? {
                 return Err(format!("{provider} is not in {}", path.display()));
             }
-            write(&path, &all)?;
             println!("removed {provider}");
             Ok(())
         }
@@ -269,6 +293,26 @@ fn read_secret(prompt: &str, hidden: bool) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_forget_and_list_providers() {
+        let dir = std::env::temp_dir().join(format!("axio-auth-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("auth.json");
+        save(&path, "local", "baseUrl", "http://127.0.0.1:1234/v1").unwrap();
+        save(&path, "local", "apiKey", "k1").unwrap();
+        set_section(&path, "mcp", Map::new()).unwrap();
+        assert_eq!(
+            get_from(Some(&path), "AXIO_TEST_UNSET", "local", "baseUrl").as_deref(),
+            Some("http://127.0.0.1:1234/v1")
+        );
+        assert_eq!(saved(&path), vec!["local".to_string()]);
+        assert!(forget(&path, "local").unwrap());
+        assert!(!forget(&path, "local").unwrap());
+        assert!(saved(&path).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn folds_in_the_old_token_file() {
