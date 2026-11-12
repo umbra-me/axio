@@ -82,6 +82,9 @@ under Unreleased.
 - Rewind with Esc twice or `/rewind`, optionally putting back files changed
   since, and `/history` to pick a past prompt (#72).
 
+- Output speed (tok/s) and time to first token after each turn and in
+  `/status` (#73).
+
 **Models**
 - Fast mode as an opt-in toggle on models that have it: `/fast`,
   `"fastMode"` in settings, the price shown when it turns on, standard speed

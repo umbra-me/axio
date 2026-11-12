@@ -66,6 +66,47 @@ pub const TURN_LIMIT_NOTE: &str = "[axio] You have reached your turn limit. Do n
 /// was, the path, and its bytes before (`None`: the turn created it).
 type FileChange = (usize, PathBuf, Option<Vec<u8>>);
 
+/// How fast the model answers: output tokens over the time from the first
+/// streamed token to the end of each reply, and the wait for that token.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Speed {
+    pub tokens: u64,
+    /// Seconds from each reply's first token to its end.
+    pub secs: f64,
+    /// Seconds before each reply's first token, summed.
+    pub first_secs: f64,
+    pub calls: u32,
+}
+
+impl Speed {
+    fn add(&mut self, tokens: u64, secs: f64, first_secs: f64) {
+        self.tokens += tokens;
+        self.secs += secs;
+        self.first_secs += first_secs;
+        self.calls += 1;
+    }
+
+    /// Output tokens a second; `None` when too little was timed to mean
+    /// anything.
+    pub fn rate(&self) -> Option<f64> {
+        (self.tokens >= 20 && self.secs >= 0.2).then(|| self.tokens as f64 / self.secs)
+    }
+
+    /// The average wait for a reply's first token, in seconds.
+    pub fn first_token(&self) -> Option<f64> {
+        (self.calls > 0).then(|| self.first_secs / f64::from(self.calls))
+    }
+
+    /// `85 tok/s · first token 1.2s`.
+    pub fn label(&self) -> Option<String> {
+        let rate = self.rate()?;
+        Some(format!(
+            "{rate:.0} tok/s · first token {:.1}s",
+            self.first_token().unwrap_or(0.0)
+        ))
+    }
+}
+
 /// How many times Stop hooks may send the model back to work in one turn.
 const MAX_STOP_CONTINUATIONS: usize = 8;
 
@@ -104,6 +145,9 @@ pub struct Agent {
     /// Files the latest turn wrote or edited, with what they held before
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
+    /// Output speed of this turn's replies and of the whole session's.
+    turn_speed: std::sync::Mutex<Speed>,
+    session_speed: std::sync::Mutex<Speed>,
     /// What this session's model calls, and its sub-agents', have cost.
     spend: std::sync::Mutex<crate::cost::Spend>,
     /// Every file Write and Edit changed, with the index of the user
@@ -125,7 +169,8 @@ enum Event {
     ThinkingText(String),
     ToolCall(String),
     ToolInput(String),
-    Done(Result<Reply, String>),
+    /// The reply, and when its first token arrived.
+    Done(Result<Reply, String>, Option<std::time::Instant>),
 }
 
 impl Agent {
@@ -157,6 +202,8 @@ impl Agent {
             file_log: Default::default(),
             turn_at: Default::default(),
             spend: Default::default(),
+            turn_speed: Default::default(),
+            session_speed: Default::default(),
         }
     }
 
@@ -170,6 +217,14 @@ impl Agent {
             self.system.push_str(&section);
         }
         self.mcp = Arc::new(mcp);
+    }
+
+    pub fn turn_speed(&self) -> Speed {
+        self.turn_speed.lock().map(|s| *s).unwrap_or_default()
+    }
+
+    pub fn session_speed(&self) -> Speed {
+        self.session_speed.lock().map(|s| *s).unwrap_or_default()
     }
 
     pub fn spent(&self) -> crate::cost::Spend {
@@ -398,6 +453,7 @@ impl Agent {
             (false, _) => "summarizing the conversation",
         });
         let cancel = Arc::new(AtomicBool::new(false));
+        let started = std::time::Instant::now();
         let (tx, rx) = mpsc::channel();
         // A side job runs on its own model without the main effort.
         let fast = self.fast && side.is_none() && !self.fast_refused.load(Ordering::Relaxed);
@@ -423,7 +479,9 @@ impl Agent {
                 cancel: &flag,
             };
             let deltas = tx.clone();
+            let mut first = None;
             let result = complete(&req, &mut |d| {
+                first.get_or_insert_with(std::time::Instant::now);
                 let _ = deltas.send(match d {
                     Delta::Text(t) => Event::Text(t.to_string()),
                     Delta::Thinking => Event::Thinking,
@@ -432,7 +490,7 @@ impl Agent {
                     Delta::ToolInput(p) => Event::ToolInput(p.to_string()),
                 });
             });
-            let _ = tx.send(Event::Done(result));
+            let _ = tx.send(Event::Done(result, first));
         });
         loop {
             if ui.interrupted() {
@@ -440,7 +498,18 @@ impl Agent {
                 return Err(ABORTED.into());
             }
             match rx.recv_timeout(Duration::from_millis(20)) {
-                Ok(Event::Done(result)) => return result,
+                Ok(Event::Done(result, first)) => {
+                    if let (Ok(reply), Some(first), None) = (&result, first, side) {
+                        let secs = first.elapsed().as_secs_f64();
+                        let wait = first.duration_since(started).as_secs_f64();
+                        for speed in [&self.turn_speed, &self.session_speed] {
+                            if let Ok(mut s) = speed.lock() {
+                                s.add(reply.usage.output, secs, wait);
+                            }
+                        }
+                    }
+                    return result;
+                }
                 Ok(_) if !stream => {}
                 Ok(Event::Text(t)) => {
                     *shown = true;
@@ -593,6 +662,9 @@ impl Agent {
         }
         if let Ok(mut changed) = self.changed.lock() {
             changed.clear();
+        }
+        if let Ok(mut s) = self.turn_speed.lock() {
+            *s = Speed::default();
         }
         let mut content = vec![Block::Text { text: text.into() }];
         for (block, note) in crate::context::mentions(text, &self.cwd) {
@@ -2270,5 +2342,47 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "original");
         assert!(!b.exists(), "a file the later turns created is removed");
         assert_eq!(restored.len(), 2);
+    }
+
+    #[test]
+    fn output_speed_is_measured_from_the_first_token() {
+        let mut agent = agent(|_, on| {
+            std::thread::sleep(Duration::from_millis(150));
+            on(Delta::Text("he"));
+            std::thread::sleep(Duration::from_millis(300));
+            on(Delta::Text("llo"));
+            Ok(Reply {
+                content: vec![Block::Text {
+                    text: "hello".into(),
+                }],
+                stop: Stop::EndTurn,
+                usage: Usage {
+                    output: 150,
+                    ..Usage::default()
+                },
+            })
+        });
+        agent.prompt("go", &mut Log::default()).unwrap();
+        let turn = agent.turn_speed();
+        let rate = turn.rate().expect("enough tokens and time to measure");
+        assert!(
+            (350.0..=650.0).contains(&rate),
+            "about 150 tokens in 0.3s, got {rate}"
+        );
+        let first = turn.first_token().unwrap();
+        assert!(
+            (0.1..=0.4).contains(&first),
+            "about 0.15s to the first token, got {first}"
+        );
+        assert!(turn.label().unwrap().contains("tok/s"));
+        assert_eq!(agent.session_speed().calls, 1);
+        // A tiny reply is too short to time.
+        let tiny = crate::agent::Speed {
+            tokens: 3,
+            secs: 0.01,
+            first_secs: 0.1,
+            calls: 1,
+        };
+        assert_eq!(tiny.rate(), None);
     }
 }

@@ -17,6 +17,9 @@ class Stub(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.send_header('content-type', 'text/event-stream'); self.end_headers()
         for e in EVENTS:
             self.wfile.write(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode())
+            self.wfile.flush()
+            if e['type'] == 'content_block_delta':
+                time.sleep(0.4)  # so the reply streams long enough to time
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Stub)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 env = dict(os.environ, AXIO_HOME=HOME, AXIO_MODEL='anthropic/claude-opus-5-5', ANTHROPIC_API_KEY='k',
@@ -44,6 +47,7 @@ checks = [
     ('the status line shows the model and $0.00 at the start', 'claude-opus-5-5' in first and '% context · $0.00' in first),
     ('after a turn it shows the estimated cost', '~$0.60' in after),
     ('Ctrl-O on an empty prompt shows the last output', 'no tool has run yet' in ctrl_o),
+    ('the line after a turn shows the output speed', 'tok/s · first token' in after),
 ]
 for name, ok in checks:
     print(('PASS ' if ok else 'FAIL ') + name)
