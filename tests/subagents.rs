@@ -132,6 +132,8 @@ fn axio(home: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .current_dir(home.join("project"))
         .env("AXIO_HOME", home)
+        // These tests are about features, not about asking first.
+        .env("AXIO_PERMISSION_MODE", "bypassPermissions")
         .env_remove("AXIO_MODEL")
         .env_remove("AXIO_PROFILE")
         .env_remove("AXIO_DEPTH")
@@ -620,4 +622,84 @@ fn subagent_hooks_add_context_and_can_send_a_sub_agent_back() {
             .ends_with(".jsonl")
     );
     assert_eq!(inputs[2]["stop_hook_active"], true);
+}
+
+fn runner(body: &Value) -> Reply {
+    let messages = body["messages"].as_array().unwrap();
+    let tool_result = messages
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| m["content"].as_str().unwrap_or("").to_string())
+        .next();
+    if is_child(body) {
+        let marker =
+            std::env::temp_dir().join(format!("axio-sub-perm-marker-{}", std::process::id()));
+        return match tool_result {
+            Some(r) => (Duration::ZERO, text(&format!("child saw [{r}]"))),
+            None => (
+                Duration::ZERO,
+                calls(&[(
+                    "b",
+                    "Bash",
+                    json!({"command": format!("touch {}", marker.display())}),
+                )]),
+            ),
+        };
+    }
+    match tool_result {
+        Some(_) => (Duration::ZERO, text("done")),
+        None => (
+            Duration::ZERO,
+            calls(&[(
+                "a",
+                "Agent",
+                json!({"description": "run", "prompt": "run it", "subagent_type": "runner"}),
+            )]),
+        ),
+    }
+}
+
+#[test]
+fn sub_agents_follow_the_main_agents_permission_mode() {
+    let marker = std::env::temp_dir().join(format!("axio-sub-perm-marker-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let (port, seen) = serve(runner);
+    let home = home("perm", port);
+    std::fs::create_dir_all(home.join("agents")).unwrap();
+    std::fs::write(
+        home.join("agents/runner.md"),
+        "---\nname: runner\ndescription: Runs things\ntools: Bash\n---\nRun what you are asked.",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_axio"))
+        .args(["-p", "--no-session", "-m", "stub/main", "go"])
+        .current_dir(home.join("project"))
+        .env("AXIO_HOME", &home)
+        .env_remove("AXIO_PERMISSION_MODE")
+        .env_remove("AXIO_MODEL")
+        .env_remove("AXIO_DEPTH")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !marker.exists(),
+        "the default mode asks, and with no one to ask the command does not run"
+    );
+    let seen = seen.lock().unwrap();
+    let main_last = seen.iter().rev().find(|s| !is_child(&s.body)).unwrap();
+    let result = main_last.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(result.contains("needs permission"), "{result}");
 }

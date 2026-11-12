@@ -317,6 +317,16 @@ pub fn settings_rows(s: &crate::settings::Settings) -> Vec<Setting> {
             about: "what the line after each turn shows",
         },
         Setting {
+            path: &["permissions", "defaultMode"],
+            label: "Permission mode",
+            value: s
+                .permissions
+                .default_mode
+                .clone()
+                .unwrap_or_else(|| "default (default)".into()),
+            about: "when tools ask first: default, acceptEdits, plan or bypassPermissions",
+        },
+        Setting {
             path: &["model"],
             label: "Default model",
             value: or(s.model.clone(), crate::provider::DEFAULT_MODEL),

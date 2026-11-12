@@ -88,6 +88,12 @@ under Unreleased.
 - Each status line item can be switched on or off in `/settings` or
   `statusLine` (#74).
 
+- Permission modes as in Claude Code: `default` asks before commands, file
+  changes, fetches and MCP tools; `acceptEdits`, `plan` and
+  `bypassPermissions`; Shift+Tab cycles them; `permissions.allow`/`deny`
+  rules in Claude Code's syntax; answers saved per project in the user's own
+  folder; sub-agents ask through the main terminal (#76).
+
 **Models**
 - Fast mode as an opt-in toggle on models that have it: `/fast`,
   `"fastMode"` in settings, the price shown when it turns on, standard speed
@@ -103,6 +109,9 @@ under Unreleased.
 ### Changed
 - **Breaking:** tools renamed to Claude Code's names, and configuration moved
   to `settings.json` with project trust (#4).
+- **Breaking:** axio now asks before running commands and changing files;
+  `--permission-mode bypassPermissions` (or `defaultMode`) restores the old
+  behaviour (#76).
 - `/provider` removed now that `/model` browses providers (#51).
 - Built-in sub-agent roles run on the main agent's model and effort by
   default; a smaller model is opt-in per role (#64).

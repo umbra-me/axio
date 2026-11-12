@@ -21,7 +21,20 @@ pub struct Settings {
     #[serde(default)]
     pub status_line: StatusLine,
     #[serde(default)]
+    pub permissions: PermissionSettings,
+    #[serde(default)]
     pub subagents: Subagents,
+}
+
+/// `"permissions"` in settings.json, as in Claude Code.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionSettings {
+    pub default_mode: Option<String>,
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 /// `"statusLine"` in settings.json: which items each status line shows;
@@ -108,6 +121,15 @@ impl Settings {
             sandbox_network: over.sandbox_network.or(self.sandbox_network),
             compact_model: over.compact_model.or(self.compact_model),
             fast_mode: over.fast_mode.or(self.fast_mode),
+            permissions: PermissionSettings {
+                default_mode: over
+                    .permissions
+                    .default_mode
+                    .or(self.permissions.default_mode),
+                // Rules from every scope apply together.
+                allow: [self.permissions.allow, over.permissions.allow].concat(),
+                deny: [self.permissions.deny, over.permissions.deny].concat(),
+            },
             status_line: StatusLine {
                 under_prompt: over
                     .status_line

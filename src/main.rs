@@ -17,6 +17,7 @@ mod menu;
 mod message;
 mod oauth;
 mod panels;
+mod permissions;
 mod plan;
 mod plugin_cli;
 mod plugins;
@@ -68,6 +69,9 @@ Options:
       --profile <name>  minimal, standard (default), full or one in
                         ~/.axio/agent/profiles/ (env AXIO_PROFILE)
       --trust           Trust this project's configuration for this run
+      --permission-mode <mode>  default, acceptEdits, plan or bypassPermissions
+                        (env AXIO_PERMISSION_MODE; Shift+Tab cycles it)
+      --dangerously-skip-permissions  Never ask (bypassPermissions)
       --no-project-config  Ignore this project's .axio/ and .mcp.json
       --no-import       Skip hooks, plugins and servers from other harnesses
   -h, --help            Show this help
@@ -78,7 +82,7 @@ completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
 Esc or Ctrl-C stops a running turn, Enter during one sends what you typed to
 the model at its next step, Ctrl-D exits. @path attaches a file.
 Commands: /new, /undo, /rewind, /history, /output, /compact, /status, /context, /init,
-/model <model>, /effort <level>, /fast, /settings, /mcp, /skills, /agents,
+/model <model>, /effort <level>, /fast, /permissions, /settings, /mcp, /skills, /agents,
 /hooks, /plugins, /session, /help, /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
@@ -96,6 +100,7 @@ struct Args {
     session: Option<PathBuf>,
     no_session: bool,
     trust: bool,
+    permission_mode: Option<String>,
     profile: Option<String>,
     no_project_config: bool,
     no_import: bool,
@@ -128,6 +133,10 @@ fn parse_args() -> Result<Option<Args>, String> {
             "-s" | "--session" => a.session = Some(value(&arg)?.into()),
             "--no-session" => a.no_session = true,
             "--trust" => a.trust = true,
+            "--permission-mode" => a.permission_mode = Some(value(&arg)?),
+            "--dangerously-skip-permissions" => {
+                a.permission_mode = Some("bypassPermissions".into())
+            }
             "--profile" => a.profile = Some(value(&arg)?),
             "--no-project-config" => a.no_project_config = true,
             "--no-import" => a.no_import = true,
@@ -373,13 +382,17 @@ fn context_lines(
 fn footer(agent: &Agent, items: &[&str]) -> String {
     let window = agent.model.context_window().max(1);
     let used = agent.context.max(agent.estimated_context());
-    items
-        .iter()
-        .map(|item| match *item {
+    // The permission mode shows whenever it is not the default.
+    let mode = match agent.permissions().mode {
+        permissions::Mode::Default => None,
+        m => Some(format!("{} (shift+tab)", m.label())),
+    };
+    mode.into_iter()
+        .chain(items.iter().map(|item| match *item {
             "model" => model_line(agent),
             "context" => format!("{}% context", used * 100 / window),
             _ => cost_label(agent),
-        })
+        }))
         .collect::<Vec<_>>()
         .join(" · ")
 }
@@ -486,7 +499,13 @@ enum Input {
 
 /// Edits one prompt until Enter. Ctrl-C twice on an empty line, or Ctrl-D,
 /// exits.
-fn read_prompt(editor: &mut editor::Editor, keys: &mut term::Keys) -> Input {
+/// `cycle` is Shift+Tab: it moves to the next permission mode and returns
+/// the new status line.
+fn read_prompt(
+    editor: &mut editor::Editor,
+    keys: &mut term::Keys,
+    cycle: &mut dyn FnMut() -> String,
+) -> Input {
     let mut width = term::width();
     let mut drawn = editor.layout(width);
     print!("{}", drawn.redraw(0));
@@ -522,6 +541,9 @@ fn read_prompt(editor: &mut editor::Editor, keys: &mut term::Keys) -> Input {
                 print!("{}", drawn.redraw(0));
                 let _ = io::stdout().flush();
                 continue;
+            }
+            editor::Outcome::CycleMode => {
+                editor.footer = cycle();
             }
             editor::Outcome::Redraw => {
                 width = term::width();
@@ -778,7 +800,7 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 
 /// Built-in commands: name, arguments, what each does and its section in
 /// /help.
-const BUILTINS: [(&str, &str, &str, &str); 28] = [
+const BUILTINS: [(&str, &str, &str, &str); 29] = [
     ("new", "", "start a new session", "Session"),
     ("resume", "", "pick a saved session to continue", "Session"),
     ("compact", "", "summarize the conversation now", "Session"),
@@ -821,6 +843,7 @@ const BUILTINS: [(&str, &str, &str, &str); 28] = [
         "pick or switch the model",
         "Model",
     ),
+    ("permissions", "", "the permission mode and rules", "Model"),
     ("effort", "[level]", "pick or set reasoning effort", "Model"),
     (
         "fast",
@@ -1230,6 +1253,37 @@ fn run() -> Result<ExitCode, String> {
     agent.compact_ratio = profile.compact_at;
     agent.compact_model = config.compact_model.clone();
     agent.fast = config.fast_mode.unwrap_or(false);
+    let mode_name = args
+        .permission_mode
+        .clone()
+        .or_else(|| std::env::var("AXIO_PERMISSION_MODE").ok())
+        .or(config.permissions.default_mode.clone())
+        .unwrap_or_else(|| "default".into());
+    let mode = permissions::Mode::parse(&mode_name).ok_or_else(|| {
+        format!(
+            "unknown permission mode {mode_name}: default, acceptEdits, plan or bypassPermissions"
+        )
+    })?;
+    let parse_rules = |list: &[String]| -> Vec<permissions::Rule> {
+        list.iter()
+            .filter_map(|r| {
+                let parsed = permissions::Rule::parse(r);
+                if parsed.is_none() {
+                    eprintln!("axio: ignored the permission rule {r:?}");
+                }
+                parsed
+            })
+            .collect()
+    };
+    let root = settings::project_root(&cwd);
+    let mut allow = parse_rules(&config.permissions.allow);
+    allow.extend(permissions::project_rules(&home, &root));
+    agent.set_permissions(permissions::Permissions {
+        mode,
+        allow,
+        deny: parse_rules(&config.permissions.deny),
+    });
+    agent.rules_home = Some((home.clone(), root));
     let mut status_line = config.status_line.clone();
     agent.fast_model = config.subagents.fast_model.clone();
 
@@ -1404,7 +1458,12 @@ fn run() -> Result<ExitCode, String> {
                 &panels::shown(&status_line.under_prompt, &panels::UNDER_PROMPT),
             );
             let keys = term.keys.as_mut().expect("keys");
-            match read_prompt(&mut editor, keys) {
+            let items = panels::shown(&status_line.under_prompt, &panels::UNDER_PROMPT);
+            let mut cycle = || {
+                agent.set_mode(agent.permissions().mode.next());
+                footer(&agent, &items)
+            };
+            match read_prompt(&mut editor, keys, &mut cycle) {
                 Input::Line(line) => {
                     save_history(&line);
                     prompt = line;
@@ -1494,6 +1553,30 @@ fn run() -> Result<ExitCode, String> {
                         ))
                     );
                 }
+            }
+            ("/permissions", _) => {
+                let p = agent.permissions();
+                eprintln!(
+                    "  mode   {}  {}",
+                    p.mode.name(),
+                    term.dim(
+                        "(Shift+Tab cycles default → acceptEdits → plan; defaultMode in /settings)"
+                    )
+                );
+                let list = |rules: &[permissions::Rule]| match rules.len() {
+                    0 => term.dim("none"),
+                    _ => rules
+                        .iter()
+                        .map(|r| r.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                eprintln!("  allow  {}", list(&p.allow));
+                eprintln!("  deny   {}", list(&p.deny));
+                eprintln!(
+                    "{}",
+                    term.dim("  rules: \"permissions\": {\"allow\": [...], \"deny\": [...]} in settings.json; project answers in ~/.axio/agent/permissions.json")
+                );
             }
             ("/settings", _) => {
                 interactive::settings(&mut agent, &mut term, &home, &mut models);
@@ -1608,12 +1691,20 @@ mod tests {
     #[test]
     fn status_lines_show_only_the_chosen_items() {
         let tmp = std::env::temp_dir();
-        let a = Agent::new(
+        let mut a = Agent::new(
             Model::parse("anthropic/claude-opus-5-5"),
             tmp.clone(),
             String::new(),
         );
+        a.set_permissions(permissions::Permissions::default());
         assert_eq!(footer(&a, &["model", "cost"]), "claude-opus-5-5 · $0.00");
+        a.set_mode(permissions::Mode::Plan);
+        assert_eq!(
+            footer(&a, &["model"]),
+            "plan mode (shift+tab) · claude-opus-5-5",
+            "the mode shows whenever it is not the default"
+        );
+        a.set_mode(permissions::Mode::Default);
         assert_eq!(footer(&a, &[]), "", "no items, no line");
         let term = ui::Term::new(&tmp, false, false);
         let line = turn_line(&term, &a, &["output", "time"]);

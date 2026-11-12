@@ -44,6 +44,44 @@ pub struct Spec {
     /// Fast mode, on models that have it.
     #[serde(default)]
     pub fast: bool,
+    /// The main agent's permission mode and rules; none means never ask.
+    pub permissions: Option<PermSpec>,
+    /// Whether the main agent can put a question to a person.
+    #[serde(default)]
+    pub can_ask: bool,
+}
+
+#[derive(Clone, Deserialize, serde::Serialize, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PermSpec {
+    pub mode: String,
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+impl PermSpec {
+    pub fn of(p: &crate::permissions::Permissions) -> PermSpec {
+        PermSpec {
+            mode: p.mode.name().into(),
+            allow: p.allow.iter().map(|r| r.to_string()).collect(),
+            deny: p.deny.iter().map(|r| r.to_string()).collect(),
+        }
+    }
+
+    fn permissions(&self) -> crate::permissions::Permissions {
+        let rules = |l: &[String]| {
+            l.iter()
+                .filter_map(|r| crate::permissions::Rule::parse(r))
+                .collect()
+        };
+        crate::permissions::Permissions {
+            mode: crate::permissions::Mode::parse(&self.mode).unwrap_or_default(),
+            allow: rules(&self.allow),
+            deny: rules(&self.deny),
+        }
+    }
 }
 
 /// A sandbox for a sub-agent's Bash, Write and Edit.
@@ -103,6 +141,10 @@ pub fn agent(
     }
     let mut a = Agent::new(Model::parse(model), cwd.clone(), system);
     a.effort = spec.effort.clone();
+    if let Some(p) = &spec.permissions {
+        a.set_permissions(p.permissions());
+        a.rules_home = Some((home.to_path_buf(), crate::settings::project_root(&cwd)));
+    }
     a.fast = spec.fast;
     a.max_turns = Some(spec.max_turns.unwrap_or(MAX_TURNS));
     a.set_tools(modules_for(&spec.tools), crate::mcp::Mcp::default());
@@ -128,6 +170,9 @@ pub fn agent(
 type Reply = (u64, Result<String, String>, Vec<crate::message::Block>);
 type Replies = std::sync::mpsc::Receiver<Reply>;
 static REPLIES: std::sync::Mutex<Option<Replies>> = std::sync::Mutex::new(None);
+/// Answers to permission questions from the main agent: (id, choice).
+type Answers = std::sync::mpsc::Receiver<(u64, Option<usize>)>;
+static ANSWERS: std::sync::Mutex<Option<Answers>> = std::sync::Mutex::new(None);
 
 /// Writes progress as JSON lines. Once the reader has gone, the turn stops.
 struct Lines<'a> {
@@ -138,6 +183,8 @@ struct Lines<'a> {
     /// MCP tools the main agent runs for this child.
     remote: Vec<String>,
     next_call: u64,
+    /// The main agent can ask a person on this child's behalf.
+    can_ask: bool,
 }
 
 impl Lines<'_> {
@@ -173,6 +220,27 @@ impl Ui for Lines<'_> {
     fn notice(&mut self, text: &str) {
         self.emit(json!({"type": "notice", "text": text}));
     }
+    fn can_ask(&self) -> bool {
+        self.can_ask
+    }
+
+    /// Asks through the main agent, which puts the question to the user.
+    fn permission(&mut self, question: &str, options: &[String]) -> Option<usize> {
+        self.next_call += 1;
+        let id = self.next_call;
+        self.emit(json!({"type": "ask", "id": id, "question": question, "options": options}));
+        let guard = ANSWERS.lock().ok()?;
+        let rx = guard.as_ref()?;
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok((got, choice)) if got == id => return choice,
+                Ok(_) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !self.interrupted() => continue,
+                Err(_) => return None,
+            }
+        }
+    }
+
     fn remote_tool(
         &mut self,
         name: &str,
@@ -212,6 +280,7 @@ pub fn drive(mut agent: Agent, spec: &Spec, out: &mut dyn Write) -> bool {
         gone: false,
         remote: spec.mcp.iter().map(|t| t.name.clone()).collect(),
         next_call: 0,
+        can_ask: spec.can_ask && ANSWERS.lock().is_ok_and(|a| a.is_some()),
     };
     let tools = agent.tool_names();
     let model = format!("{}/{}", agent.model.provider, agent.model.id);
@@ -268,12 +337,22 @@ pub fn main(args: &[String]) -> Result<bool, String> {
         if let Ok(mut r) = REPLIES.lock() {
             *r = Some(rx);
         }
+        let (answer_tx, answer_rx) = std::sync::mpsc::channel();
+        if let Ok(mut a) = ANSWERS.lock() {
+            *a = Some(answer_rx);
+        }
         std::thread::spawn(move || {
             // MCP results arrive as lines; the end of input means stop.
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
                 let Ok(v) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };
+                if v["type"] == "answer"
+                    && let Some(id) = v["id"].as_u64()
+                {
+                    let _ = answer_tx.send((id, v["choice"].as_u64().map(|c| c as usize)));
+                    continue;
+                }
                 if v["type"] == "mcp_result"
                     && let Some(id) = v["id"].as_u64()
                 {

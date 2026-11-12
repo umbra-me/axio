@@ -871,6 +871,14 @@ pub fn settings(agent: &mut Agent, term: &mut ui::Term, home: &Path, models: &mu
             let ordered: Vec<&str> = crate::panels::shown(&Some(on), all);
             serde_json::json!(ordered)
         }
+        ["permissions", "defaultMode"] => match pick_one(
+            term,
+            "Permission mode for new sessions",
+            &["default", "acceptEdits", "plan", "bypassPermissions"],
+        ) {
+            Some(v) => serde_json::json!(v),
+            None => return,
+        },
         ["model"] => return pick_model(agent, term, models, None),
         ["effort"] => return pick_effort(agent, term),
         ["profile"] => {
