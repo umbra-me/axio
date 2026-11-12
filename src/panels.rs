@@ -299,7 +299,23 @@ pub fn settings_rows(s: &crate::settings::Settings) -> Vec<Setting> {
     };
     let num = |v: Option<usize>, d: usize| v.map_or(format!("{d} (default)"), |n| n.to_string());
     let sa = &s.subagents;
+    let items = |chosen: &Option<Vec<String>>, all: &[(&str, &str)]| match shown(chosen, all) {
+        v if v.is_empty() => "hidden".to_string(),
+        v => v.join(", "),
+    };
     vec![
+        Setting {
+            path: &["statusLine", "underPrompt"],
+            label: "Under the prompt",
+            value: items(&s.status_line.under_prompt, &UNDER_PROMPT),
+            about: "what the status line under the prompt shows",
+        },
+        Setting {
+            path: &["statusLine", "afterTurn"],
+            label: "After each turn",
+            value: items(&s.status_line.after_turn, &AFTER_TURN),
+            about: "what the line after each turn shows",
+        },
         Setting {
             path: &["model"],
             label: "Default model",
@@ -379,6 +395,32 @@ pub fn settings_rows(s: &crate::settings::Settings) -> Vec<Setting> {
             about: "characters of a sub-agent's answer returned",
         },
     ]
+}
+
+/// What the line under the prompt can show, in order, and what each is.
+pub const UNDER_PROMPT: [(&str, &str); 3] = [
+    ("model", "model, effort and fast mode"),
+    ("context", "how full the context is"),
+    ("cost", "what the session has cost"),
+];
+
+/// What the line after each turn can show, in order.
+pub const AFTER_TURN: [(&str, &str); 6] = [
+    ("context", "context used of the window"),
+    ("output", "output tokens this turn"),
+    ("cache", "share of the prompt read from cache"),
+    ("time", "how long the turn took"),
+    ("speed", "output tokens a second"),
+    ("first", "wait for the first token"),
+];
+
+/// The items switched on, in display order: all of them unless the
+/// setting lists some (unknown names are ignored).
+pub fn shown<'a>(chosen: &Option<Vec<String>>, all: &[(&'a str, &str)]) -> Vec<&'a str> {
+    all.iter()
+        .map(|(name, _)| *name)
+        .filter(|name| chosen.as_ref().is_none_or(|c| c.iter().any(|x| x == name)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -616,5 +658,42 @@ mod tests {
         assert_eq!(value("Sub-agent nesting"), "0 (default)");
         assert_eq!(value("Compaction model"), "main model (default)");
         assert!(rows.iter().all(|r| !r.about.is_empty()));
+    }
+
+    #[test]
+    fn status_items_default_to_all_and_keep_their_order() {
+        assert_eq!(shown(&None, &UNDER_PROMPT), ["model", "context", "cost"]);
+        let chosen = Some(vec![
+            "cost".to_string(),
+            "model".to_string(),
+            "nope".to_string(),
+        ]);
+        assert_eq!(shown(&chosen, &UNDER_PROMPT), ["model", "cost"]);
+        assert!(
+            shown(&Some(Vec::new()), &AFTER_TURN).is_empty(),
+            "an empty list hides the line"
+        );
+        let s: crate::settings::Settings =
+            serde_json::from_str(r#"{"statusLine": {"afterTurn": ["speed"]}}"#).unwrap();
+        let rows = settings_rows(&s);
+        let value = |label: &str| {
+            rows.iter()
+                .find(|r| r.label == label)
+                .unwrap()
+                .value
+                .clone()
+        };
+        assert_eq!(value("Under the prompt"), "model, context, cost");
+        assert_eq!(value("After each turn"), "speed");
+        let none: crate::settings::Settings =
+            serde_json::from_str(r#"{"statusLine": {"underPrompt": []}}"#).unwrap();
+        assert_eq!(
+            settings_rows(&none)
+                .iter()
+                .find(|r| r.label == "Under the prompt")
+                .unwrap()
+                .value,
+            "hidden"
+        );
     }
 }

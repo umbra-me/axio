@@ -823,6 +823,54 @@ pub fn settings(agent: &mut Agent, term: &mut ui::Term, home: &Path, models: &mu
         menu::ask(keys, q, false).filter(|a| !a.trim().is_empty())
     };
     let value: serde_json::Value = match row.path {
+        ["statusLine", which] => {
+            let all: &[(&str, &str)] = if *which == "underPrompt" {
+                &crate::panels::UNDER_PROMPT
+            } else {
+                &crate::panels::AFTER_TURN
+            };
+            let chosen = if *which == "underPrompt" {
+                current.status_line.under_prompt.clone()
+            } else {
+                current.status_line.after_turn.clone()
+            };
+            let mut on: Vec<String> = crate::panels::shown(&chosen, all)
+                .into_iter()
+                .map(String::from)
+                .collect();
+            // Enter switches an item; Esc saves and closes.
+            let mut at = None;
+            loop {
+                let rows: Vec<Choice> = all
+                    .iter()
+                    .map(|(name, about)| {
+                        let mark = if on.iter().any(|o| o == name) {
+                            "✓"
+                        } else {
+                            "·"
+                        };
+                        Choice::new(format!("{mark} {name}"), *about)
+                    })
+                    .collect();
+                let keys = term.keys.as_mut().expect("keys");
+                let picker = Picker::new(row.label, rows, at)
+                    .with_hint("↑↓ move · Enter switches · Esc saves");
+                match menu::pick(keys, picker, term.color) {
+                    Some(i) => {
+                        let name = all[i].0.to_string();
+                        if let Some(p) = on.iter().position(|o| *o == name) {
+                            on.remove(p);
+                        } else {
+                            on.push(name);
+                        }
+                        at = Some(i);
+                    }
+                    None => break,
+                }
+            }
+            let ordered: Vec<&str> = crate::panels::shown(&Some(on), all);
+            serde_json::json!(ordered)
+        }
         ["model"] => return pick_model(agent, term, models, None),
         ["effort"] => return pick_effort(agent, term),
         ["profile"] => {
@@ -901,16 +949,20 @@ pub fn settings(agent: &mut Agent, term: &mut ui::Term, home: &Path, models: &mu
         serde_json::Value::Bool(true) => "on".to_string(),
         serde_json::Value::Bool(false) => "off".to_string(),
         serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(a) if a.is_empty() => "hidden".to_string(),
+        serde_json::Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
         v => v.to_string(),
     };
-    let now = match row.path {
-        ["fastMode"] => "; /fast changes this session",
-        _ => "",
+    let when = match row.path {
+        ["statusLine", _] => " (now and for new sessions)",
+        ["fastMode"] => " for new sessions; /fast changes this session",
+        _ => " for new sessions",
     };
-    note(
-        term,
-        &format!("{}: {shown} for new sessions{now}", row.label),
-    );
+    note(term, &format!("{}: {shown}{when}", row.label));
 }
 
 fn first_line(text: &str, n: usize) -> String {
