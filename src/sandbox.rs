@@ -12,6 +12,9 @@ pub struct Sandbox {
     /// Folders commands may write in, fully resolved.
     pub writable: Vec<PathBuf>,
     pub network: bool,
+    /// Folders kept unwritable even inside a writable one: a read-only
+    /// sub-agent's project when it sits in a temporary folder.
+    pub protected: Vec<PathBuf>,
 }
 
 static ACTIVE: OnceLock<Sandbox> = OnceLock::new();
@@ -48,15 +51,17 @@ fn real(p: &Path) -> PathBuf {
 impl Sandbox {
     /// The project root plus the temporary folders.
     pub fn for_project(root: &Path, network: bool) -> Sandbox {
-        let mut s = Sandbox::read_only();
+        let mut s = Sandbox::read_only(root);
+        s.protected.clear();
         s.writable.insert(0, real(root));
         s.writable.dedup();
         s.network = network;
         s
     }
 
-    /// Only the temporary folders, and no network.
-    pub fn read_only() -> Sandbox {
+    /// Only the temporary folders, never the project at `root`, and no
+    /// network.
+    pub fn read_only(root: &Path) -> Sandbox {
         let mut writable = vec![real(&std::env::temp_dir())];
         if cfg!(target_os = "macos") {
             writable.push(PathBuf::from("/private/tmp"));
@@ -68,6 +73,7 @@ impl Sandbox {
         Sandbox {
             writable,
             network: false,
+            protected: vec![real(root)],
         }
     }
 
@@ -84,6 +90,7 @@ impl Sandbox {
             }
         };
         self.writable.iter().any(|w| resolved.starts_with(w))
+            && !self.protected.iter().any(|p| resolved.starts_with(p))
     }
 
     pub fn seatbelt_profile(&self) -> String {
@@ -102,6 +109,10 @@ impl Sandbox {
             "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* {} (literal \"/dev/null\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\") (regex #\"^/dev/fd/\"))\n",
             roots.join(" ")
         );
+        // Later rules win, so these override the writable folders above.
+        for k in &self.protected {
+            p.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", quote(k)));
+        }
         if !self.network {
             p.push_str("(deny network-outbound (remote ip))\n");
         }
@@ -130,6 +141,10 @@ impl Sandbox {
             ]);
             for w in &self.writable {
                 c.arg("--bind").arg(w).arg(w);
+            }
+            // Mounted after the writable folders, so it covers them.
+            for k in &self.protected {
+                c.arg("--ro-bind").arg(k).arg(k);
             }
             if !self.network {
                 c.arg("--unshare-net");
@@ -185,6 +200,7 @@ mod tests {
         let s = Sandbox {
             writable: vec![root.clone()],
             network: false,
+            protected: Vec::new(),
         };
         assert!(
             s.allows_write(&root.join("src/new/file.rs")),
@@ -227,6 +243,54 @@ mod tests {
                 .seatbelt_profile()
                 .contains("network")
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Commands for a read-only sub-agent, run in `root`: a write in the
+    /// project, then one in another temporary folder.
+    fn read_only_probe(root: &Path) -> Vec<String> {
+        let other = std::env::temp_dir().join(format!("axio-ro-other-{}", std::process::id()));
+        let out = Sandbox::read_only(root)
+            .command(&format!(
+                "echo x > inside.txt 2>/dev/null && echo inside-written || echo inside-denied; echo t > '{}' && echo tmp-ok",
+                other.display()
+            ))
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(other);
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn read_only_protects_a_project_inside_a_temporary_folder() {
+        let root = project("ro");
+        let s = Sandbox::read_only(&root);
+        assert!(!s.allows_write(&root.join("src/main.rs")));
+        assert!(s.allows_write(&std::env::temp_dir().join("elsewhere.txt")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_read_only_keeps_the_project_unchanged() {
+        let root = project("ro-seatbelt");
+        assert_eq!(read_only_probe(&root), ["inside-denied", "tmp-ok"]);
+        assert!(!root.join("inside.txt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bwrap_read_only_keeps_the_project_unchanged() {
+        if Command::new("bwrap").arg("--version").output().is_err() {
+            return;
+        }
+        let root = project("ro-bwrap");
+        assert_eq!(read_only_probe(&root), ["inside-denied", "tmp-ok"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

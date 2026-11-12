@@ -292,7 +292,7 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     if let Some(c) = spec.sandbox {
         let root = crate::settings::project_root(&cwd);
         crate::sandbox::activate(match c {
-            Confine::ReadOnly => crate::sandbox::Sandbox::read_only(),
+            Confine::ReadOnly => crate::sandbox::Sandbox::read_only(&root),
             Confine::Project => crate::sandbox::Sandbox::for_project(&root, false),
         })?;
     }
