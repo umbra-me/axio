@@ -7,6 +7,7 @@ use crate::crypto::{base64url, random, sha256};
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const PROVIDER: &str = "chatgpt";
@@ -435,18 +436,48 @@ pub fn sign_out() -> Result<bool, String> {
 
 /// A current access token, refreshed first when it is about to expire.
 pub fn bearer() -> Result<String, String> {
-    let entry = stored();
+    let path = crate::auth::path().ok_or("the credential store is not set up")?;
+    bearer_at(path, TOKEN, None)
+}
+
+/// A new access token after the API refused `rejected` before its expiry.
+pub fn bearer_after_rejection(rejected: &str) -> Result<String, String> {
+    let path = crate::auth::path().ok_or("the credential store is not set up")?;
+    bearer_at(path, TOKEN, Some(rejected))
+}
+
+fn bearer_at(path: &Path, token_url: &str, rejected: Option<&str>) -> Result<String, String> {
+    let read = || Value::Object(crate::auth::section(path, PROVIDER));
+    let usable = |entry: &Value| {
+        entry["access"]
+            .as_str()
+            .filter(|a| Some(*a) != rejected)
+            .filter(|_| entry["expires"].as_u64().is_some_and(|e| e > now()))
+            .map(String::from)
+    };
+    if let Some(access) = usable(&read()) {
+        return Ok(access);
+    }
+    // Each refresh replaces the refresh token, so two axio sessions must not
+    // refresh at once: the second waits here, then finds the first one's token.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(|e| format!("could not lock the credential store: {e}"))?;
+    lock.lock()
+        .map_err(|e| format!("could not lock the credential store: {e}"))?;
+    let entry = read();
+    if let Some(access) = usable(&entry) {
+        return Ok(access);
+    }
     let (Some(refresh), Some(client)) = (entry["refresh"].as_str(), entry["clientId"].as_str())
     else {
         return Err("not signed in to ChatGPT; run /login chatgpt".into());
     };
-    if let Some(access) = entry["access"].as_str()
-        && entry["expires"].as_u64().is_some_and(|e| e > now())
-    {
-        return Ok(access.to_string());
-    }
     let token = crate::oauth::token_request(
-        TOKEN,
+        token_url,
         &[
             ("grant_type", "refresh_token"),
             ("client_id", client),
@@ -465,7 +496,7 @@ pub fn bearer() -> Result<String, String> {
     let fresh = credential(&token, now())?;
     let access = fresh["access"].as_str().unwrap_or("").to_string();
     saved.extend(fresh);
-    store(saved)?;
+    crate::auth::set_section(path, PROVIDER, saved)?;
     Ok(access)
 }
 
@@ -657,5 +688,107 @@ mod tests {
         let id = device_id().unwrap();
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");
+    }
+
+    /// A token endpoint that, like OpenAI's, replaces the refresh token on
+    /// every use and refuses one that was already used.
+    fn rotating_token_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        let refreshes = std::sync::Arc::new(AtomicUsize::new(0));
+        let count = refreshes.clone();
+        std::thread::spawn(move || {
+            let mut current = "r0".to_string();
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(&stream);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let form = crate::oauth::query(&String::from_utf8(body).unwrap());
+                let (status, reply) = if form["refresh_token"] == current.as_str() {
+                    let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+                    current = format!("r{n}");
+                    // Slow enough for a second caller to arrive meanwhile.
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    (
+                        "200 OK",
+                        json!({"access_token": format!("a{n}"), "refresh_token": current,
+                                      "expires_in": 3600, "scope": DIRECT})
+                        .to_string(),
+                    )
+                } else {
+                    (
+                        "400 Bad Request",
+                        json!({"error": "invalid_grant"}).to_string(),
+                    )
+                };
+                let _ = write!(
+                    &stream,
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+            }
+        });
+        (url, refreshes)
+    }
+
+    fn signed_in_home(name: &str, expires: u64) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("axio-chatgpt-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("auth.json");
+        let Value::Object(entry) = json!({"access": "a0", "refresh": "r0", "expires": expires,
+                                         "clientId": "cl", "email": "me@example.com"})
+        else {
+            unreachable!()
+        };
+        crate::auth::set_section(&path, PROVIDER, entry).unwrap();
+        path
+    }
+
+    #[test]
+    fn sessions_refreshing_at_once_share_one_refresh() {
+        let (url, refreshes) = rotating_token_server();
+        let path = signed_in_home("race", 0);
+        let callers: Vec<_> = (0..3)
+            .map(|_| {
+                let (path, url) = (path.clone(), url.clone());
+                std::thread::spawn(move || bearer_at(&path, &url, None))
+            })
+            .collect();
+        let tokens: Vec<String> = callers
+            .into_iter()
+            .map(|c| c.join().unwrap().unwrap())
+            .collect();
+        assert_eq!(tokens, vec!["a1", "a1", "a1"]);
+        assert_eq!(refreshes.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let saved = crate::auth::section(&path, PROVIDER);
+        assert_eq!(saved["refresh"], "r1", "the replaced refresh token is kept");
+        assert_eq!(saved["email"], "me@example.com", "other fields survive");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_rejected_token_is_refreshed_once_even_before_it_expires() {
+        let (url, refreshes) = rotating_token_server();
+        let path = signed_in_home("rejected", now() + 3000);
+        assert_eq!(bearer_at(&path, &url, None).unwrap(), "a0", "still valid");
+        assert_eq!(bearer_at(&path, &url, Some("a0")).unwrap(), "a1");
+        // Another session already replaced the token it was refused: use that.
+        assert_eq!(bearer_at(&path, &url, Some("a0")).unwrap(), "a1");
+        assert_eq!(refreshes.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

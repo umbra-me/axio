@@ -10,13 +10,17 @@ use serde_json::{Value, json};
 use std::io::BufRead;
 
 pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
-    let token = crate::chatgpt::bearer()?;
     let explained = |e: String| crate::chatgpt::explain(&e).unwrap_or(e);
-    let reader = post_stream(
-        &format!("{}/responses", crate::chatgpt::API),
-        &[("authorization", format!("Bearer {token}"))],
-        &body(req),
-    )
+    let url = format!("{}/responses", crate::chatgpt::API);
+    let body = body(req);
+    let token = crate::chatgpt::bearer()?;
+    let send =
+        |token: &str| post_stream(&url, &[("authorization", format!("Bearer {token}"))], &body);
+    let reader = match send(&token) {
+        // Refused before its expiry time, as after a clock change: refresh once.
+        Err(e) if e.starts_with("401 ") => send(&crate::chatgpt::bearer_after_rejection(&token)?),
+        other => other,
+    }
     .map_err(explained)?;
     parse_stream(reader, req, on).map_err(explained)
 }
