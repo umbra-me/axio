@@ -38,6 +38,10 @@ pub trait Ui {
     fn ask(&mut self, _question: &str) -> bool {
         false
     }
+    /// Sub-agents are running: one line on what they are doing.
+    fn agents_running(&mut self, _line: &str) {}
+    /// A sub-agent finished; `summary` is its tool calls and time.
+    fn agent_done(&mut self, _label: &str, _result: &Result<String, String>, _summary: &str) {}
 }
 
 /// Sent with the last tool results a turn limit allows.
@@ -72,6 +76,7 @@ pub struct Agent {
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
     mcp: Arc<Mcp>,
+    subagents: Option<Arc<crate::subagent::Host>>,
     tools: Vec<ToolSpec>,
     complete: Arc<Complete>,
 }
@@ -99,6 +104,7 @@ impl Agent {
             modules: Modules::default(),
             compact_ratio: 0.85,
             mcp: Arc::default(),
+            subagents: None,
             tools: tools::specs(),
             complete: Arc::new(provider::complete),
             max_retries: 4,
@@ -114,6 +120,12 @@ impl Agent {
         self.tools = tools::specs_for(modules);
         self.tools.extend(mcp.specs.iter().cloned());
         self.mcp = Arc::new(mcp);
+    }
+
+    /// Adds the Agent tool, run by `host`.
+    pub fn set_subagents(&mut self, host: crate::subagent::Host) {
+        self.tools.push(host.tool_spec());
+        self.subagents = Some(Arc::new(host));
     }
 
     #[cfg(test)]
@@ -490,6 +502,10 @@ impl Agent {
             let mut stopped = false;
             let mut hook_stop: Option<String> = None;
             let mut images = Vec::new();
+            // Agent calls start together after the loop: (result slot, id,
+            // input, context from PreToolUse, plan).
+            let mut pending: Vec<(usize, String, Value, Vec<String>, crate::subagent::Planned)> =
+                Vec::new();
             for (id, name, input) in calls {
                 stopped = stopped || ui.interrupted();
                 let mut input_path = None;
@@ -502,6 +518,19 @@ impl Agent {
                     Err(format!("no tool named {name} here"))
                 } else if stop == Stop::MaxTokens {
                     Err("the reply hit the output limit before this call was complete".into())
+                } else if name == "Agent"
+                    && let Some(host) = self.subagents.clone()
+                {
+                    match self.plan_agent(&id, input, &host, ui) {
+                        Ok((input, context, plan)) => {
+                            pending.push((results.len(), id.clone(), input, context, plan));
+                            Ok(String::new())
+                        }
+                        Err((r, end)) => {
+                            hook_stop = end;
+                            r
+                        }
+                    }
                 } else {
                     // The path as run, after any hook rewrote the input.
                     let (r, end, ran) = self.run_tool(&id, &name, input, ui);
@@ -528,6 +557,25 @@ impl Agent {
                     output,
                     is_error,
                 });
+            }
+            if !pending.is_empty() {
+                let host = self.subagents.clone().expect("pending agents have a host");
+                let plans: Vec<_> = pending.iter().map(|p| &p.4).collect();
+                let outs = host.run_all(&plans, ui);
+                for ((slot, id, input, context, _), out) in pending.into_iter().zip(outs) {
+                    stopped = stopped || matches!(&out, Err(e) if e.ends_with(tools::STOPPED));
+                    let (out, end) = self.post_tool(&id, "Agent", &input, out, context, ui);
+                    hook_stop = hook_stop.or(end);
+                    let (output, is_error) = match out {
+                        Ok(o) => (o, false),
+                        Err(e) => (e, true),
+                    };
+                    results[slot] = Block::ToolResult {
+                        id,
+                        output,
+                        is_error,
+                    };
+                }
             }
             // Images a Read returned follow the results they belong to.
             results.append(&mut images);
@@ -628,22 +676,26 @@ impl Agent {
         Ok(done)
     }
 
-    fn run_tool(
+    /// PreToolUse for one call: the input to run (a hook may rewrite it), a
+    /// refusal if the call must not run, and context hooks added. `Err` when
+    /// a hook ended the turn.
+    #[allow(clippy::type_complexity)]
+    fn pre_tool(
         &self,
         id: &str,
         name: &str,
         mut input: Value,
         ui: &mut dyn Ui,
-    ) -> (Result<String, String>, Option<String>, Value) {
-        let fields =
-            |input: &Value| json!({"tool_name": name, "tool_input": input, "tool_use_id": id});
-        let pre = self.hook(Hook::PreToolUse, Some(name), fields(&input), ui);
+    ) -> Result<(Value, Option<String>, Vec<String>), (Result<String, String>, Option<String>, Value)>
+    {
+        let fields = json!({"tool_name": name, "tool_input": input, "tool_use_id": id});
+        let pre = self.hook(Hook::PreToolUse, Some(name), fields, ui);
         if let Some(reason) = pre.stop {
-            return (
+            return Err((
                 Err(format!("not run: a hook ended the turn ({reason})")),
                 Some(reason),
                 input,
-            );
+            ));
         }
         if let Some(changed) = pre.updated_input {
             input = changed;
@@ -661,37 +713,27 @@ impl Agent {
                 let summary = input["command"]
                     .as_str()
                     .or(input["file_path"].as_str())
+                    .or(input["description"].as_str())
                     .unwrap_or("");
                 (!ui.ask(&format!("Allow {name} {summary}{why}?")))
                     .then(|| format!("the user declined this call{why}"))
             }
             _ => None,
         };
-        let mut result = match refusal {
-            Some(r) => {
-                // Show refused calls too, so the user sees what was asked.
-                ui.tool_start(name, &input);
-                let r = Err(r);
-                ui.tool_end(&r);
-                r
-            }
-            None => {
-                ui.tool_start(name, &input);
-                if matches!(name, "Write" | "Edit") && !self.mcp.owns(name) {
-                    self.remember_original(&input);
-                }
-                let r = if self.mcp.owns(name) {
-                    self.mcp.call(name, &input, &mut || ui.interrupted())
-                } else {
-                    tools::run_with(self.modules, name, &input, &self.cwd, &mut || {
-                        ui.interrupted()
-                    })
-                };
-                ui.tool_end(&r);
-                r
-            }
-        };
-        let mut extra: Vec<String> = pre.context;
+        Ok((input, refusal, pre.context))
+    }
+
+    /// PostToolUse for one call: the result with anything hooks added, and
+    /// the reason when a hook ended the turn.
+    fn post_tool(
+        &self,
+        id: &str,
+        name: &str,
+        input: &Value,
+        mut result: Result<String, String>,
+        mut extra: Vec<String>,
+        ui: &mut dyn Ui,
+    ) -> (Result<String, String>, Option<String>) {
         let (text, is_error) = match &result {
             Ok(t) => (t.clone(), false),
             Err(e) => (e.clone(), true),
@@ -718,7 +760,99 @@ impl Agent {
                 Ok(t) | Err(t) => add(t),
             }
         }
-        (result, post.stop, input)
+        (result, post.stop)
+    }
+
+    fn run_tool(
+        &self,
+        id: &str,
+        name: &str,
+        input: Value,
+        ui: &mut dyn Ui,
+    ) -> (Result<String, String>, Option<String>, Value) {
+        let (input, refusal, context) = match self.pre_tool(id, name, input, ui) {
+            Ok(x) => x,
+            Err(done) => return done,
+        };
+        let result = match refusal {
+            Some(r) => {
+                // Show refused calls too, so the user sees what was asked.
+                ui.tool_start(name, &input);
+                let r = Err(r);
+                ui.tool_end(&r);
+                r
+            }
+            None => {
+                ui.tool_start(name, &input);
+                if matches!(name, "Write" | "Edit") && !self.mcp.owns(name) {
+                    self.remember_original(&input);
+                }
+                let r = if self.mcp.owns(name) {
+                    self.mcp.call(name, &input, &mut || ui.interrupted())
+                } else {
+                    tools::run_with(self.modules, name, &input, &self.cwd, &mut || {
+                        ui.interrupted()
+                    })
+                };
+                ui.tool_end(&r);
+                r
+            }
+        };
+        let (result, stop) = self.post_tool(id, name, &input, result, context, ui);
+        (result, stop, input)
+    }
+
+    /// PreToolUse and planning for an Agent call. `Err` holds the finished
+    /// result (refused, invalid, or the turn ended) and any hook stop.
+    #[allow(clippy::type_complexity)]
+    fn plan_agent(
+        &self,
+        id: &str,
+        input: Value,
+        host: &crate::subagent::Host,
+        ui: &mut dyn Ui,
+    ) -> Result<
+        (Value, Vec<String>, crate::subagent::Planned),
+        (Result<String, String>, Option<String>),
+    > {
+        let (input, refusal, context) = match self.pre_tool(id, "Agent", input, ui) {
+            Ok(x) => x,
+            Err((r, end, _)) => return Err((r, end)),
+        };
+        let names: Vec<String> = self
+            .tools
+            .iter()
+            .filter(|t| t.name != "Agent")
+            .map(|t| t.name.clone())
+            .collect();
+        let parent = crate::roles::Parent {
+            model: &self.model,
+            effort: self.effort.as_deref(),
+            cwd: &self.cwd,
+            tools: &names,
+            sandboxed: crate::sandbox::active().is_some(),
+            may_nest: host.children_may_nest(),
+        };
+        let planned = match refusal {
+            Some(r) => Err(r),
+            None => host.prepare(&input, &parent),
+        };
+        ui.tool_start("Agent", &input);
+        match planned {
+            Ok(mut plan) => {
+                if plan.spec.context == crate::child::Sees::Fork {
+                    // This reply, which holds the Agent call, is left out.
+                    let before = &self.messages[..self.messages.len().saturating_sub(1)];
+                    plan.spec.history = Some(compact::transcript(before));
+                }
+                Ok((input, context, plan))
+            }
+            Err(e) => {
+                let r = Err(e);
+                ui.tool_end(&r);
+                Err(self.post_tool(id, "Agent", &input, r, context, ui))
+            }
+        }
     }
 }
 

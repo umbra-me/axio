@@ -179,6 +179,15 @@ output before it enters the conversation, and background tasks.
 2. Role files and the four shipped roles; `fast` model resolution.
 3. The `Agent` tool in the parent, progress lines, Esc stopping the group.
 4. Settings: nesting, parallel, result limit, per-role overrides.
+   Steps 2-4 built together. Decisions taken while building: `review` keeps
+   Bash in a read-only sandbox; progress from several sub-agents shares the
+   one spinner line, with a line per sub-agent as each finishes. The tool
+   takes Claude Code's input (`description`, `prompt`, `subagent_type`) plus
+   `model`, `effort` and `context`. `fork` sends a text transcript of the
+   conversation rather than the raw history, because thinking blocks are bound
+   to the model that wrote them. An attached child stops its turn when its
+   input closes, which is how Esc reaches its own commands. The `agents`
+   module carries the tool; `minimal` leaves it out.
 5. MCP calls proxied through the parent.
 6. `SubagentStart` / `SubagentStop` hooks; `axio import` offers Claude Code
    agents.
@@ -189,9 +198,7 @@ start-to-first-request time, and system-prompt tokens per role.
 
 ## Open questions
 
-- Whether `review` should be allowed Bash at all, or only read tools.
-- How progress from several parallel sub-agents is shown without crowding the
-  terminal.
+Both settled while building steps 2-4 (see the order of work above).
 
 ## Owner decisions (2026-11-12)
 

@@ -48,6 +48,7 @@ cargo test --locked
 - `src/compact.rs`: compaction to recent user requests plus a summary
 - `src/agent.rs`: the turn loop (model, tools, repeat), tool lists and the turn limit
 - `src/child.rs`: `axio agent`, a sub-agent's process (JSON spec on stdin, JSON lines on stdout)
+- `src/subagent.rs`, `src/roles.rs`, `agents/`: the Agent tool, role files and the four built-in roles
 - `src/provider.rs`: model names, what model lists report (context, effort levels), retries
 - `src/provider/`: Anthropic Messages, OpenAI-compatible chat completions, and the Responses API for ChatGPT sign-ins
 - `src/message.rs`, `src/sse.rs`: message and block types; the server-sent events reader

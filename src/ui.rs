@@ -507,11 +507,16 @@ pub fn tool_title(name: &str, input: &Value, cwd: &Path) -> (String, String) {
         "WebFetch" => s("url").to_string(),
         "TaskStop" => s("task_id").to_string(),
         "TodoWrite" => String::new(),
+        "Agent" => s("description").to_string(),
         _ => String::new(),
     };
     let title = match name.strip_prefix("mcp__").and_then(|r| r.split_once("__")) {
         Some((server, tool)) => format!("{server} · {tool}"),
         None if name == "TodoWrite" => "Plan".into(),
+        None if name == "Agent" => match s("subagent_type") {
+            "" => "Agent".into(),
+            role => format!("Agent {role}"),
+        },
         None => name.to_string(),
     };
     (title, detail)
@@ -943,6 +948,28 @@ impl Ui for Term {
     fn notice(&mut self, text: &str) {
         self.settle();
         eprintln!("{}", self.dim(text));
+    }
+
+    fn agents_running(&mut self, line: &str) {
+        self.relabel(line.to_string());
+    }
+
+    fn agent_done(&mut self, label: &str, result: &Result<String, String>, summary: &str) {
+        self.unspin();
+        self.tool = None;
+        let line = match result {
+            Ok(_) => format!("{} {label} {}", self.paint(GREEN, "✓"), self.dim(summary)),
+            Err(e) => format!(
+                "{} {label} {}",
+                self.paint(RED, "✗"),
+                self.dim(&clip(e.lines().next().unwrap_or(""), 100))
+            ),
+        };
+        eprintln!("  {line}");
+        let text = match result {
+            Ok(t) | Err(t) => t.clone(),
+        };
+        self.last_output = Some((format!("Agent {label}"), text));
     }
 }
 

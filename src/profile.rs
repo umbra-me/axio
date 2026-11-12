@@ -27,6 +27,7 @@ fn builtin(name: &str) -> Option<Profile> {
             search: true,
             plan: true,
             background: true,
+            agents: true,
             ..Modules::default()
         },
         "full" => Modules {
@@ -35,6 +36,7 @@ fn builtin(name: &str) -> Option<Profile> {
             background: true,
             web: true,
             sandbox: true,
+            agents: true,
         },
         _ => return None,
     };

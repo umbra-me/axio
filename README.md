@@ -44,7 +44,7 @@ A profile picks built-in modules, which plugins load, and defaults.
 | Profile | Tools |
 |---|---|
 | `minimal` | Read, Write, Edit, Bash: the Pi-sized core |
-| `standard` (default) | the core plus the `search`, `plan` and `background` modules |
+| `standard` (default) | the core plus the `search`, `plan`, `background` and `agents` modules |
 | `full` | `standard` plus `web` and `sandbox` |
 
 | Module | Adds |
@@ -52,6 +52,7 @@ A profile picks built-in modules, which plugins load, and defaults.
 | `search` | `Grep` and `Glob` (ripgrep when installed, a built-in walk otherwise) |
 | `plan` | `TodoWrite`, a short task list shown as it changes |
 | `background` | `Bash` with `run_in_background`: output goes to a log the model reads, `TaskStop` ends it, and the model hears when it exits. Tasks end when axio exits |
+| `agents` | `Agent`: sub-agents, below |
 | `web` | `WebFetch`: an http(s) GET, with HTML reduced to text and links kept |
 | `sandbox` | Bash may write only in the project and temporary folders, and has no network unless `"sandboxNetwork": true`; Write and Edit follow the same limits. Seatbelt on macOS, bubblewrap on Linux. Hooks and MCP servers are not sandboxed |
 
@@ -68,6 +69,64 @@ the one binary. Your own go in
 ```
 
 `plugins` lists the plugin names to load (`"*"` for all, the default).
+
+## Sub-agents
+
+The `Agent` tool hands a self-contained task to a sub-agent: another `axio`
+process (about 4 MB) with only the tools, instructions, model and context its
+role needs. It returns only its final answer, capped at 8,000 characters; its
+full transcript is saved as its own session, under the directory's
+`agents/` folder, which `-c` and `-r` do not list. Several `Agent` calls in
+one reply run at once (up to four), one spinner line shows what they are
+doing, and Esc stops them all.
+
+Roles are markdown files in Claude Code's agent format, so Claude Code agents
+work unchanged. `axio agents` lists them. Four are built in:
+
+| Role | Tools | Model, effort | Sees | Sandbox |
+|---|---|---|---|---|
+| `explore` | Read, Grep, Glob | fast, low | brief | read-only |
+| `research` | WebFetch, Read | fast, low | brief | read-only |
+| `review` | Read, Grep, Glob, Bash | the main agent's, high | rules | read-only |
+| `code` | Read, Write, Edit, Bash, Grep, Glob | the main agent's | rules | the main agent's |
+
+Add or replace roles in `~/.axio/agent/agents/<name>.md`, a plugin's
+`agents/` folder or a trusted project's `.axio/agents/`; a later one replaces
+a role of the same name.
+
+```markdown
+---
+name: tester
+description: Writes and runs tests for a change.
+tools: Read, Write, Edit, Bash, Grep, Glob
+model: fast          # fast | inherit | choose | provider/model (Claude Code's haiku, sonnet and opus work too)
+effort: medium       # inherit | choose | a level
+maxTurns: 30         # rounds of tools before it must answer (50 by default)
+context: rules       # brief | rules (adds AGENTS.md) | fork (adds a transcript of the conversation)
+sandbox: project     # read-only | project | inherit (default)
+---
+You write tests for the change described in the brief…
+```
+
+`fast` is `subagents.fastModel`, else Haiku 4.5 on Anthropic or
+`gpt-6-luna` on a ChatGPT sign-in, else the main agent's model. A sub-agent's
+sandbox is never looser than the main agent's. Settings, all optional:
+
+```json
+{"subagents": {
+  "nesting": 0,
+  "parallel": 4,
+  "fastModel": "anthropic/claude-haiku-4-5",
+  "choices": ["anthropic/claude-haiku-4-5", "chatgpt/gpt-6-luna"],
+  "resultLimit": 8000,
+  "roles": {"review": {"model": "inherit", "effort": "choose"}}
+}}
+```
+
+`nesting` is how many levels below the main agent may start sub-agents of
+their own (none by default). `choices` limits what the main agent may pick for
+roles set to `choose`. `roles.<name>` overrides `model`, `effort`, `context`,
+`maxTurns` or `sandbox` without editing the file.
 
 ## Using what other harnesses already have
 
@@ -226,7 +285,7 @@ Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out
 
-No sub-agents, no plan mode and no built-in permission prompts (a hook can
+No plan mode and no built-in permission prompts (a hook can
 ask). `/undo` puts back files written by Write and Edit, not changes made by
 commands. The model runs commands with your user's rights in the working
 directory, so run it where that is acceptable.

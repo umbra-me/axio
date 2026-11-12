@@ -20,12 +20,14 @@ mod plugin_cli;
 mod plugins;
 mod profile;
 mod provider;
+mod roles;
 mod sandbox;
 mod search;
 mod session;
 mod settings;
 mod skills;
 mod sse;
+mod subagent;
 mod term;
 mod toml_lite;
 mod tools;
@@ -95,6 +97,8 @@ struct Args {
     no_import: bool,
     /// `axio mcp …`, run after configuration loads.
     mcp_command: Option<Vec<String>>,
+    /// `axio agents`: list the sub-agent roles.
+    list_roles: bool,
     prompt: Vec<String>,
 }
 
@@ -381,6 +385,28 @@ impl Sources<'_> {
         }
         h.skipped.truncate(noticed);
         Ok(h)
+    }
+
+    /// Role files: plugins' (global, imported, then the project's), then
+    /// `~/.axio/agent/agents`, then a trusted project's `.axio/agents`.
+    fn roles(&self) -> (Vec<roles::Role>, Vec<String>) {
+        let mut plugin_roots: Vec<std::path::PathBuf> = self
+            .plugins(self.home.join("plugins"))
+            .into_iter()
+            .map(|p| p.root)
+            .collect();
+        plugin_roots.extend(
+            self.imported_plugins()
+                .map(|(_, root, _)| root.to_path_buf()),
+        );
+        if let Some(root) = self.project {
+            plugin_roots.extend(
+                self.plugins(root.join(".axio/plugins"))
+                    .into_iter()
+                    .map(|p| p.root),
+            );
+        }
+        roles::load(&roles::dirs(self.home, self.project, &plugin_roots))
     }
 
     /// MCP servers from `mcp.json` and plugins, then a trusted project's.
@@ -701,7 +727,7 @@ fn run() -> Result<ExitCode, String> {
     }
     // Hidden: a sub-agent's process, started by a parent axio.
     if all.first().is_some_and(|a| a == "agent") {
-        return Ok(if child::main()? {
+        return Ok(if child::main(&all[1..])? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
@@ -745,7 +771,14 @@ fn run() -> Result<ExitCode, String> {
         plugin_cli::main(&all[1..], &home, &cwd, imported)?;
         return Ok(ExitCode::SUCCESS);
     }
-    let args = if all.first().is_some_and(|a| a == "mcp") {
+    let args = if all.first().is_some_and(|a| a == "agents") {
+        Args {
+            list_roles: true,
+            print: true,
+            no_session: true,
+            ..Args::default()
+        }
+    } else if all.first().is_some_and(|a| a == "mcp") {
         Args {
             mcp_command: Some(all[1..].to_vec()),
             print: true,
@@ -856,6 +889,35 @@ fn run() -> Result<ExitCode, String> {
         ))?;
     }
     agent.set_tools(profile.modules, started);
+    let (roles, role_errors) = sources.roles();
+    for e in &role_errors {
+        eprintln!("axio: skipped role file {e}");
+    }
+    if args.list_roles {
+        for r in &roles {
+            let pick = |p: &roles::Pick| match p {
+                roles::Pick::Inherit => "inherit".to_string(),
+                roles::Pick::Choose => "choose".to_string(),
+                roles::Pick::Value(v) => v.clone(),
+            };
+            let tools = r
+                .tools
+                .as_ref()
+                .map_or("the main agent's".into(), |t| t.join(", "));
+            println!(
+                "{}  model {} · effort {} · tools {tools}\n    {}\n    {}",
+                r.name,
+                pick(&r.model),
+                pick(&r.effort),
+                r.description,
+                r.source
+            );
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if profile.modules.agents && subagent::depth() == 0 {
+        agent.set_subagents(subagent::Host::new(roles, config.subagents.clone(), 0)?);
+    }
     if !agent.messages.is_empty() {
         // No reply has measured the context yet; estimate it so a long
         // resumed session can still compact before its first prompt.
