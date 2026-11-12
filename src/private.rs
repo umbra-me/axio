@@ -19,6 +19,7 @@ pub fn dir(path: &Path) -> std::io::Result<()> {
 }
 
 fn options() -> std::fs::OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut o = std::fs::OpenOptions::new();
     #[cfg(unix)]
     {
@@ -31,6 +32,11 @@ fn options() -> std::fs::OpenOptions {
 /// Creates or appends to a file only this user can read.
 pub fn append(path: &Path) -> std::io::Result<File> {
     options().create(true).append(true).open(path)
+}
+
+/// Creates (or empties) a file only this user can read, open for writing.
+pub fn create(path: &Path) -> std::io::Result<File> {
+    options().create(true).write(true).truncate(true).open(path)
 }
 
 /// Writes a new file only this user can read.

@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(explore.instructions, "mine");
         assert_eq!(
             explore.source,
-            dir.join("a/explore.md").display().to_string()
+            dir.join("a").join("explore.md").display().to_string()
         );
         let doc = roles.iter().find(|r| r.name == "doc").unwrap();
         assert_eq!(doc.instructions, "second");

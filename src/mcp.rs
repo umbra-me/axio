@@ -938,11 +938,24 @@ impl Mcp {
                 .map_err(|e| format!("the {} server could not restart: {e}", server.config.name))?;
         }
         let timeout = server.config.timeout;
+        let params = json!({"name": original, "arguments": if input.is_object() { input.clone() } else { json!({}) }});
+        let first = server
+            .conn
+            .as_mut()
+            .unwrap()
+            .start("tools/call", params.clone());
+        // A server that has just exited can look alive until its pipe closes:
+        // restart it once and send again.
+        let (id, rx) = match first {
+            Err(e) if e.starts_with("server closed its input") => {
+                server.connect(&self.cwd).map_err(|e| {
+                    format!("the {} server could not restart: {e}", server.config.name)
+                })?;
+                server.conn.as_mut().unwrap().start("tools/call", params)?
+            }
+            other => other?,
+        };
         let conn = server.conn.as_mut().unwrap();
-        let (id, rx) = conn.start(
-            "tools/call",
-            json!({"name": original, "arguments": if input.is_object() { input.clone() } else { json!({}) }}),
-        )?;
         let started = Instant::now();
         let result = loop {
             match rx.recv_timeout(Duration::from_millis(20)) {

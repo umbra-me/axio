@@ -281,6 +281,20 @@ fn stty(args: &[&str]) -> Option<String> {
 pub struct RawMode;
 
 impl RawMode {
+    #[cfg(windows)]
+    pub fn enter() -> Option<RawMode> {
+        win::enter()?;
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore();
+            previous(info);
+        }));
+        print!("\x1b[?2004h");
+        let _ = std::io::stdout().flush();
+        Some(RawMode)
+    }
+
+    #[cfg(not(windows))]
     pub fn enter() -> Option<RawMode> {
         let saved = stty(&["-g"])?;
         stty(&[
@@ -301,8 +315,122 @@ impl RawMode {
 fn restore() {
     print!("\x1b[?2004l");
     let _ = std::io::stdout().flush();
+    #[cfg(windows)]
+    win::restore();
     if let Some(saved) = SAVED.get() {
         let _ = stty(&[saved]);
+    }
+}
+
+/// The Windows console through kernel32, without a crate: virtual-terminal
+/// input and output (Windows 10 and later) make the console speak the same
+/// escape sequences as a Unix terminal, so the key parser and the drawing
+/// code work unchanged.
+#[cfg(windows)]
+mod win {
+    use std::ffi::c_void;
+    use std::sync::OnceLock;
+
+    type Handle = *mut c_void;
+    const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const ENABLE_PROCESSED_INPUT: u32 = 0x1;
+    const ENABLE_LINE_INPUT: u32 = 0x2;
+    const ENABLE_ECHO_INPUT: u32 = 0x4;
+    const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x200;
+    const ENABLE_PROCESSED_OUTPUT: u32 = 0x1;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x4;
+    const CP_UTF8: u32 = 65001;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct Coord {
+        x: i16,
+        y: i16,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct SmallRect {
+        left: i16,
+        top: i16,
+        right: i16,
+        bottom: i16,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct BufferInfo {
+        size: Coord,
+        cursor: Coord,
+        attributes: u16,
+        window: SmallRect,
+        max_size: Coord,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> Handle;
+        fn GetConsoleMode(console: Handle, mode: *mut u32) -> i32;
+        fn SetConsoleMode(console: Handle, mode: u32) -> i32;
+        fn SetConsoleCP(page: u32) -> i32;
+        fn SetConsoleOutputCP(page: u32) -> i32;
+        fn GetConsoleOutputCP() -> u32;
+        fn GetConsoleCP() -> u32;
+        fn GetConsoleScreenBufferInfo(console: Handle, info: *mut BufferInfo) -> i32;
+    }
+
+    /// The modes and code pages before axio changed them.
+    static SAVED: OnceLock<(u32, u32, u32, u32)> = OnceLock::new();
+
+    fn mode(h: Handle) -> Option<u32> {
+        let mut m = 0;
+        // SAFETY: GetConsoleMode writes one u32 to `m`.
+        (unsafe { GetConsoleMode(h, &mut m) } != 0).then_some(m)
+    }
+
+    /// Characters as typed, with Ctrl-C a key, and escape sequences both ways.
+    pub fn enter() -> Option<()> {
+        // SAFETY: the calls take handles from GetStdHandle and plain flags.
+        unsafe {
+            let (input, output) = (
+                GetStdHandle(STD_INPUT_HANDLE),
+                GetStdHandle(STD_OUTPUT_HANDLE),
+            );
+            let (in_mode, out_mode) = (mode(input)?, mode(output)?);
+            let _ = SAVED.set((in_mode, out_mode, GetConsoleCP(), GetConsoleOutputCP()));
+            let raw_in = (in_mode
+                & !(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT))
+                | ENABLE_VIRTUAL_TERMINAL_INPUT;
+            if SetConsoleMode(input, raw_in) == 0 {
+                return None;
+            }
+            SetConsoleMode(
+                output,
+                out_mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+            );
+            SetConsoleCP(CP_UTF8);
+            SetConsoleOutputCP(CP_UTF8);
+        }
+        Some(())
+    }
+
+    pub fn restore() {
+        if let Some(&(in_mode, out_mode, cp, out_cp)) = SAVED.get() {
+            // SAFETY: as in `enter`.
+            unsafe {
+                SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), in_mode);
+                SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), out_mode);
+                SetConsoleCP(cp);
+                SetConsoleOutputCP(out_cp);
+            }
+        }
+    }
+
+    pub fn width() -> Option<usize> {
+        let mut info = BufferInfo::default();
+        // SAFETY: the call writes one CONSOLE_SCREEN_BUFFER_INFO to `info`.
+        let ok = unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &mut info) };
+        let cols = i32::from(info.window.right) - i32::from(info.window.left) + 1;
+        (ok != 0 && cols > 0).then_some(cols as usize)
     }
 }
 
@@ -378,7 +506,12 @@ fn ioctl_width() -> Option<usize> {
     None
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
+fn ioctl_width() -> Option<usize> {
+    win::width()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn ioctl_width() -> Option<usize> {
     None
 }

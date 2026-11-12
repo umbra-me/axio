@@ -47,7 +47,9 @@ pub fn start(cwd: &Path, input: &Value) -> Result<String, String> {
     let mut tasks = TASKS.lock().map_err(|_| "task list poisoned")?;
     let id = format!("bg{}", tasks.len() + 1);
     let log = dir.join(format!("{id}-{}.log", std::process::id()));
-    let out = crate::private::append(&log).map_err(|e| format!("{}: {e}", log.display()))?;
+    // Opened for writing, not appending: a child given an append-only handle
+    // cannot write through it on Windows.
+    let out = crate::private::create(&log).map_err(|e| format!("{}: {e}", log.display()))?;
     let err = out.try_clone().map_err(|e| e.to_string())?;
     let mut cmd = crate::sandbox::bash(command);
     cmd.current_dir(cwd)

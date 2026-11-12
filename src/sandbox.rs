@@ -19,6 +19,11 @@ pub struct Sandbox {
 
 static ACTIVE: OnceLock<Sandbox> = OnceLock::new();
 
+/// Whether this platform has a sandbox at all (Windows has none).
+pub fn supported() -> bool {
+    cfg!(any(target_os = "macos", target_os = "linux"))
+}
+
 /// Turns the sandbox on for this process; called once at startup.
 pub fn activate(s: Sandbox) -> Result<(), String> {
     if cfg!(target_os = "macos") {
@@ -155,12 +160,52 @@ impl Sandbox {
     }
 }
 
+/// The bash to run: `AXIO_BASH` when set. On Windows, Git Bash, never the
+/// `bash.exe` in System32, which runs commands inside WSL instead of on
+/// Windows.
+pub fn bash_program() -> PathBuf {
+    if let Some(p) = std::env::var_os("AXIO_BASH") {
+        return PathBuf::from(p);
+    }
+    #[cfg(windows)]
+    {
+        let mut roots: Vec<PathBuf> = ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from)
+            .collect();
+        roots.push(PathBuf::from(r"C:\Program Files"));
+        for root in roots {
+            for rel in [r"Git\bin\bash.exe", r"Programs\Git\bin\bash.exe"] {
+                let p = root.join(rel);
+                if p.is_file() {
+                    return p;
+                }
+            }
+        }
+        // Git for Windows' bash anywhere on PATH, before WSL's launcher.
+        if let Some(path) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path) {
+                let p = dir.join("bash.exe");
+                let wsl = dir
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .contains(r"\windows\system32");
+                if p.is_file() && !wsl && !dir.to_string_lossy().contains("WindowsApps") {
+                    return p;
+                }
+            }
+        }
+    }
+    PathBuf::from("bash")
+}
+
 /// The command Bash runs: sandboxed when the module is on.
 pub fn bash(script: &str) -> Command {
     match active() {
         Some(s) => s.command(script),
         None => {
-            let mut c = Command::new("bash");
+            let mut c = Command::new(bash_program());
             c.args(["-c", script]);
             c
         }
@@ -248,6 +293,7 @@ mod tests {
 
     /// Commands for a read-only sub-agent, run in `root`: a write in the
     /// project, then one in another temporary folder.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn read_only_probe(root: &Path) -> Vec<String> {
         let other = std::env::temp_dir().join(format!("axio-ro-other-{}", std::process::id()));
         let out = Sandbox::read_only(root)

@@ -89,6 +89,16 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
             let target = std::fs::read_link(&src).map_err(|e| e.to_string())?;
             #[cfg(unix)]
             std::os::unix::fs::symlink(target, &dst).map_err(|e| e.to_string())?;
+            #[cfg(not(unix))]
+            {
+                // Symbolic links need extra rights on Windows: copy the target.
+                let target = if target.is_relative() {
+                    src.parent().unwrap_or(Path::new(".")).join(target)
+                } else {
+                    target
+                };
+                std::fs::copy(&target, &dst).map_err(|e| format!("{}: {e}", target.display()))?;
+            }
         } else {
             // fs::copy keeps permissions, so hook scripts stay executable.
             std::fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;

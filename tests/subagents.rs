@@ -182,7 +182,7 @@ fn two_agent_calls_run_at_once_and_answer_the_main_agent() {
     let main: Vec<&Seen> = seen.iter().filter(|s| !is_child(&s.body)).collect();
     let children: Vec<&Seen> = seen.iter().filter(|s| is_child(&s.body)).collect();
     assert!(tool_names(&main[0].body).contains(&"Agent".to_string()));
-    assert_eq!(children.len(), 2);
+    assert_eq!(children.len(), 2, "{stderr}");
     for c in &children {
         assert_eq!(tool_names(&c.body), ["Read", "Grep", "Glob"]);
     }
@@ -556,6 +556,11 @@ fn hooked(body: &Value) -> Reply {
     )
 }
 
+/// A path a hook's bash can use; Windows backslashes would be escapes.
+fn sh(p: &Path) -> String {
+    p.display().to_string().replace('\\', "/")
+}
+
 #[test]
 fn subagent_hooks_add_context_and_can_send_a_sub_agent_back() {
     let (port, seen) = serve(hooked);
@@ -564,12 +569,12 @@ fn subagent_hooks_add_context_and_can_send_a_sub_agent_back() {
     let log = home.join("hook-input.jsonl");
     let start = format!(
         r#"cat >> {log}; echo >> {log}; echo '{{"hookSpecificOutput": {{"hookEventName": "SubagentStart", "additionalContext": "START-CONTEXT"}}}}'"#,
-        log = log.display()
+        log = sh(&log)
     );
     let stop = format!(
         r#"cat >> {log}; echo >> {log}; if [ -f {m} ]; then exit 0; fi; touch {m}; echo '{{"decision": "block", "reason": "check again"}}'"#,
-        log = log.display(),
-        m = mark.display()
+        log = sh(&log),
+        m = sh(&mark)
     );
     std::fs::write(
         home.join("settings.json"),

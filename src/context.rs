@@ -47,14 +47,32 @@ pub fn image_block(path: &Path) -> Result<(Block, usize), String> {
 
 /// Words split on whitespace, where a backslash keeps the next character
 /// (as terminals escape spaces in dropped file paths).
+/// `path` as an `@` mention: spaces escaped with a backslash, or on Windows,
+/// where the backslash separates folders, the path in double quotes.
+pub fn mention(path: &str) -> String {
+    if cfg!(windows) {
+        if path.contains(char::is_whitespace) {
+            format!("@\"{path}\"")
+        } else {
+            format!("@{path}")
+        }
+    } else {
+        format!("@{}", path.replace(' ', "\\ "))
+    }
+}
+
 fn words(text: &str) -> Vec<String> {
     let mut out = vec![String::new()];
     let mut chars = text.chars();
+    // Inside `@"..."`, a mention quoted because its path has spaces.
+    let mut quoted = false;
     while let Some(c) = chars.next() {
         let word = out.last_mut().expect("never empty");
         match c {
-            '\\' => word.extend(chars.next()),
-            c if c.is_whitespace() => {
+            '"' if word == "@" && !quoted => quoted = true,
+            '"' if quoted => quoted = false,
+            '\\' if !cfg!(windows) && !quoted => word.extend(chars.next()),
+            c if c.is_whitespace() && !quoted => {
                 if !word.is_empty() {
                     out.push(String::new());
                 }
@@ -248,6 +266,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mentions_with_spaces_round_trip() {
+        let path = if cfg!(windows) {
+            r"C:\My Files\shot 1.png"
+        } else {
+            "/My Files/shot 1.png"
+        };
+        let text = format!("look at {} please", mention(path));
+        assert_eq!(words(&text), ["look", "at", &format!("@{path}"), "please"]);
+        assert_eq!(
+            words(r#"say "hi there" to @a.txt"#),
+            ["say", "\"hi", "there\"", "to", "@a.txt"],
+            "ordinary quotes do not group words"
+        );
+    }
+
+    #[test]
     fn mentions_attach_files_and_directories() {
         let dir = std::env::temp_dir().join(format!("axio-mentions-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -281,7 +315,7 @@ mod tests {
             "devices are skipped"
         );
         std::fs::write(dir.join("Screen shot.PNG"), [0x89, b'P', b'N', b'G']).unwrap();
-        let got = mentions(r"see @Screen\ shot.PNG", &dir);
+        let got = mentions(&format!("see {}", mention("Screen shot.PNG")), &dir);
         assert_eq!(
             got[0].0,
             Block::Image {

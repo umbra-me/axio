@@ -581,6 +581,11 @@ pub fn render(pending: &[&Item], versions: &dyn Fn(&str) -> Option<String>) -> S
 mod tests {
     use super::*;
 
+    /// A path inside a JSON string: Windows backslashes need escaping.
+    fn js(p: &Path) -> String {
+        p.display().to_string().replace('\\', "\\\\")
+    }
+
     fn write(root: &Path, p: &str, t: &str) {
         let p = root.join(p);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -601,8 +606,8 @@ mod tests {
             ".claude/plugins/installed_plugins.json",
             &format!(
                 r#"{{"plugins": {{"figma@official": [{{"installPath": "{}", "version": "2.2.157"}}], "lsp@official": [{{"installPath": "{}", "version": "1.0.0"}}]}}}}"#,
-                plugin.display(),
-                h.join("claude-plugins/lsp").display()
+                js(&plugin),
+                js(&h.join("claude-plugins/lsp"))
             ),
         );
         write(
@@ -700,7 +705,7 @@ mod tests {
             ".claude/plugins/installed_plugins.json",
             &format!(
                 r#"{{"plugins": {{"roles@m": [{{"installPath": "{}", "version": "1"}}]}}}}"#,
-                plugin.display()
+                js(&plugin)
             ),
         );
         let items = scan(&h);

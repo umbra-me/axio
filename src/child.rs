@@ -367,7 +367,7 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     } else {
         std::io::Read::read_to_string(&mut stdin, &mut text).map_err(|e| e.to_string())?;
     }
-    let spec: Spec = serde_json::from_str(&text).map_err(|e| format!("task spec: {e}"))?;
+    let mut spec: Spec = serde_json::from_str(&text).map_err(|e| format!("task spec: {e}"))?;
     let cwd = match &spec.cwd {
         Some(c) => c.clone(),
         None => std::env::current_dir().map_err(|e| e.to_string())?,
@@ -376,6 +376,19 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     // Keys and base URLs saved with `axio auth` or /login.
     crate::auth::set_home(&home);
     crate::private::set_logs(home.join("logs"));
+    if let Some(c) = spec.sandbox.filter(|_| !crate::sandbox::supported()) {
+        let p = spec
+            .permissions
+            .as_ref()
+            .map(PermSpec::permissions)
+            .unwrap_or(crate::permissions::Permissions {
+                mode: crate::permissions::Mode::Bypass,
+                ..Default::default()
+            });
+        spec.permissions = Some(PermSpec::of(&without_sandbox(p, c)));
+        spec.sandbox = None;
+        eprintln!("axio: no sandbox on this platform; permission rules stand in for it");
+    }
     if let Some(c) = spec.sandbox {
         let root = crate::settings::project_root(&cwd);
         crate::sandbox::activate(match c {
@@ -390,6 +403,25 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     };
     let agent = agent(&spec, &home, cwd, host)?;
     Ok(drive(agent, &spec, &mut std::io::stdout().lock()))
+}
+
+/// Where no sandbox exists, a read-only role keeps its promise by rule:
+/// file changes are refused and every command needs the user's yes. A
+/// project sandbox only stops writes outside the project, which the main
+/// agent's own permissions already govern, so it adds nothing.
+fn without_sandbox(
+    mut p: crate::permissions::Permissions,
+    c: Confine,
+) -> crate::permissions::Permissions {
+    use crate::permissions::{Mode, Rule};
+    if c == Confine::ReadOnly {
+        p.deny
+            .extend(["Edit", "Write"].into_iter().filter_map(Rule::parse));
+        if matches!(p.mode, Mode::Bypass | Mode::AcceptEdits) {
+            p.mode = Mode::Default;
+        }
+    }
+    p
 }
 
 /// Sub-agents of a sub-agent: the same roles and settings, read without
@@ -430,6 +462,46 @@ mod tests {
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn without_a_sandbox_read_only_is_kept_by_permissions() {
+        use crate::permissions::{Mode, Permissions};
+        let p = without_sandbox(
+            Permissions {
+                mode: Mode::Bypass,
+                ..Permissions::default()
+            },
+            Confine::ReadOnly,
+        );
+        assert_eq!(
+            p.mode,
+            Mode::Default,
+            "commands ask instead of running unconfined"
+        );
+        let edit = serde_json::json!({"file_path": "a.rs", "old_string": "a", "new_string": "b"});
+        assert!(matches!(
+            p.decide("Edit", &edit, std::path::Path::new("/w")),
+            crate::permissions::Verdict::Deny(_)
+        ));
+        assert!(matches!(
+            p.decide("Write", &edit, std::path::Path::new("/w")),
+            crate::permissions::Verdict::Deny(_)
+        ));
+        let plan = Permissions {
+            mode: Mode::Plan,
+            ..Permissions::default()
+        };
+        assert_eq!(
+            without_sandbox(plan.clone(), Confine::ReadOnly).mode,
+            Mode::Plan,
+            "stricter modes stay"
+        );
+        let open = without_sandbox(Permissions::default(), Confine::Project);
+        assert!(
+            open.deny.is_empty(),
+            "a project sandbox adds nothing the main agent lacks"
+        );
     }
 
     #[test]

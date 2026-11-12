@@ -29,7 +29,7 @@ class Stub(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b'data: [DONE]\n\n')
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Stub)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
-env = dict(os.environ, AXIO_HOME=HOME, AXIO_MODEL='stub/test', NO_COLOR='1', STUB_BASE_URL=f'http://127.0.0.1:{srv.server_port}', TERM='xterm')
+env = dict(os.environ, AXIO_HOME=HOME, AXIO_MODEL='stub/test', NO_COLOR='1', STUB_BASE_URL=f'http://127.0.0.1:{srv.server_port}', TERM='xterm', AXIO_PERMISSION_MODE='bypassPermissions')
 pid, fd = pty.fork()
 if pid == 0:
     os.chdir(PROJ); os.execve(BIN, [BIN, '--no-session', '--trust', '--profile', 'full'], env)

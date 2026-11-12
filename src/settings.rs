@@ -211,7 +211,8 @@ pub fn project_config(root: &Path) -> Vec<PathBuf> {
         ".mcp.json",
     ]
     .iter()
-    .map(|p| root.join(p))
+    // Joined part by part so Windows shows its own separators.
+    .map(|p| p.split('/').fold(root.to_path_buf(), |a, c| a.join(c)))
     .filter(|p| p.exists())
     .collect()
 }

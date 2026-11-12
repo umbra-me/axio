@@ -1494,6 +1494,12 @@ mod tests {
         }
     }
 
+    /// A path as it goes into a bash command: Git Bash on Windows reads a
+    /// backslash as an escape.
+    fn sh(p: &std::path::Path) -> String {
+        p.display().to_string().replace('\\', "/")
+    }
+
     fn with_hooks(agent: &mut Agent, doc: Value) {
         let mut h = Hooks::new(std::env::temp_dir());
         h.add(&doc, None, std::path::Path::new("test"));
@@ -1626,7 +1632,7 @@ mod tests {
         let _ = std::fs::remove_file(&marker);
         let cmd: &'static str = Box::leak(format!(
             r#"test -e {m} && exit 0; touch {m}; echo '{{"decision":"block","reason":"run the tests"}}'"#,
-            m = marker.display()
+            m = sh(&marker)
         ).into_boxed_str());
         with_hooks(&mut a, hook("Stop", "", cmd));
         a.prompt("fix it", &mut Log::default()).unwrap();
@@ -1767,6 +1773,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
     #[test]
     fn undo_that_partly_fails_can_be_retried() {
         use std::os::unix::fs::PermissionsExt;
@@ -2535,8 +2542,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("ran");
-        let command: &'static str =
-            Box::leak(format!("touch {}", marker.display()).into_boxed_str());
+        let command: &'static str = Box::leak(format!("touch {}", sh(&marker)).into_boxed_str());
         let mut agent = bash_each_prompt(command);
         agent.cwd = dir.clone();
         agent.set_permissions(crate::permissions::Permissions::default());
@@ -2571,7 +2577,11 @@ mod tests {
             ..Log::default()
         };
         agent.prompt("two", &mut log).unwrap();
-        assert!(marker.exists());
+        assert!(
+            marker.exists(),
+            "the command ran: {:?}",
+            agent.messages.iter().rev().nth(1)
+        );
         std::fs::remove_file(&marker).unwrap();
         let mut log = Log::default();
         agent.prompt("three", &mut log).unwrap();

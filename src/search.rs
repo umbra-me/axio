@@ -312,7 +312,7 @@ mod tests {
             let files = grep(&root, &json!({"pattern": "hello", "-i": true}), rg).unwrap();
             let names: Vec<&str> = files
                 .lines()
-                .map(|l| l.rsplit('/').next().unwrap())
+                .map(|l| l.rsplit(['/', '\\']).next().unwrap())
                 .collect();
             assert_eq!(names, ["README.md", "lib.rs", "main.rs"], "rg={rg}");
             let content = grep(
