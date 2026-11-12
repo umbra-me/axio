@@ -6,6 +6,7 @@ use std::time::Duration;
 
 pub mod anthropic;
 pub mod openai;
+pub mod responses;
 
 pub const DEFAULT_MODEL: &str = "anthropic/claude-opus-5-5";
 
@@ -13,6 +14,8 @@ pub const DEFAULT_MODEL: &str = "anthropic/claude-opus-5-5";
 pub enum Api {
     Anthropic,
     OpenAi,
+    /// The Responses API, for a ChatGPT sign-in.
+    Responses,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,10 +36,10 @@ impl Model {
             _ if spec.starts_with("claude") => ("anthropic".into(), spec.to_string()),
             _ => ("openai".into(), spec.to_string()),
         };
-        let api = if provider == "anthropic" {
-            Api::Anthropic
-        } else {
-            Api::OpenAi
+        let api = match provider.as_str() {
+            "anthropic" => Api::Anthropic,
+            crate::chatgpt::PROVIDER => Api::Responses,
+            _ => Api::OpenAi,
         };
         Model { provider, id, api }
     }
@@ -47,6 +50,13 @@ impl Model {
     pub fn context_window(&self) -> u64 {
         if let Some(n) = env("AXIO_CONTEXT_WINDOW").and_then(|v| v.parse().ok()) {
             return n;
+        }
+        if let Some(n) = learned_window(&self.to_string()) {
+            return n;
+        }
+        if self.provider == crate::chatgpt::PROVIDER {
+            // The smallest window the ChatGPT model list reports.
+            return 272_000;
         }
         let id = self.id.as_str();
         // Claude 4.6 and later have a 1M window; earlier Claude models 200k.
@@ -146,6 +156,7 @@ pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, Strin
     match req.model.api {
         Api::Anthropic => anthropic::complete(req, on),
         Api::OpenAi => openai::complete(req, on),
+        Api::Responses => responses::complete(req, on),
     }
 }
 
@@ -231,8 +242,23 @@ pub(crate) fn model_ids(list: &serde_json::Value) -> Result<Vec<String>, String>
     Ok(ids)
 }
 
+static WINDOWS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+
+/// Records a model's context window, as a provider's model list gives it.
+pub fn learn_window(model: &str, tokens: u64) {
+    if let Ok(mut w) = WINDOWS.lock() {
+        w.retain(|(m, _)| m != model);
+        w.push((model.to_string(), tokens));
+    }
+}
+
+fn learned_window(model: &str) -> Option<u64> {
+    let w = WINDOWS.lock().ok()?;
+    w.iter().find(|(m, _)| m == model).map(|(_, n)| *n)
+}
+
 /// Providers with a built-in endpoint.
-pub const KNOWN: [&str; 3] = ["anthropic", "openai", "openrouter"];
+pub const KNOWN: [&str; 4] = ["anthropic", "chatgpt", "openai", "openrouter"];
 
 /// Providers set up on this machine: known ones with a key, then any other
 /// endpoint saved with a base URL.
@@ -244,7 +270,10 @@ pub fn signed_in() -> Vec<String> {
         .collect();
     if let Some(path) = crate::auth::path() {
         for (name, entry) in crate::auth::read(path) {
-            if name != "mcp" && !out.contains(&name) && entry["baseUrl"].is_string() {
+            if !matches!(name.as_str(), "mcp" | "chatgpt")
+                && !out.contains(&name)
+                && entry["baseUrl"].is_string()
+            {
                 out.push(name);
             }
         }
@@ -256,6 +285,7 @@ pub fn signed_in() -> Vec<String> {
 pub fn models(provider: &str) -> Result<Vec<String>, String> {
     let ids = match provider {
         "anthropic" => anthropic::models()?,
+        crate::chatgpt::PROVIDER => crate::chatgpt::models()?,
         p => openai::models(p)?,
     };
     Ok(ids
@@ -385,6 +415,7 @@ mod tests {
     #[test]
     fn parses_model_specs() {
         assert_eq!(Model::parse("claude-sonnet-5-5").api, Api::Anthropic);
+        assert_eq!(Model::parse("chatgpt/gpt-6-sol").api, Api::Responses);
         let m = Model::parse("openrouter/moonshot/kimi-k3");
         assert_eq!(
             (m.provider.as_str(), m.id.as_str(), m.api),

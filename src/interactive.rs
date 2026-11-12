@@ -16,6 +16,7 @@ fn display_name(provider: &str) -> String {
     match provider {
         "anthropic" => "Anthropic".into(),
         "openai" => "OpenAI".into(),
+        "chatgpt" => "ChatGPT subscription".into(),
         "openrouter" => "OpenRouter".into(),
         other => format!("{other} (OpenAI-compatible)"),
     }
@@ -174,6 +175,9 @@ pub fn pick_provider(agent: &mut Agent, term: &mut ui::Term, cache: &mut ModelCa
 /// Asks for what `provider` needs and saves it; `other` also asks for a name
 /// and a base URL. Returns the provider's name once saved.
 fn login_to(term: &mut ui::Term, provider: &str) -> Option<String> {
+    if provider == crate::chatgpt::PROVIDER {
+        return chatgpt_sign_in(term).then(|| provider.to_string());
+    }
     let path = auth::path()?.clone();
     let keys = term.keys.as_mut().expect("keys");
     let name = if provider == "other" {
@@ -223,6 +227,77 @@ fn login_to(term: &mut ui::Term, provider: &str) -> Option<String> {
     }
     note(term, &format!("saved {name} to {}", path.display()));
     Some(name)
+}
+
+/// Signs in with ChatGPT in the browser. The browser comes back to axio on
+/// its own; when it runs elsewhere, the address it ended on can be pasted.
+fn chatgpt_sign_in(term: &mut ui::Term) -> bool {
+    use crate::term::Key;
+    let pending = match crate::chatgpt::start() {
+        Ok(p) => p,
+        Err(e) => {
+            note(term, &format!("axio: {e}"));
+            return false;
+        }
+    };
+    crate::oauth::open_browser(&pending.url);
+    note(
+        term,
+        "Waiting for the browser. If it is on another machine, paste the address it ends on and press Enter. Esc cancels.",
+    );
+    let started = std::time::Instant::now();
+    let mut typed = String::new();
+    let show = |typed: &str| {
+        let room = crate::term::width().saturating_sub(4);
+        let tail: String = {
+            let chars: Vec<char> = typed.chars().collect();
+            chars[chars.len().saturating_sub(room)..].iter().collect()
+        };
+        print!("\r\x1b[K› {tail}");
+        let _ = std::io::stdout().flush();
+    };
+    show("");
+    let reply = loop {
+        match pending.poll() {
+            Ok(Some(r)) => break Ok(r),
+            Err(e) => break Err(e),
+            Ok(None) => {}
+        }
+        if started.elapsed() > std::time::Duration::from_secs(600) {
+            break Err("timed out waiting for the browser".into());
+        }
+        let keys = term.keys.as_mut().expect("keys");
+        match keys.next_within(std::time::Duration::from_millis(100)) {
+            Some(Key::Esc | Key::Ctrl('c')) => break Err("sign-in cancelled".into()),
+            Some(Key::Char(c)) => typed.push(c),
+            Some(Key::Paste(t)) => typed.push_str(t.trim()),
+            Some(Key::Backspace) => {
+                typed.pop();
+            }
+            Some(Key::Enter) if !typed.trim().is_empty() => match pending.pasted(&typed) {
+                Ok(r) => break Ok(r),
+                Err(e) => {
+                    print!("\r\x1b[K");
+                    note(term, &e);
+                    typed.clear();
+                }
+            },
+            _ => continue,
+        }
+        show(&typed);
+    };
+    print!("\r\x1b[K");
+    let _ = std::io::stdout().flush();
+    match reply.and_then(|(code, client)| pending.finish(&code, &client)) {
+        Ok(()) => {
+            note(term, "signed in with ChatGPT");
+            true
+        }
+        Err(e) => {
+            note(term, &format!("axio: {e}"));
+            false
+        }
+    }
 }
 
 /// `/login [provider]`.
@@ -400,6 +475,7 @@ mod tests {
             rows,
             vec![
                 ("anthropic", "Anthropic · signed in · in use"),
+                ("chatgpt", "ChatGPT subscription · not set up"),
                 ("openai", "OpenAI · not set up"),
                 ("openrouter", "OpenRouter · not set up"),
                 ("local", "local (OpenAI-compatible) · signed in"),

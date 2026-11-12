@@ -190,6 +190,18 @@ impl Keys {
         parse(&mut |w| self.byte(w))
     }
 
+    /// The next key if one arrives within `wait`.
+    pub fn next_within(&mut self, wait: Duration) -> Option<Key> {
+        if let Some(k) = self.typed_ahead.pop_front() {
+            return Some(k);
+        }
+        if self.pending.is_empty() {
+            let b = self.rx.recv_timeout(wait).ok()?;
+            self.pending.push_back(b);
+        }
+        parse(&mut |w| self.byte(w))
+    }
+
     /// During a turn: whether Esc or Ctrl-C was pressed. Other keys are kept
     /// for the next prompt.
     pub fn stop_requested(&mut self) -> bool {

@@ -172,11 +172,15 @@ fn parse_stream<R: BufRead>(
             return Err(format!("provider error: {err}"));
         }
         if let Some(u) = ev.get("usage").filter(|u| u.is_object()) {
-            usage.input = u["prompt_tokens"].as_u64().unwrap_or(0);
-            usage.output = u["completion_tokens"].as_u64().unwrap_or(0);
+            // prompt_tokens already counts the cached ones.
             usage.cache_read = u["prompt_tokens_details"]["cached_tokens"]
                 .as_u64()
                 .unwrap_or(0);
+            usage.input = u["prompt_tokens"]
+                .as_u64()
+                .unwrap_or(0)
+                .saturating_sub(usage.cache_read);
+            usage.output = u["completion_tokens"].as_u64().unwrap_or(0);
         }
         let Some(choice) = ev["choices"].get(0) else {
             return Ok(true);
@@ -249,7 +253,7 @@ data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"c1","f
 
 data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"a\"}"}}]},"finish_reason":"tool_calls"}]}
 
-data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}
+data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":2}}}
 
 data: [DONE]
 
@@ -259,6 +263,11 @@ data: [DONE]
                 .unwrap();
         assert_eq!(reply.stop, Stop::ToolUse);
         assert_eq!(reply.usage.output, 3);
+        assert_eq!(
+            (reply.usage.input, reply.usage.cache_read),
+            (3, 2),
+            "cached counted once"
+        );
         assert_eq!(
             reply.content[0],
             Block::Text {

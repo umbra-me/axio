@@ -147,6 +147,7 @@ pub fn missing_key(provider: &str) -> bool {
             get("ANTHROPIC_API_KEY", provider, "apiKey").is_none()
                 && get("ANTHROPIC_AUTH_TOKEN", provider, "authToken").is_none()
         }
+        "chatgpt" => !crate::chatgpt::signed_in(),
         "openai" | "openrouter" => {
             let env = format!("{}_API_KEY", provider.to_uppercase());
             get(&env, provider, "apiKey").is_none()

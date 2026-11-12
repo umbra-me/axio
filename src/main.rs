@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod background;
+mod chatgpt;
 mod compact;
 mod context;
 mod crypto;
@@ -895,7 +896,11 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    if auth::missing_key(&agent.model.provider) {
+    if agent.model.provider == chatgpt::PROVIDER {
+        if auth::missing_key(chatgpt::PROVIDER) {
+            eprintln!("axio: not signed in to ChatGPT yet; run /login chatgpt");
+        }
+    } else if auth::missing_key(&agent.model.provider) {
         auth::first_run(&agent.model.provider, &home)?;
     }
     let _raw = term::RawMode::enter().ok_or("could not configure the terminal (stty failed)")?;
