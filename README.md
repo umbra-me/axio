@@ -302,6 +302,14 @@ Commands:
   The model browser also shows the effort under the list: Left and Right
   change it for the highlighted model.
 - `/resume` picks a saved session from this directory to continue.
+- `/mcp` lists MCP servers with their state (tools and transport, signed in,
+  needs sign-in, or why one is not connected); choosing one shows its tools,
+  and HTTP servers can be signed in to or out of from there.
+- `/skills` lists skills and commands, the ones you can run first; Enter runs
+  one, or shows where a model-only skill lives. `/agents` lists sub-agent
+  roles and shows one in full. `/hooks` lists hooks by event with their
+  source, `/plugins` what each plugin provides, and `/status` the model,
+  profile, project, session, context and servers at a glance.
 - `/new`, `/undo` (put back the files the last turn wrote or edited),
   `/output` (the last tool call's full result), `/compact`, `/profile`,
   `/session`, `/help`, `/quit`, plus plugin commands and skills.

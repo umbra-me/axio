@@ -627,6 +627,190 @@ pub fn resume(agent: &mut Agent, term: &mut ui::Term, dir: &Path) {
     }
 }
 
+/// Prints lines under a dim title, indented like tool output.
+fn panel(term: &ui::Term, title: &str, lines: &[String]) {
+    eprintln!("{}", term.paint("\x1b[1m", title));
+    for l in lines {
+        eprintln!("  {l}");
+    }
+}
+
+/// `/mcp`: the configured servers and what each is doing; choosing one
+/// lists its tools, and HTTP servers can be signed in to or out of.
+pub fn mcp(
+    agent: &Agent,
+    term: &mut ui::Term,
+    configured: &[crate::mcp::ServerConfig],
+    failed: &[String],
+) {
+    if configured.is_empty() {
+        return note(
+            term,
+            "no MCP servers are configured; add them to ~/.axio/agent/mcp.json or a project's .mcp.json",
+        );
+    }
+    let running = agent.mcp().servers();
+    let rows = crate::panels::mcp_rows(configured, &running, failed, &crate::oauth::signed_in);
+    let keys = term.keys.as_mut().expect("keys");
+    let Some(i) = menu::pick(keys, Picker::new("MCP servers", rows, None), term.color) else {
+        return;
+    };
+    let server = &configured[i];
+    let tools: Vec<&crate::tools::ToolSpec> = running
+        .iter()
+        .find(|r| r.name == server.name)
+        .map(|r| {
+            agent
+                .mcp()
+                .specs
+                .iter()
+                .filter(|t| r.tools.contains(&t.name))
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(url) = &server.url else {
+        return show_tools(term, &server.name, &tools);
+    };
+    let signed_in = crate::oauth::signed_in(url);
+    let mut actions = vec![Choice::new(
+        "Show tools",
+        format!(
+            "{} tool{}",
+            tools.len(),
+            if tools.len() == 1 { "" } else { "s" }
+        ),
+    )];
+    actions.push(Choice::new(
+        if signed_in {
+            "Sign in again"
+        } else {
+            "Sign in"
+        },
+        "opens your browser",
+    ));
+    if signed_in {
+        actions.push(Choice::new("Sign out", "forgets the saved sign-in"));
+    }
+    let keys = term.keys.as_mut().expect("keys");
+    match menu::pick(keys, Picker::new(&server.name, actions, None), term.color) {
+        Some(0) => show_tools(term, &server.name, &tools),
+        Some(1) => mcp_sign_in(term, &server.name, url, !tools.is_empty()),
+        Some(2) => match crate::oauth::logout(url) {
+            Ok(_) => note(term, &format!("signed out of {}", server.name)),
+            Err(e) => note(term, &format!("axio: {e}")),
+        },
+        _ => {}
+    }
+}
+
+fn show_tools(term: &ui::Term, server: &str, tools: &[&crate::tools::ToolSpec]) {
+    if tools.is_empty() {
+        return note(
+            term,
+            &format!("{server} has no tools loaded in this session"),
+        );
+    }
+    let width = tools.iter().map(|t| t.name.len()).max().unwrap_or(0);
+    // Each description fits on its line, after the indent, name and gap.
+    let room = crate::term::width().saturating_sub(width + 6).max(10);
+    let lines: Vec<String> = tools
+        .iter()
+        .map(|t| {
+            let first = t.description.lines().next().unwrap_or("");
+            let about: String = if first.chars().count() > room {
+                let cut: String = first.chars().take(room - 1).collect();
+                format!("{}…", cut.trim_end())
+            } else {
+                first.to_string()
+            };
+            format!("{:width$}  {}", t.name, term.dim(&about))
+        })
+        .collect();
+    panel(term, &format!("{server} tools"), &lines);
+}
+
+/// Signs in to an MCP server in the browser while Esc stays available.
+fn mcp_sign_in(term: &mut ui::Term, name: &str, url: &str, loaded: bool) {
+    use crate::term::Key;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let target = url.to_string();
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::oauth::login(&target, &crate::oauth::open_browser));
+    });
+    note(term, "Waiting for the browser. Esc stops waiting.");
+    let result = loop {
+        if let Ok(r) = rx.try_recv() {
+            break r;
+        }
+        let keys = term.keys.as_mut().expect("keys");
+        if matches!(
+            keys.next_within(std::time::Duration::from_millis(100)),
+            Some(Key::Esc | Key::Ctrl('c'))
+        ) {
+            break Err("stopped waiting for the browser".into());
+        }
+    };
+    match result {
+        Ok(()) if loaded => note(term, &format!("signed in to {name}")),
+        Ok(()) => note(
+            term,
+            &format!("signed in to {name}; its tools load when axio next starts"),
+        ),
+        Err(e) => note(term, &format!("axio: {e}")),
+    }
+}
+
+/// `/skills`: skills and commands; Enter on one you can run returns it as a
+/// prompt, otherwise shows where it lives.
+pub fn skills(term: &mut ui::Term, lib: &crate::skills::Library) -> Option<String> {
+    let rows = crate::panels::skill_rows(lib);
+    if rows.is_empty() {
+        note(
+            term,
+            "no skills or commands; add them under ~/.axio/agent/skills/ and commands/, or install a plugin",
+        );
+        return None;
+    }
+    let keys = term.keys.as_mut().expect("keys");
+    let picked = menu::pick(
+        keys,
+        Picker::new("Skills and commands", rows.clone(), None),
+        term.color,
+    )?;
+    let label = &rows[picked].label;
+    if label.starts_with('/') {
+        return Some(label.clone());
+    }
+    if let Some(k) = lib.skills.iter().find(|k| &k.name == label) {
+        panel(
+            term,
+            &k.name,
+            &[
+                k.description.clone(),
+                format!("file: {}", k.path.display()),
+                "the model reads it when a task matches".into(),
+            ],
+        );
+    }
+    None
+}
+
+/// `/agents`: the sub-agent roles; choosing one shows it in full.
+pub fn agents(term: &mut ui::Term, roles: &[crate::roles::Role], enabled: bool) {
+    if !enabled {
+        note(
+            term,
+            "sub-agents are off in this profile; the standard and full profiles have the agents module",
+        );
+    }
+    let rows = crate::panels::role_rows(roles);
+    let keys = term.keys.as_mut().expect("keys");
+    if let Some(i) = menu::pick(keys, Picker::new("Sub-agent roles", rows, None), term.color) {
+        let lines = crate::panels::role_detail(&roles[i]);
+        panel(term, &roles[i].name, &lines[1..]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

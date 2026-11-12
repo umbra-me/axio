@@ -15,6 +15,7 @@ mod mcp;
 mod menu;
 mod message;
 mod oauth;
+mod panels;
 mod plan;
 mod plugin_cli;
 mod plugins;
@@ -74,8 +75,9 @@ Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
 Esc or Ctrl-C stops a running turn, Enter during one sends what you typed to
 the model at its next step, Ctrl-D exits. @path attaches a file.
-Commands: /new, /undo, /output, /compact, /model <model>, /effort <level>, /fast,
-/session, /help, /quit, plus your own
+Commands: /new, /undo, /output, /compact, /status, /model <model>,
+/effort <level>, /fast, /mcp, /skills, /agents, /hooks, /plugins, /session,
+/help, /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
 ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, OPENROUTER_API_KEY, <NAME>_BASE_URL and
@@ -196,6 +198,82 @@ fn model_line(agent: &Agent) -> String {
         s.push_str(" fast");
     }
     s
+}
+
+/// `/status`: what this session runs on, in a few lines.
+fn status_lines(
+    agent: &Agent,
+    profile: &profile::Profile,
+    project: Option<&std::path::Path>,
+    term: &ui::Term,
+    servers: &[mcp::ServerConfig],
+    failed: &[String],
+) -> Vec<String> {
+    let fast = match (agent.model.fast_mode(), agent.fast) {
+        (None, _) => "not available for this model".to_string(),
+        (Some(_), true) => "on".to_string(),
+        (Some(_), false) => "off (/fast)".to_string(),
+    };
+    let modules = agent.modules.names().join(", ");
+    let running = agent.mcp().servers().len();
+    let needs = failed.iter().filter(|f| f.contains(mcp::SIGN_IN)).count();
+    let mcp = match (servers.len(), needs) {
+        (0, _) => "none configured".to_string(),
+        (n, 0) => format!("{running} of {n} running"),
+        (n, k) => format!("{running} of {n} running, {k} need sign-in (/mcp)"),
+    };
+    let window = agent.model.context_window();
+    let used = agent.context.max(agent.estimated_context());
+    vec![
+        format!(
+            "model      {} · {}",
+            agent.model,
+            agent.effort.as_deref().unwrap_or("default effort")
+        ),
+        format!("fast mode  {fast}"),
+        format!(
+            "profile    {} · {}",
+            profile.name,
+            if modules.is_empty() {
+                "no modules".into()
+            } else {
+                modules
+            }
+        ),
+        format!(
+            "project    {}",
+            project.map_or("no trusted project configuration".to_string(), |p| p
+                .display()
+                .to_string())
+        ),
+        format!(
+            "session    {}",
+            agent
+                .session
+                .as_ref()
+                .map_or("not saved".to_string(), |s| s.path.display().to_string())
+        ),
+        format!(
+            "context    {} of {} ({}%)",
+            ui::tokens(used),
+            ui::tokens(window),
+            used * 100 / window.max(1)
+        ),
+        format!(
+            "this run   {} turns · {} out",
+            term.turns,
+            ui::tokens(term.total_out)
+        ),
+        format!("MCP        {mcp}"),
+        format!(
+            "sub-agents {}",
+            if agent.has_subagents() {
+                "on (/agents)"
+            } else {
+                "off in this profile"
+            }
+        ),
+    ]
 }
 
 /// `/fast`: turns fast mode on or off for this session, on models that
@@ -447,6 +525,27 @@ impl Sources<'_> {
         roles::load(&dirs)
     }
 
+    /// Every plugin that loads: name, version and folder.
+    fn all_plugins(&self) -> Vec<(String, Option<String>, std::path::PathBuf)> {
+        let mut v: Vec<(String, Option<String>, std::path::PathBuf)> = self
+            .plugins(self.home.join("plugins"))
+            .into_iter()
+            .map(|p| (p.name, p.version, p.root))
+            .collect();
+        if let Some(root) = self.project {
+            v.extend(
+                self.plugins(root.join(".axio/plugins"))
+                    .into_iter()
+                    .map(|p| (format!("{} (project)", p.name), p.version, p.root)),
+            );
+        }
+        v.extend(
+            self.imported_plugins()
+                .map(|(n, root, _)| (format!("{n} (imported)"), None, root.to_path_buf())),
+        );
+        v
+    }
+
     /// MCP servers from `mcp.json` and plugins, then a trusted project's.
     fn mcp(&self) -> Result<mcp::Config, String> {
         let mut c = mcp::Config::default();
@@ -527,29 +626,87 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
     )
 }
 
-/// Built-in commands: name, arguments and what each does.
-const BUILTINS: [(&str, &str, &str); 17] = [
-    ("model", "[provider/model]", "pick or switch the model"),
-    ("fast", "", "fast mode on or off, on models that have it"),
-    ("login", "[provider]", "save an API key for a provider"),
-    ("logout", "[provider]", "remove a provider's saved key"),
-    ("effort", "[level]", "pick or set reasoning effort"),
-    ("new", "", "start a new session"),
-    ("resume", "", "pick a saved session to continue"),
+/// Built-in commands: name, arguments, what each does and its section in
+/// /help.
+const BUILTINS: [(&str, &str, &str, &str); 23] = [
+    ("new", "", "start a new session", "Session"),
+    ("resume", "", "pick a saved session to continue", "Session"),
+    ("compact", "", "summarize the conversation now", "Session"),
     (
         "undo",
         "",
         "put back the files the last turn wrote or edited",
+        "Session",
     ),
-    ("output", "", "show the last tool call's full result"),
-    ("compact", "", "summarize the conversation now"),
-    ("profile", "", "show the profile, modules and plugins"),
-    ("session", "", "show the session file"),
-    ("help", "", "list the commands"),
-    ("quit", "", "exit (or Ctrl-D)"),
-    ("exit", "", "exit (or Ctrl-D)"),
-    ("clear", "", "start a new session"),
-    ("models", "", "pick the model"),
+    (
+        "output",
+        "",
+        "show the last tool call's full result",
+        "Session",
+    ),
+    (
+        "status",
+        "",
+        "model, profile, context and servers at a glance",
+        "Session",
+    ),
+    ("session", "", "show the session file", "Session"),
+    (
+        "model",
+        "[provider/model]",
+        "pick or switch the model",
+        "Model",
+    ),
+    ("effort", "[level]", "pick or set reasoning effort", "Model"),
+    (
+        "fast",
+        "",
+        "fast mode on or off, on models that have it",
+        "Model",
+    ),
+    (
+        "login",
+        "[provider]",
+        "save an API key for a provider",
+        "Model",
+    ),
+    (
+        "logout",
+        "[provider]",
+        "remove a provider's saved key",
+        "Model",
+    ),
+    (
+        "mcp",
+        "",
+        "MCP servers: status, tools, sign-in",
+        "Extensions",
+    ),
+    (
+        "skills",
+        "",
+        "skills and commands; run or inspect one",
+        "Extensions",
+    ),
+    ("agents", "", "sub-agent roles", "Extensions"),
+    ("hooks", "", "configured hooks by event", "Extensions"),
+    (
+        "plugins",
+        "",
+        "installed plugins and what they provide",
+        "Extensions",
+    ),
+    (
+        "profile",
+        "",
+        "show the profile, modules and plugins",
+        "Extensions",
+    ),
+    ("help", "", "list the commands", "Help"),
+    ("quit", "", "exit (or Ctrl-D)", "Help"),
+    ("exit", "", "exit (or Ctrl-D)", "Help"),
+    ("clear", "", "start a new session", "Session"),
+    ("models", "", "pick the model", "Model"),
 ];
 
 /// Other names for built-ins, which work but stay out of the menu and help.
@@ -559,8 +716,8 @@ const ALIASES: [&str; 3] = ["exit", "clear", "models"];
 fn command_list(lib: &skills::Library) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = BUILTINS
         .iter()
-        .filter(|(n, _, _)| !ALIASES.contains(n))
-        .map(|(n, _, about)| (n.to_string(), about.to_string()))
+        .filter(|(n, ..)| !ALIASES.contains(n))
+        .map(|(n, _, about, _)| (n.to_string(), about.to_string()))
         .collect();
     for c in &lib.commands {
         rows.push((c.name.clone(), c.description.clone()));
@@ -573,35 +730,49 @@ fn command_list(lib: &skills::Library) -> Vec<(String, String)> {
 }
 
 fn help(lib: &skills::Library) -> String {
-    let mut rows: Vec<(String, String)> = BUILTINS
-        .iter()
-        .filter(|(n, _, _)| !ALIASES.contains(n))
-        .map(|(n, args, about)| {
-            let usage = if args.is_empty() {
-                format!("/{n}")
-            } else {
-                format!("/{n} {args}")
-            };
-            (usage, about.to_string())
-        })
-        .collect();
-    for c in &lib.commands {
-        rows.push((format!("/{}", c.name), c.description.clone()));
+    let usage = |n: &str, args: &str| {
+        if args.is_empty() {
+            format!("/{n}")
+        } else {
+            format!("/{n} {args}")
+        }
+    };
+    let mut sections: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for (n, args, about, group) in BUILTINS.iter().filter(|(n, ..)| !ALIASES.contains(n)) {
+        let row = (usage(n, args), about.to_string());
+        match sections.iter_mut().find(|(g, _)| g == group) {
+            Some((_, rows)) => rows.push(row),
+            None => sections.push((group.to_string(), vec![row])),
+        }
     }
+    let mut yours: Vec<(String, String)> = lib
+        .commands
+        .iter()
+        .map(|c| (format!("/{}", c.name), c.description.clone()))
+        .collect();
     for k in lib.skills.iter().filter(|k| k.invocable) {
         let about: String = k.description.chars().take(70).collect();
-        rows.push((format!("/{}", k.name), format!("{about} (skill)")));
+        yours.push((format!("/{}", k.name), format!("{about} (skill)")));
     }
-    let width = rows
+    if !yours.is_empty() {
+        sections.push(("Yours".into(), yours));
+    }
+    let width = sections
         .iter()
-        .map(|(a, _)| a.chars().count())
+        .flat_map(|(_, rows)| rows.iter().map(|(a, _)| a.chars().count()))
         .max()
         .unwrap_or(0);
-    let mut s: String = rows
-        .iter()
-        .map(|(a, b)| format!("  {a:width$}  {b}\n"))
-        .collect();
-    s.push_str("\n  / opens the command menu · Enter sends · Alt-Enter or a trailing \\ adds a line · Up/Down history · Esc stops a turn");
+    let mut s = String::new();
+    for (group, rows) in &sections {
+        s.push_str(&format!("  {group}\n"));
+        for (a, b) in rows {
+            s.push_str(&format!("    {a:width$}  {b}\n"));
+        }
+    }
+    s.push_str(
+        "\n  / opens the command menu · Tab completes · Up/Down history · Ctrl-R searches it",
+    );
+    s.push_str("\n  Enter sends · Alt-Enter or a trailing \\ adds a line · Esc stops a turn");
     s
 }
 
@@ -920,6 +1091,7 @@ fn run() -> Result<ExitCode, String> {
         eprintln!("axio: skipped MCP server: {skipped}");
     }
     let started = mcp::Mcp::start(&servers, &cwd);
+    let mcp_failed = started.failed.clone();
     for failed in &started.failed {
         eprintln!("axio: MCP server failed to start: {failed}");
     }
@@ -957,6 +1129,7 @@ fn run() -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::SUCCESS);
     }
+    let role_list = roles.clone();
     if profile.modules.agents && subagent::depth() == 0 {
         agent.set_subagents(subagent::Host::new(roles, config.subagents.clone(), 0)?);
     }
@@ -1106,6 +1279,55 @@ fn run() -> Result<ExitCode, String> {
                 Err(e) => eprintln!("{}", term.dim(&e)),
             },
             ("/fast", _) => eprintln!("{}", term.dim(&toggle_fast(&mut agent))),
+            ("/mcp", _) => interactive::mcp(&agent, &mut term, &servers.servers, &mcp_failed),
+            ("/skills", _) => {
+                if let Some(run) = interactive::skills(&mut term, &library) {
+                    prompt = run;
+                }
+            }
+            ("/agents", _) => interactive::agents(&mut term, &role_list, agent.has_subagents()),
+            ("/hooks", _) => {
+                for l in panels::hook_lines(&agent.hooks.list()) {
+                    eprintln!("  {l}");
+                }
+            }
+            ("/plugins", _) => {
+                let plugins = sources.all_plugins();
+                if plugins.is_empty() {
+                    eprintln!(
+                        "{}",
+                        term.dim("no plugins installed; `axio plugin install <git url>` adds one")
+                    );
+                }
+                for (name, version, root) in plugins {
+                    let provides = panels::plugin_provides(&root).join(", ");
+                    eprintln!(
+                        "  {name}{}  {}",
+                        version.map(|v| format!(" {v}")).unwrap_or_default(),
+                        term.dim(&format!(
+                            "{} · {}",
+                            if provides.is_empty() {
+                                "nothing axio uses"
+                            } else {
+                                &provides
+                            },
+                            root.display()
+                        ))
+                    );
+                }
+            }
+            ("/status", _) => {
+                for l in status_lines(
+                    &agent,
+                    &profile,
+                    project.as_deref(),
+                    &term,
+                    &servers.servers,
+                    &mcp_failed,
+                ) {
+                    eprintln!("  {l}");
+                }
+            }
             ("/effort", level) => {
                 agent.effort = Some(level.to_string());
                 eprintln!("{}", term.dim(&format!("effort: {level} for this session")));

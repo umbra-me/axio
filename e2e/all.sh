@@ -36,5 +36,6 @@ h() { mktemp -d "$T/h.XXXXXX"; }
   timeout 60 python3 "$D/hook_banner.py" "$B" "$(h)"
   timeout 90 python3 "$D/agents_tui.py" "$B" "$(h)"
   timeout 60 python3 "$D/fast_mode.py" "$B" "$(h)"
+  timeout 90 python3 "$D/panels.py" "$B" "$(h)"
 } 2>&1 | grep -E '^(PASS|FAIL)' > "$OUT"
 grep FAIL "$OUT"; echo "$(grep -c PASS "$OUT") passed, $(grep -c FAIL "$OUT") failed"

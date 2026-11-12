@@ -63,6 +63,8 @@ struct Hook {
     timeout: Duration,
     /// The plugin folder, for `${CLAUDE_PLUGIN_ROOT}`.
     root: Option<PathBuf>,
+    /// The file it came from.
+    source: String,
 }
 
 /// Hooks declared somewhere other than a known event or command are reported
@@ -125,6 +127,7 @@ impl Hooks {
                         command: command.to_string(),
                         timeout,
                         root: root.map(Path::to_path_buf),
+                        source: source.display().to_string(),
                     });
                 }
             }
@@ -149,6 +152,21 @@ impl Hooks {
             project_dir,
             ..Hooks::default()
         }
+    }
+
+    /// Every hook: event, matcher, command and the file it came from.
+    pub fn list(&self) -> Vec<(&'static str, &str, &str, &str)> {
+        self.hooks
+            .iter()
+            .map(|h| {
+                (
+                    h.event.name(),
+                    h.matcher.as_str(),
+                    h.command.as_str(),
+                    h.source.as_str(),
+                )
+            })
+            .collect()
     }
 
     pub fn has(&self, event: Event) -> bool {

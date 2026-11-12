@@ -282,7 +282,7 @@ struct HttpConn {
     cwd: PathBuf,
 }
 
-const SIGN_IN: &str = "the server needs a sign-in";
+pub const SIGN_IN: &str = "the server needs a sign-in";
 
 fn sign_in_hint(name: &str) -> String {
     format!("{SIGN_IN}: run `axio mcp login {name}` (or set an Authorization header)")
@@ -756,6 +756,15 @@ impl Server {
 }
 
 /// Every configured server, started together when a session begins.
+/// A running server, for `/mcp`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ServerInfo {
+    pub name: String,
+    pub url: Option<String>,
+    /// Model-facing tool names.
+    pub tools: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct Mcp {
     servers: Vec<Mutex<Server>>,
@@ -869,6 +878,19 @@ impl Mcp {
                 parts.join("\n\n")
             )
         })
+    }
+
+    /// The servers that started, with their tools.
+    pub fn servers(&self) -> Vec<ServerInfo> {
+        self.servers
+            .iter()
+            .filter_map(|s| s.lock().ok())
+            .map(|s| ServerInfo {
+                name: s.config.name.clone(),
+                url: s.config.url.clone(),
+                tools: s.tools.iter().map(|(n, _)| n.clone()).collect(),
+            })
+            .collect()
     }
 
     pub fn owns(&self, tool: &str) -> bool {
