@@ -69,6 +69,10 @@ under Unreleased.
 - `compactModel`, and an optional `prompt` for WebFetch answered by the fast
   model (#58).
 
+**Terminal panels**
+- `/mcp`, `/skills`, `/agents`, `/hooks`, `/plugins` and `/status`, and
+  `/help` grouped into sections (#68).
+
 **Models**
 - Fast mode as an opt-in toggle on models that have it: `/fast`,
   `"fastMode"` in settings, the price shown when it turns on, standard speed

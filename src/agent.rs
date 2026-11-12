@@ -158,6 +158,14 @@ impl Agent {
         self.mcp = Arc::new(mcp);
     }
 
+    pub fn mcp(&self) -> &Mcp {
+        &self.mcp
+    }
+
+    pub fn has_subagents(&self) -> bool {
+        self.subagents.is_some()
+    }
+
     /// Adds the Agent tool, run by `host`.
     pub fn set_subagents(&mut self, host: crate::subagent::Host) {
         self.tools.push(host.tool_spec());
