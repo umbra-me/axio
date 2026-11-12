@@ -387,7 +387,15 @@ mod tests {
         assert_eq!(names, ["explore", "research", "review", "code"]);
         let explore = &roles[0];
         assert_eq!(explore.tools.as_deref().unwrap(), ["Read", "Grep", "Glob"]);
-        assert_eq!(explore.model, Pick::Value("fast".into()));
+        assert_eq!(explore.model, Pick::Inherit);
+        for r in &roles {
+            assert_eq!(
+                (&r.model, r.effort != Pick::Value("low".into())),
+                (&Pick::Inherit, true),
+                "built-in {} runs on the main model unless settings say otherwise",
+                r.name
+            );
+        }
         assert_eq!(explore.sandbox, Some(Confine::ReadOnly));
         assert!(explore.instructions.starts_with("You search"));
         assert_eq!(roles[2].context, Sees::Rules);
@@ -475,8 +483,8 @@ mod tests {
 
         let (spec, notes) = resolve(by("explore"), &call, &p, &s).unwrap();
         assert_eq!(spec.task, "find it");
-        assert_eq!(spec.model.as_deref(), Some("anthropic/claude-haiku-4-5"));
-        assert_eq!(spec.effort.as_deref(), Some("low"));
+        assert_eq!(spec.model.as_deref(), Some("anthropic/claude-opus-5-5"));
+        assert_eq!(spec.effort.as_deref(), Some("high"));
         assert_eq!(spec.tools, ["Read", "Grep", "Glob"]);
         assert_eq!(spec.sandbox, Some(Confine::ReadOnly));
         assert_eq!(spec.cwd.as_deref(), Some(Path::new("/work")));
@@ -493,7 +501,8 @@ mod tests {
             model: Some("anthropic/claude-opus-5-5".into()),
             ..call.clone()
         };
-        let (spec, notes) = resolve(by("explore"), &asked, &p, &s).unwrap();
+        let fixed = role("---\nname: quick\nmodel: fast\n---\nx");
+        let (spec, notes) = resolve(&fixed, &asked, &p, &s).unwrap();
         assert_eq!(spec.model.as_deref(), Some("anthropic/claude-haiku-4-5"));
         assert_eq!(notes.len(), 1, "{notes:?}");
 

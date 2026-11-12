@@ -85,8 +85,8 @@ work unchanged. `axio agents` lists them. Four are built in:
 
 | Role | Tools | Model, effort | Sees | Sandbox |
 |---|---|---|---|---|
-| `explore` | Read, Grep, Glob | fast, low | brief | read-only |
-| `research` | WebFetch, Read | fast, low | brief | read-only |
+| `explore` | Read, Grep, Glob | the main agent's | brief | read-only |
+| `research` | WebFetch, Read | the main agent's | brief | read-only |
 | `review` | Read, Grep, Glob, Bash | the main agent's, high | rules | read-only |
 | `code` | Read, Write, Edit, Bash, Grep, Glob | the main agent's | rules | the main agent's |
 
@@ -112,6 +112,9 @@ sandbox: project     # read-only | project | inherit (default)
 You write tests for the change described in the brief…
 ```
 
+Built-in roles use the main agent's model and effort; a role runs on a
+smaller model only when you set it, for example
+`"subagents": {"roles": {"explore": {"model": "fast", "effort": "low"}}}`.
 `fast` is `subagents.fastModel`, else Haiku 4.5 on Anthropic or
 `gpt-6-luna` on a ChatGPT sign-in, else the main agent's model. A sub-agent's
 sandbox is never looser than the main agent's. Settings, all optional:
