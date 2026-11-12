@@ -11,7 +11,14 @@ axio -p "explain src/"    # one answer, then exit
 git diff | axio -p "review this"
 axio -c                   # continue the last session in this directory
 axio -r                   # pick one of this directory's recent sessions
+axio update               # install the latest release (--check only looks)
 ```
+
+Release binaries for macOS, Linux and Windows are on the
+[releases page](https://github.com/umbra-me/axio/releases), each listed in
+`SHA256SUMS`. `axio update` downloads the one for your platform, checks its
+SHA-256 against that file and replaces the running binary; it only reads
+from GitHub when you run it.
 
 Runs on macOS and Linux. Windows support is experimental: it builds and
 passes the test suite, and needs [Git for Windows](https://gitforwindows.org)

@@ -36,6 +36,7 @@ mod term;
 mod toml_lite;
 mod tools;
 mod ui;
+mod update;
 mod web;
 
 use agent::Agent;
@@ -53,6 +54,7 @@ Usage: axio [options] [prompt...]
        axio mcp list | login <name> | logout <name>
        axio auth list | set <provider> [field] | remove <provider>
        axio profile [name]   (show or set the default profile)
+       axio update [--check]   (install the latest release)
 
 ax is the same as axio; axio-full, axio-min (or any axio-<profile>) start
 that profile.
@@ -1135,6 +1137,9 @@ fn run() -> Result<ExitCode, String> {
         } else {
             ExitCode::FAILURE
         });
+    }
+    if all.first().is_some_and(|a| a == "update") {
+        return update::main(&all[1..]);
     }
     if all.first().is_some_and(|a| a == "profile") {
         let home = context::home();

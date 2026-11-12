@@ -99,6 +99,11 @@ under Unreleased.
   `"fastMode"` in settings, the price shown when it turns on, standard speed
   when the provider refuses it (#66).
 
+**Updates**
+- `axio update` installs the latest GitHub release for this platform after
+  checking its SHA-256 against the release's `SHA256SUMS`; `--check` only
+  reports whether one is available.
+
 **Project**
 - Licensed under Apache-2.0 (#67).
 - Windows (experimental): builds with the MSVC toolchain and runs in Windows
