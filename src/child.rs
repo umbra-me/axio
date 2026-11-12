@@ -170,6 +170,8 @@ pub fn main() -> Result<bool, String> {
         None => std::env::current_dir().map_err(|e| e.to_string())?,
     };
     let home = crate::context::home();
+    // Keys and base URLs saved with `axio auth` or /login.
+    crate::auth::set_home(&home);
     let agent = agent(&spec, &home, cwd)?;
     Ok(drive(agent, &spec, &mut std::io::stdout().lock()))
 }
