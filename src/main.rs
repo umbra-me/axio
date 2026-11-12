@@ -20,6 +20,7 @@ mod panels;
 mod plan;
 mod plugin_cli;
 mod plugins;
+mod private;
 mod profile;
 mod provider;
 mod roles;
@@ -471,13 +472,9 @@ fn load_history() -> Vec<String> {
 fn save_history(entry: &str) {
     let path = history_path();
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = private::dir(dir);
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
+    if let Ok(mut f) = private::append(&path) {
         let _ = writeln!(f, "{}", serde_json::Value::String(entry.into()));
     }
 }
@@ -1177,6 +1174,10 @@ fn run() -> Result<ExitCode, String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let home = context::home();
     oauth::set_home(&home);
+    // Transcripts, history and tool output can hold anything a tool saw;
+    // keep the whole folder private, including files from older versions.
+    let _ = private::dir(&home);
+    private::set_logs(home.join("logs"));
     let interactive = !args.print && io::stdin().is_terminal();
     let project = trusted_project(&home, &cwd, &args, interactive)?;
     let config = settings::Settings::load(&home, project.as_deref())?;

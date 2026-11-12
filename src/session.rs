@@ -1,7 +1,7 @@
 use crate::compact;
 use crate::message::{Block, Message};
 use serde_json::{Value, json};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ pub struct Session {
 
 impl Session {
     pub fn create(dir: &Path, cwd: &Path) -> Result<Session, String> {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        crate::private::dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -36,11 +36,7 @@ impl Session {
         let err = |e: std::io::Error| format!("{}: {e}", path.display());
         // A crash can leave a half-written last line; start ours on a fresh one.
         let torn = last_byte(&path).is_some_and(|c| c != b'\n');
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(err)?;
+        let mut file = crate::private::append(&path).map_err(err)?;
         if torn {
             file.write_all(b"\n").map_err(err)?;
         }
@@ -208,6 +204,18 @@ pub fn recent(dir: &Path, limit: usize) -> Vec<Summary> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn sessions_are_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("axio-session-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let s = Session::create(&dir.join("sessions/-x-"), &dir).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&s.path), 0o600);
+        assert_eq!(mode(&dir.join("sessions/-x-")), 0o700);
+    }
+
     use crate::message::Message as M;
 
     #[test]

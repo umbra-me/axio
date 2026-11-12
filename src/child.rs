@@ -296,6 +296,7 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     let home = crate::context::home();
     // Keys and base URLs saved with `axio auth` or /login.
     crate::auth::set_home(&home);
+    crate::private::set_logs(home.join("logs"));
     if let Some(c) = spec.sandbox {
         let root = crate::settings::project_root(&cwd);
         crate::sandbox::activate(match c {
