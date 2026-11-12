@@ -53,7 +53,7 @@ A profile picks built-in modules, which plugins load, and defaults.
 | `plan` | `TodoWrite`, a short task list shown as it changes |
 | `background` | `Bash` with `run_in_background`: output goes to a log the model reads, `TaskStop` ends it, and the model hears when it exits. Tasks end when axio exits |
 | `agents` | `Agent`: sub-agents, below |
-| `web` | `WebFetch`: an http(s) GET, with HTML reduced to text and links kept |
+| `web` | `WebFetch`: an http(s) GET, with HTML reduced to text and links kept. With a `prompt`, the fast model answers it from the page and only the answer enters the conversation |
 | `sandbox` | Bash may write only in the project and temporary folders, and has no network unless `"sandboxNetwork": true`; Write and Edit follow the same limits. Seatbelt on macOS, bubblewrap on Linux. Hooks and MCP servers are not sandboxed |
 
 Choose one with `--profile`, `AXIO_PROFILE` or `"profile"` in settings;
@@ -150,7 +150,9 @@ Grok keep MCP servers in TOML, which axio reads with a small built-in reader.
 
 ## Settings and trust
 
-`~/.axio/agent/settings.json` holds `model`, `effort` and `profile`.
+`~/.axio/agent/settings.json` holds `model`, `effort` and `profile`, and
+`compactModel` (`fast`, `inherit` or a model) for the model that writes
+compaction summaries; it defaults to the main model.
 `/effort <level>` changes reasoning effort for the session. A
 project's `.axio/settings.json` overrides them, but project configuration
 (`.axio/`, `.mcp.json`) can make axio run programs, so it loads only after you

@@ -1,5 +1,6 @@
 //! The `web` module's WebFetch tool: an HTTP GET that turns HTML into
-//! readable text. The model reads the result itself; no second model call.
+//! readable text. With a `prompt`, the agent has a small model answer it from
+//! the page (see `Agent::digest`).
 
 use serde_json::{Value, json};
 use std::io::Read;
@@ -10,10 +11,13 @@ const MAX_BYTES: u64 = 5 * 1024 * 1024;
 pub fn spec() -> crate::tools::ToolSpec {
     crate::tools::ToolSpec {
         name: "WebFetch".into(),
-        description: "Fetch a web page or text file over http(s) and return it as text. HTML is reduced to readable text with links kept.".into(),
+        description: "Fetch a web page or text file over http(s). HTML is reduced to readable text with links kept. With a prompt, a small model answers it from the page and only the answer comes back, which keeps long pages out of the conversation; without one you get the whole text.".into(),
         schema: json!({
             "type": "object",
-            "properties": {"url": {"type": "string", "description": "An http or https URL"}},
+            "properties": {
+                "url": {"type": "string", "description": "An http or https URL"},
+                "prompt": {"type": "string", "description": "What to find on the page; leave out for the whole text"}
+            },
             "required": ["url"],
             "additionalProperties": false
         }),
