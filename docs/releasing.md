@@ -18,8 +18,8 @@ Every pull request adds its line under `## Unreleased`.
 
 1. Move the `## Unreleased` entries under a new `## [X.Y.Z] - YYYY-MM-DD`
    heading and leave an empty `## Unreleased` above it.
-2. Set `version = "X.Y.Z"` in `Cargo.toml` and run `cargo build --locked`
-   so `Cargo.lock` follows.
+2. Set `version = "X.Y.Z"` in `Cargo.toml` and run `cargo build --offline`
+   so `Cargo.lock` follows (`--locked` refuses to write the new version).
 3. Check that the notes come out: `sh scripts/release-notes.sh X.Y.Z`.
 4. Merge that as `chore(release): X.Y.Z`, then tag the merge commit and push
    the tag:
