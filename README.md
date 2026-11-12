@@ -117,15 +117,18 @@ mode when it is not the default. Start in a mode with `--permission-mode`,
 
 `Bash(git log:*)` allows `git log` and anything after it. A command joined
 with `&&`, `;` or `|` runs only when every part is allowed, and commands with
-`$(...)`, `${...}`, backticks, `<` or `>` always ask. Deny rules win, even
-over bypass. A Bash deny rule checks every command in the line, nested ones
-included, past assignments and wrappers such as `env` or `sudo`. When a
-command cannot be checked with certainty (its program's name comes from an
-expansion, a wrapper gets options, or it runs through `bash -c`, `eval`,
-`xargs` or `find -exec`), axio asks first, even in bypass mode, as long as
-there are Bash deny rules. It cannot see what a script or another program
-runs, so treat Bash deny rules as a guard against mistakes, and use the
-`sandbox` module or a container for a hard boundary.
+`$(...)`, `${...}`, backticks, `<` or `>` never match an allow rule, so they
+ask. Deny rules win, even over bypass. A Bash deny rule checks every command
+in the line, nested ones included, past assignments and wrappers such as `env`
+or `sudo`. While any Bash deny rule is set, bypass mode runs without asking
+only commands written in plain shell: words, quotes, `$NAME`, `;`, `&&`,
+`||`, `|` and simple redirections. Anything else (here-documents, `$(…)`,
+`((…))`, `case`, functions, backslashes, `!`) asks first, as does a command
+whose program is named by an expansion, a wrapper given options, or anything
+that runs other commands (`bash -c`, `eval`, `xargs`, `find -exec`, `trap`).
+Deny rules cannot see what a script or another program runs, so treat them as
+a guard against mistakes, and use the `sandbox` module or a container for a
+hard boundary.
 Sub-agents follow the same mode and rules, and their questions come to your
 terminal. Without a terminal (`-p`), a call that would ask is refused with a
 note on how to allow it. PreToolUse hooks can still allow, deny or ask.

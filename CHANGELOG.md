@@ -196,10 +196,12 @@ Found by a pre-release review.
   quoted words stay whole, redirections and their targets are set aside,
   `NAME=value` assignments and wrappers (`command`, `env`, `sudo`, `exec`,
   `nohup`, `time`, `nice`) are skipped, `/bin/rm` counts as `rm`, and commands
-  inside `"$(…)"` are seen. A command they cannot be sure of (a program name
-  from an expansion, a wrapper with options, `bash -c`, `eval`, `xargs`,
-  `find -exec`) asks first, even in bypass mode. They remain a guard against
-  mistakes rather than a boundary; `SECURITY.md` lists the limits.
+  inside `"$(…)"` are seen. While a Bash deny rule is set, bypass mode runs
+  only plain shell without asking (words, quotes, `$NAME`, `;`, `&&`, `||`,
+  `|`, simple redirections); anything else, a program named by an expansion,
+  a wrapper with options, or a command that runs others (`bash -c`, `eval`,
+  `xargs`, `find -exec`, `trap`, `declare`) asks first. They remain a guard
+  against mistakes rather than a boundary; `SECURITY.md` lists the limits.
 - Path deny rules also refuse a symlink whose target has a denied name, even
   outside the project, a symlink to nothing yet, and any file with more than
   one hard link.

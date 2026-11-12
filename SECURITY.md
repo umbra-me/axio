@@ -32,9 +32,10 @@ allowed it to do is not a vulnerability. These are:
 These are not treated as vulnerabilities:
 
 - Bash deny rules see the command line, not what a program does. A script, an
-  interpreter (`python -c`), an alias or a function defined elsewhere can run
-  a denied command. Lines axio cannot read with certainty ask first; see
-  Permissions in the README.
+  interpreter (`python -c`), a build tool, an alias or function from a shell
+  start-up file, or a copy or link of a program under another name can run a
+  denied command. With Bash deny rules set, bypass mode asks before anything
+  but plain shell; see Permissions in the README.
 - Path rules are checked before a file is written, so another process that
   swaps a symlink between the check and the write can redirect it.
 - On Windows there is no sandbox module, and hard links are not detected.
