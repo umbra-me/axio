@@ -40,6 +40,9 @@ pub trait Ui {
     }
 }
 
+/// Sent with the last tool results a turn limit allows.
+pub const TURN_LIMIT_NOTE: &str = "[axio] You have reached your turn limit. Do not call any more tools; reply now with your final answer from what you have found.";
+
 /// How many times Stop hooks may send the model back to work in one turn.
 const MAX_STOP_CONTINUATIONS: usize = 8;
 
@@ -62,6 +65,9 @@ pub struct Agent {
     /// first wait between them (it doubles).
     pub max_retries: u32,
     pub retry_unit: Duration,
+    /// Rounds of tool calls one prompt may take; after the last one the
+    /// model gets one more reply to answer without tools.
+    pub max_turns: Option<usize>,
     /// Files the latest turn wrote or edited, with what they held before
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
@@ -97,6 +103,7 @@ impl Agent {
             complete: Arc::new(provider::complete),
             max_retries: 4,
             retry_unit: Duration::from_secs(1),
+            max_turns: None,
             changed: Default::default(),
         }
     }
@@ -107,6 +114,30 @@ impl Agent {
         self.tools = tools::specs_for(modules);
         self.tools.extend(mcp.specs.iter().cloned());
         self.mcp = Arc::new(mcp);
+    }
+
+    #[cfg(test)]
+    pub fn set_complete(
+        &mut self,
+        f: impl Fn(&Request, &mut dyn FnMut(Delta)) -> Result<Reply, String> + Send + Sync + 'static,
+    ) {
+        self.complete = Arc::new(f);
+    }
+
+    pub fn tool_names(&self) -> Vec<&str> {
+        self.tools.iter().map(|t| t.name.as_str()).collect()
+    }
+
+    /// Offers only the named tools. Calls to any other tool are refused.
+    pub fn keep_tools(&mut self, names: &[String]) -> Result<(), String> {
+        if let Some(missing) = names
+            .iter()
+            .find(|n| !self.tools.iter().any(|t| &t.name == *n))
+        {
+            return Err(format!("no tool named {missing} here"));
+        }
+        self.tools.retain(|t| names.contains(&t.name));
+        Ok(())
     }
 
     /// Compaction starts at 85% of the window, or AXIO_COMPACT_AT tokens.
@@ -398,6 +429,7 @@ impl Agent {
 
     fn run_turn(&mut self, ui: &mut dyn Ui) -> Result<(), String> {
         let mut continuations = 0;
+        let mut rounds = 0;
         loop {
             if self.modules.background {
                 for note in crate::background::finished() {
@@ -421,6 +453,22 @@ impl Agent {
                 .map(|(id, name, input)| (id.into(), name.into(), input.clone()))
                 .collect();
             self.push(msg)?;
+            rounds += 1;
+            let over = self.max_turns.filter(|max| rounds > *max);
+            if let (Some(max), false) = (over, calls.is_empty()) {
+                let content = calls
+                    .into_iter()
+                    .map(|(id, _, _)| Block::ToolResult {
+                        id,
+                        output: "not run: the turn limit was reached".into(),
+                        is_error: true,
+                    })
+                    .collect();
+                self.push(Message::User { content })?;
+                return Err(format!(
+                    "reached the turn limit ({max}) without a final answer"
+                ));
+            }
             if calls.is_empty() {
                 let active = continuations > 0;
                 let o = self.hook(Hook::Stop, None, json!({"stop_hook_active": active}), ui);
@@ -450,6 +498,8 @@ impl Agent {
                     Err("not run: the user stopped the turn".into())
                 } else if let Some(reason) = &hook_stop {
                     Err(format!("not run: a hook ended the turn ({reason})"))
+                } else if !self.tools.iter().any(|t| t.name == name) {
+                    Err(format!("no tool named {name} here"))
                 } else if stop == Stop::MaxTokens {
                     Err("the reply hit the output limit before this call was complete".into())
                 } else {
@@ -481,6 +531,11 @@ impl Agent {
             }
             // Images a Read returned follow the results they belong to.
             results.append(&mut images);
+            if self.max_turns == Some(rounds) {
+                results.push(Block::Text {
+                    text: TURN_LIMIT_NOTE.into(),
+                });
+            }
             for text in ui.steered() {
                 results.push(Block::Text {
                     text: format!("[The user wrote this while you were working:]\n{text}"),
@@ -1358,5 +1413,73 @@ mod tests {
         assert!(
             first.starts_with("old") && first.contains("old work") && first.ends_with("recent")
         );
+    }
+
+    #[test]
+    fn refuses_a_tool_it_was_not_given() {
+        let marker = std::env::temp_dir().join(format!("axio-refused-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let command = format!("touch {}", marker.display());
+        let turn = Mutex::new(0);
+        let mut agent = agent(move |req, _| {
+            assert_eq!(
+                req.tools
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Read"]
+            );
+            let mut turn = turn.lock().unwrap();
+            *turn += 1;
+            if *turn == 1 {
+                return reply(bash("t1", &command), Stop::ToolUse, 1);
+            }
+            let Message::User { content } = req.messages.last().unwrap() else {
+                panic!("expected tool results")
+            };
+            assert!(
+                matches!(&content[0], Block::ToolResult { output, is_error: true, .. } if output.contains("no tool named Bash"))
+            );
+            reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1)
+        });
+        agent.keep_tools(&["Read".into()]).unwrap();
+        agent.prompt("go", &mut Log::default()).unwrap();
+        assert!(!marker.exists(), "the refused command must not run");
+        assert!(
+            agent
+                .keep_tools(&["Nope".into()])
+                .unwrap_err()
+                .contains("Nope")
+        );
+    }
+
+    #[test]
+    fn a_turn_limit_asks_for_an_answer_then_ends_the_turn() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        let mut agent = agent(move |req, _| {
+            let last = req.messages.last().unwrap().text();
+            seen.lock().unwrap().push(last);
+            reply(bash("t", "true"), Stop::ToolUse, 1)
+        });
+        agent.max_turns = Some(2);
+        let err = agent.prompt("go", &mut Log::default()).unwrap_err();
+        assert!(err.contains("turn limit (2)"), "{err}");
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            3,
+            "two rounds of tools, then one for the answer"
+        );
+        assert!(!calls[1].contains(TURN_LIMIT_NOTE));
+        assert!(calls[2].contains(TURN_LIMIT_NOTE));
+        // The history stays one the provider accepts: every call answered.
+        let Some(Message::User { content }) = agent.messages.last() else {
+            panic!("the refused calls are answered")
+        };
+        assert!(matches!(
+            &content[0],
+            Block::ToolResult { is_error: true, .. }
+        ));
     }
 }
