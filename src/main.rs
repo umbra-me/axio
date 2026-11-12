@@ -1105,7 +1105,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("axio: {e}");
+            eprintln!("axio: {}", term::clean(&e));
             ExitCode::FAILURE
         }
     }
@@ -1504,7 +1504,7 @@ fn run() -> Result<ExitCode, String> {
             ("/compact", _) => match agent.compact("manual", &mut term) {
                 Ok(true) => {}
                 Ok(false) => eprintln!("{}", term.dim("nothing older to compact")),
-                Err(e) => eprintln!("axio: {e}"),
+                Err(e) => eprintln!("axio: {}", term::clean(&e)),
             },
             ("/output", _) => match &term.last_output {
                 Some((title, text)) => {
@@ -1662,6 +1662,7 @@ fn run() -> Result<ExitCode, String> {
                     }
                     Err(e) => {
                         agent::Ui::notice(&mut term, "");
+                        let e = term::clean(&e);
                         eprintln!("{}", term.paint("\x1b[31m", &format!("axio: {e}")));
                     }
                 }

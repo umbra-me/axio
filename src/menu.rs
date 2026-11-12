@@ -15,8 +15,8 @@ pub struct Choice {
 impl Choice {
     pub fn new(label: impl Into<String>, detail: impl Into<String>) -> Choice {
         Choice {
-            label: label.into(),
-            detail: detail.into(),
+            label: crate::term::clean(&label.into()),
+            detail: crate::term::clean(&detail.into()),
         }
     }
 }
@@ -783,6 +783,12 @@ pub fn ask(keys: &mut Keys, question: &str, hidden: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choices_cannot_carry_terminal_sequences() {
+        let c = Choice::new("srv\x1b]52;c;eA==\x07", "down: \x1b[2Jboom");
+        assert_eq!((c.label.as_str(), c.detail.as_str()), ("srv", "down: boom"));
+    }
 
     fn models() -> Picker {
         Picker::new(

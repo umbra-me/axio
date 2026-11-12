@@ -184,3 +184,6 @@ Found by a pre-release review.
   the shell instead of pasting the path into the command, so shell syntax in
   a folder name cannot run; installed plugin names are limited to letters,
   digits, `-`, `_` and `.`.
+- Text from the model, commands, MCP servers and error bodies is cleaned of
+  terminal sequences before it is shown, so it cannot write the clipboard
+  (OSC 52), add hidden links, clear the screen or move the cursor.

@@ -781,15 +781,17 @@ pub fn tool_lines(
 
 impl Ui for Term {
     fn waiting(&mut self, label: &str) {
-        self.spin(label);
+        self.spin(&term::clean(label));
     }
 
+    // Everything handed to these methods comes from outside axio and is
+    // cleaned of terminal sequences before it is shown (see `term::clean`).
     fn delta(&mut self, d: Delta) {
         match d {
             Delta::Text(t) => {
                 self.unspin();
                 self.md.width = term_width();
-                let out = self.md.push(t);
+                let out = self.md.push(&term::clean(t));
                 if !out.trim().is_empty() || self.last == Shown::Text {
                     self.shown(Shown::Text);
                     print!("{out}");
@@ -801,18 +803,18 @@ impl Ui for Term {
                 self.thought.clear();
             }
             Delta::ThinkingText(t) => {
-                self.thought.push_str(t);
+                self.thought.push_str(&term::clean(t));
                 self.tick(false);
             }
             Delta::ToolCall(name) => {
                 self.settle();
-                let w = Writing::new(name);
+                let w = Writing::new(&term::clean(name));
                 self.spin(&w.label(&self.cwd));
                 self.writing = Some(w);
             }
             Delta::ToolInput(part) => {
                 if let Some(w) = &mut self.writing {
-                    w.push(part);
+                    w.push(&term::clean(part));
                     let label = w.label(&self.cwd);
                     self.relabel(label);
                 }
@@ -821,6 +823,7 @@ impl Ui for Term {
     }
 
     fn tool_start(&mut self, name: &str, input: &Value) {
+        let (name, input) = (&term::clean(name), &term::clean_value(input));
         self.writing = None;
         self.settle();
         self.shown(Shown::Tool);
@@ -851,6 +854,10 @@ impl Ui for Term {
     }
 
     fn tool_end(&mut self, result: &Result<String, String>) {
+        let result = &match result {
+            Ok(t) => Ok(term::clean(t)),
+            Err(t) => Err(term::clean(t)),
+        };
         self.unspin();
         let (name, input) = self.tool.take().unwrap_or_default();
         let after = (name == "Edit" && result.is_ok())
@@ -882,7 +889,7 @@ impl Ui for Term {
             Stop::EndTurn | Stop::ToolUse => return,
             Stop::MaxTokens => "stopped: the reply hit the output limit".to_string(),
             Stop::Refusal => "stopped: the model declined".to_string(),
-            Stop::Other(r) => format!("stopped: {r}"),
+            Stop::Other(r) => format!("stopped: {}", term::clean(r)),
         };
         eprintln!("{}", self.paint(YELLOW, &note));
     }
@@ -932,6 +939,7 @@ impl Ui for Term {
     }
 
     fn permission(&mut self, question: &str, options: &[String]) -> Option<usize> {
+        let question = &term::clean(question);
         self.settle();
         let color = self.color;
         let title = format!("{} {question}", self.paint(YELLOW, "?"));
@@ -953,6 +961,7 @@ impl Ui for Term {
     }
 
     fn ask(&mut self, question: &str) -> bool {
+        let question = term::clean(question);
         self.settle();
         let mark = self.paint(YELLOW, "?");
         let Some(keys) = &mut self.keys else {
@@ -967,14 +976,19 @@ impl Ui for Term {
 
     fn notice(&mut self, text: &str) {
         self.settle();
-        eprintln!("{}", self.dim(text));
+        eprintln!("{}", self.dim(&term::clean(text)));
     }
 
     fn agents_running(&mut self, line: &str) {
-        self.relabel(line.to_string());
+        self.relabel(term::clean(line));
     }
 
     fn agent_done(&mut self, label: &str, result: &Result<String, String>, summary: &str) {
+        let (label, summary) = (&term::clean(label), &term::clean(summary));
+        let result = &match result {
+            Ok(t) => Ok(term::clean(t)),
+            Err(t) => Err(term::clean(t)),
+        };
         self.unspin();
         self.tool = None;
         let line = match result {

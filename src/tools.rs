@@ -334,22 +334,7 @@ fn set_latest_line(out: &[u8]) {
 
 /// Text without terminal colour and cursor sequences.
 pub(crate) fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\x1b' {
-            out.push(c);
-            continue;
-        }
-        if chars.next() == Some('[') {
-            for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        }
-    }
-    out
+    crate::term::clean(s)
 }
 
 fn bash(cwd: &Path, input: &Value, stop: &mut dyn FnMut() -> bool) -> Result<String, String> {
