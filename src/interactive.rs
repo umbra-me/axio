@@ -317,29 +317,6 @@ fn provider_choices(signed_in: &[String], current: &str) -> Vec<Choice> {
     out
 }
 
-/// `/provider`: choose one, signing in when it is not set up, then its model.
-pub fn pick_provider(agent: &mut Agent, term: &mut ui::Term, cache: &mut ModelCache) {
-    let signed_in = provider::signed_in();
-    let choices = provider_choices(&signed_in, &agent.model.provider);
-    let current = choices.iter().position(|c| c.label == agent.model.provider);
-    let labels: Vec<String> = choices.iter().map(|c| c.label.clone()).collect();
-    let keys = term.keys.as_mut().expect("keys");
-    let Some(i) = menu::pick(keys, Picker::new("Provider", choices, current), term.color) else {
-        return;
-    };
-    let chosen = labels[i].clone();
-    let name = if chosen == "other" || !signed_in.contains(&chosen) {
-        match login_to(term, &chosen) {
-            Some(name) => name,
-            None => return,
-        }
-    } else {
-        chosen
-    };
-    cache.remove(&name);
-    pick_model(agent, term, cache, Some(&name));
-}
-
 /// Asks for what `provider` needs and saves it; `other` also asks for a name
 /// and a base URL. Returns the provider's name once saved.
 fn login_to(term: &mut ui::Term, provider: &str) -> Option<String> {
