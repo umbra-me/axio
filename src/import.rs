@@ -632,8 +632,8 @@ mod tests {
         );
         write(
             &h,
-            ".claude/skills/charon/SKILL.md",
-            "---\nname: charon\n---\n",
+            ".claude/skills/shipit/SKILL.md",
+            "---\nname: shipit\n---\n",
         );
         write(
             &h,
@@ -746,7 +746,7 @@ mod tests {
                 "HTTP server: if it needs a sign-in, run `axio mcp login <name>`".into()
             )
         );
-        assert_eq!(line(&items, "Claude Code", "charon"), Support::Works);
+        assert_eq!(line(&items, "Claude Code", "shipit"), Support::Works);
         assert_eq!(
             line(&items, "Codex", "~/.codex/hooks.json"),
             Support::Partly("1 of 2 events work; PermissionRequest has no axio event".into())
@@ -823,11 +823,11 @@ mod tests {
             "Found in other harnesses on this machine:\n\nPi 1.5.2\n  mcp     ida                                works as is\n  ext     ollama                             cannot run: TypeScript extension: axio runs no JavaScript\n"
         );
         let long = Item {
-            name: "background-terminals, charon, defuddle, impeccable".into(),
+            name: "background-terminals, shipit, defuddle, impeccable".into(),
             ..pending[0].clone()
         };
         assert!(
-            render(&[&long], &|_| None).ends_with("charon, defuddle, impeccable  works as is\n")
+            render(&[&long], &|_| None).ends_with("shipit, defuddle, impeccable  works as is\n")
         );
         std::fs::remove_dir_all(h).unwrap();
     }

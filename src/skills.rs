@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn reads_the_frontmatter_real_skills_use() {
-        let text = "---\nname: charon\ndescription: >-\n  Carries work to a\n  merged change.\nversion: 4.3.1\nuser-invocable: true\nargument-hint: \"[a · b]\"\nmetadata:\n  rex-stub: \"2\"\n---\n\n# Body\n";
+        let text = "---\nname: shipit\ndescription: >-\n  Carries work to a\n  merged change.\nversion: 4.3.1\nuser-invocable: true\nargument-hint: \"[a · b]\"\nmetadata:\n  rex-stub: \"2\"\n---\n\n# Body\n";
         let (f, body) = frontmatter(text);
         assert_eq!(f["description"], "Carries work to a merged change.");
         assert_eq!(f["argument-hint"], "[a · b]");

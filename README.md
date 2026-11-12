@@ -2,6 +2,10 @@
 
 A minimal, fast coding agent. One small Rust binary, no runtime, no daemon.
 
+**Status: public beta.** Versions are `0.x`: expect changes between minor
+versions, each listed in [CHANGELOG.md](CHANGELOG.md) with breaking ones
+called out. [docs/releasing.md](docs/releasing.md) explains the numbering.
+
 ```sh
 ./install.sh               # from a checkout: axio, ax, axio-full, axio-min
 cargo install --git https://github.com/umbra-me/axio --locked   # just axio
@@ -399,6 +403,29 @@ In both, Enter makes the choice the default for new sessions (saved as
 for this session only (`s` in the effort slider; in the browser Tab switches
 sides and typing filters).
 Keys typed while a turn runs are kept for the next prompt.
+
+## Security and privacy
+
+- **What leaves your machine**: your conversation, the files and command
+  output tools read, and AGENTS.md go to the model provider you chose. MCP
+  servers get the calls the model makes to them, and WebFetch fetches the
+  addresses the model asks for. axio sends no telemetry. `axio update` is the
+  only time it contacts GitHub.
+- **What stays on it**: keys in `~/.axio/agent/auth.json`, sessions, prompt
+  history and command logs under `~/.axio/agent/`. On macOS and Linux these
+  are readable only by you (folders 0700, files 0600). On Windows they take
+  your profile folder's permissions. Sessions and logs hold whatever tools
+  saw, secrets included, so treat them like the files themselves.
+- **What can run**: commands the model asks for, in your user's name, under
+  the permission mode you pick (see [Permissions](#permissions)). A project's
+  own `.axio/` folder and `.mcp.json` can start programs, so they load only
+  after you trust that project. The `sandbox` module (macOS and Linux)
+  confines commands to the project and temporary folders with no network.
+- **Updates**: `axio update` installs a release binary only when its SHA-256
+  matches the release's `SHA256SUMS`. That guards against a damaged or
+  swapped download, not against a compromised release.
+
+Report a vulnerability privately as described in [SECURITY.md](SECURITY.md).
 
 ## What it leaves out
 
