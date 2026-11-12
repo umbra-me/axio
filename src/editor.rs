@@ -24,8 +24,13 @@ pub struct Editor {
     pub history: Vec<String>,
     browsing: Option<usize>,
     draft: String,
-    /// Slash command names, without the slash, for Tab completion.
-    pub commands: Vec<String>,
+    /// Slash command names, without the slash, and what each does.
+    pub commands: Vec<(String, String)>,
+    /// Position in the slash menu's matches.
+    menu_selected: usize,
+    /// Esc closed the slash menu; it opens again when the text changes.
+    menu_closed: bool,
+    pub color: bool,
     /// Where `@path` completion looks.
     pub cwd: Option<std::path::PathBuf>,
     search: Option<Search>,
@@ -108,6 +113,8 @@ impl Editor {
     fn set(&mut self, text: &str) {
         self.buf = text.chars().collect();
         self.cursor = self.buf.len();
+        self.menu_selected = 0;
+        self.menu_closed = false;
     }
 
     fn line_start(&self, at: usize) -> usize {
@@ -219,6 +226,7 @@ impl Editor {
         let matches: Vec<&String> = self
             .commands
             .iter()
+            .map(|(c, _)| c)
             .filter(|c| c.starts_with(prefix))
             .collect();
         match matches.as_slice() {
@@ -300,7 +308,65 @@ impl Editor {
         None
     }
 
+    /// Commands matching a `/name` being typed: names that start with it,
+    /// then names that contain it. Empty when the menu is closed.
+    fn menu(&self) -> Vec<usize> {
+        if self.menu_closed || self.search.is_some() || self.cursor != self.buf.len() {
+            return Vec::new();
+        }
+        let text = self.text();
+        let Some(typed) = text.strip_prefix('/') else {
+            return Vec::new();
+        };
+        if typed.contains(char::is_whitespace) {
+            return Vec::new();
+        }
+        let typed = typed.to_lowercase();
+        let name = |i: &usize| self.commands[*i].0.to_lowercase();
+        let exact = |i: &usize| name(i) == typed;
+        let starts = |i: &usize| !exact(i) && name(i).starts_with(&typed);
+        let inside = |i: &usize| !name(i).starts_with(&typed) && name(i).contains(&typed);
+        let all = 0..self.commands.len();
+        all.clone()
+            .filter(exact)
+            .chain(all.clone().filter(starts))
+            .chain(all.filter(inside))
+            .collect()
+    }
+
+    /// Keys the slash menu takes while it is open.
+    fn menu_key(&mut self, key: &Key) -> Option<Outcome> {
+        let menu = self.menu();
+        let chosen = menu.get(self.menu_selected.min(menu.len().saturating_sub(1)))?;
+        let name = self.commands[*chosen].0.clone();
+        match key {
+            Key::Up => self.menu_selected = self.menu_selected.saturating_sub(1),
+            Key::Down => self.menu_selected = (self.menu_selected + 1).min(menu.len() - 1),
+            Key::Ctrl('i') => self.set(&format!("/{name} ")),
+            Key::Esc => self.menu_closed = true,
+            Key::Enter => {
+                self.set(&format!("/{name}"));
+                return None;
+            }
+            _ => return None,
+        }
+        Some(Outcome::Editing)
+    }
+
     pub fn handle(&mut self, key: Key) -> Outcome {
+        let before = self.text();
+        if let Some(outcome) = self.menu_key(&key) {
+            return outcome;
+        }
+        let outcome = self.edit(key);
+        if self.text() != before {
+            self.menu_selected = 0;
+            self.menu_closed = false;
+        }
+        outcome
+    }
+
+    fn edit(&mut self, key: Key) -> Outcome {
         let key = if self.search.is_some() {
             match self.search_key(key) {
                 Some(k) => k,
@@ -439,6 +505,7 @@ impl Editor {
         if self.cursor == self.buf.len() {
             cursor = (row, col);
         }
+        let menu = self.menu();
         // A full last row leaves the terminal's cursor in a pending-wrap state;
         // move it to the next row so the arithmetic below stays exact.
         if col == width {
@@ -448,12 +515,66 @@ impl Editor {
                 cursor = (row, 0);
             }
         }
+        if !menu.is_empty() {
+            if col < width {
+                out.push('\n');
+                row += 1;
+            }
+            let rows = self.menu_rows(&menu, width);
+            row += rows.len() - 1;
+            out.push_str(&rows.join("\n"));
+        }
         Layout {
             text: out,
             cursor_row: cursor.0,
             cursor_col: cursor.1,
             end_row: row,
         }
+    }
+
+    /// Up to eight matches around the selected one, each fitting one row.
+    fn menu_rows(&self, menu: &[usize], width: usize) -> Vec<String> {
+        const SHOWN: usize = 8;
+        let selected = self.menu_selected.min(menu.len() - 1);
+        let top = selected.saturating_sub(SHOWN - 1);
+        let name_width = menu
+            .iter()
+            .map(|&i| self.commands[i].0.chars().count() + 1)
+            .max()
+            .unwrap_or(0)
+            .min(24);
+        let paint = |code: &str, s: &str| crate::ui::paint(self.color, code, s);
+        let mut rows = Vec::new();
+        for (n, &i) in menu.iter().enumerate().skip(top).take(SHOWN) {
+            let (name, about) = &self.commands[i];
+            let name = format!("/{name}");
+            let room = width.saturating_sub(4 + name_width.max(name.chars().count()) + 1);
+            let about: String = about
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(room)
+                .collect();
+            let name = format!("{name:<name_width$}");
+            rows.push(if n == selected {
+                format!(
+                    "{} {}  {}",
+                    paint("\x1b[1;36m", "›"),
+                    paint("\x1b[1m", &name),
+                    paint(crate::ui::DIM, &about)
+                )
+            } else {
+                format!("  {name}  {}", paint(crate::ui::DIM, &about))
+            });
+        }
+        if menu.len() > SHOWN {
+            rows.push(paint(
+                crate::ui::DIM,
+                &format!("  {} of {} · Tab completes", selected + 1, menu.len()),
+            ));
+        }
+        rows
     }
 }
 
@@ -610,25 +731,113 @@ mod tests {
     #[test]
     fn tab_completes_slash_commands() {
         let mut e = Editor {
-            commands: ["compact", "commit", "help"].map(String::from).into(),
+            commands: ["compact", "commit", "help"]
+                .map(|c| (c.to_string(), String::new()))
+                .into(),
             ..Editor::default()
         };
         e.handle(Key::Paste("/h".into()));
         e.handle(Key::Ctrl('i'));
         assert_eq!(e.text(), "/help ");
         e.set("/co");
+        e.handle(Key::Down);
         e.handle(Key::Ctrl('i'));
-        assert_eq!(e.text(), "/com");
+        assert_eq!(e.text(), "/commit ", "Tab takes the menu's choice");
+        e.set("/co");
+        e.handle(Key::Esc);
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "/com", "with the menu closed, the shared part");
         e.handle(Key::Char('p'));
         e.handle(Key::Ctrl('i'));
         assert_eq!(e.text(), "/compact ");
         e.set("plain");
         e.handle(Key::Ctrl('i'));
         assert_eq!(e.text(), "plain");
-        e.commands = ["café", "cafè"].map(String::from).into();
+        e.commands = ["café", "cafè"]
+            .map(|c| (c.to_string(), String::new()))
+            .into();
         e.set("/ca");
+        e.handle(Key::Esc);
         e.handle(Key::Ctrl('i'));
         assert_eq!(e.text(), "/caf", "stops before characters that differ");
+    }
+
+    fn with_commands() -> Editor {
+        Editor {
+            commands: [
+                ("model", "pick the model"),
+                ("mcp-tools", "a command"),
+                ("new", "start a new session"),
+                ("session", "show the session file"),
+            ]
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .into(),
+            history: vec!["earlier".into()],
+            ..Editor::default()
+        }
+    }
+
+    #[test]
+    fn slash_shows_a_menu_that_enter_runs() {
+        let mut e = with_commands();
+        typed(&mut e, "/m");
+        let shown = e.layout(80);
+        assert!(shown.text.contains("/model") && shown.text.contains("pick the model"));
+        assert!(shown.text.contains("/mcp-tools"));
+        assert!(!shown.text.contains("/new"));
+        assert_eq!(
+            (shown.cursor_row, shown.end_row),
+            (0, 2),
+            "menu below the prompt"
+        );
+        e.handle(Key::Down);
+        assert_eq!(e.handle(Key::Enter), Outcome::Submit("/mcp-tools".into()));
+        assert!(!e.layout(80).text.contains("/model"), "gone after sending");
+    }
+
+    #[test]
+    fn slash_menu_matches_inside_names_after_prefixes() {
+        let mut e = with_commands();
+        typed(&mut e, "/s");
+        let text = e.layout(80).text;
+        let (session, tools) = (
+            text.find("/session").unwrap(),
+            text.find("/mcp-tools").unwrap(),
+        );
+        assert!(session < tools, "prefix matches first: {text}");
+        e.handle(Key::Ctrl('i'));
+        assert_eq!(e.text(), "/session ");
+        assert!(
+            !e.layout(80).text.contains("show the session"),
+            "closed once an argument starts"
+        );
+    }
+
+    #[test]
+    fn esc_closes_the_menu_until_the_text_changes() {
+        let mut e = with_commands();
+        typed(&mut e, "/n");
+        e.handle(Key::Esc);
+        assert!(!e.layout(80).text.contains("start a new"));
+        assert_eq!(e.handle(Key::Up), Outcome::Editing);
+        assert_eq!(e.text(), "earlier", "Up walks history with the menu closed");
+        e.set("");
+        typed(&mut e, "/ne");
+        assert!(e.layout(80).text.contains("start a new"));
+        assert_eq!(e.handle(Key::Enter), Outcome::Submit("/new".into()));
+        e.commands.push(("ne".into(), "an exact name".into()));
+        typed(&mut e, "/ne");
+        assert_eq!(
+            e.handle(Key::Enter),
+            Outcome::Submit("/ne".into()),
+            "an exact name comes first"
+        );
+        typed(&mut e, "/zzz");
+        assert_eq!(
+            e.handle(Key::Enter),
+            Outcome::Submit("/zzz".into()),
+            "no match sends as typed"
+        );
     }
 
     fn typed(e: &mut Editor, s: &str) {

@@ -6,7 +6,8 @@ use std::io::BufRead;
 
 const PROVIDER: &str = "anthropic";
 
-pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
+/// The API base, without a trailing slash, and the headers every request needs.
+fn connection() -> Result<super::Connection, String> {
     let base = crate::auth::get("ANTHROPIC_BASE_URL", PROVIDER, "baseUrl")
         .unwrap_or_else(|| "https://api.anthropic.com".into());
     let mut headers = vec![("anthropic-version", "2023-06-01".to_string())];
@@ -15,14 +16,24 @@ pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, Strin
     } else if let Some(token) = crate::auth::get("ANTHROPIC_AUTH_TOKEN", PROVIDER, "authToken") {
         headers.push(("authorization", format!("Bearer {token}")));
     } else {
-        return Err("set ANTHROPIC_API_KEY, or run `axio auth set anthropic`".into());
+        return Err("set ANTHROPIC_API_KEY, or run /login".into());
     }
-    let reader = post_stream(
-        &format!("{}/v1/messages", base.trim_end_matches('/')),
-        &headers,
-        &body(req),
-    )?;
+    Ok((base.trim_end_matches('/').to_string(), headers))
+}
+
+pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
+    let (base, headers) = connection()?;
+    let reader = post_stream(&format!("{base}/v1/messages"), &headers, &body(req))?;
     parse_stream(reader, req, on)
+}
+
+/// The model ids the account can use.
+pub fn models() -> Result<Vec<String>, String> {
+    let (base, headers) = connection()?;
+    super::model_ids(&super::get_json(
+        &format!("{base}/v1/models?limit=1000"),
+        &headers,
+    )?)
 }
 
 fn body(req: &Request) -> Value {

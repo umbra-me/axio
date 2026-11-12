@@ -20,6 +20,8 @@ axio -r                   # pick one of this directory's recent sessions
 - **Providers**: Anthropic Messages (`anthropic/claude-opus-5-5`, the default)
   and any OpenAI-compatible chat completions endpoint (`openai/<id>`,
   `openrouter/<vendor>/<id>`, or `<name>/<id>` with `<NAME>_BASE_URL`).
+  Several can be signed in at once, and `/model` switches between them in the
+  middle of a conversation, tool calls included.
 - **Context**: `~/.axio/agent/AGENTS.md`, then every `AGENTS.md` (or
   `CLAUDE.md`) from the filesystem root down to the working directory.
 - **Sessions**: append-only JSONL under `~/.axio/agent/sessions/`, grouped by
@@ -181,6 +183,7 @@ is skipped.
 | Enter while a turn runs | send what you typed to the model at its next step, or as the next prompt if the turn ends first |
 | Ctrl-C twice, or Ctrl-D, on an empty line | exit |
 | Ctrl-A / Ctrl-E, Alt-B / Alt-F, Ctrl-W, Ctrl-U, Ctrl-K | usual line editing |
+| `/` | open the command menu: type to filter, Up/Down to move, Enter runs, Tab completes, Esc closes |
 | Tab | complete a `/command`, or a path after `@` |
 | Ctrl-R | search prompt history (Enter takes the match, Esc cancels) |
 
@@ -189,10 +192,23 @@ GIF or WebP, up to 3.7 MB) or a directory listing, so the model does not have
 to read it first. Dropping an image file on the terminal pastes its path as an
 `@` mention.
 
-Commands: `/new`, `/undo` (put back the files the last turn wrote or edited),
-`/output` (the last tool call's full result),
-`/compact`, `/model [provider/model]`, `/effort [level]`, `/profile`,
-`/session`, `/help`, `/quit`, plus plugin commands and skills.
+Commands:
+
+- `/model` opens a picker of the models every signed-in provider lists (type to
+  filter; a name no list holds can be typed and used). `/model provider/model`
+  switches directly.
+- `/provider` picks a provider, signing in first when it is not set up, then
+  one of its models. `/login [provider]` saves an API key, or a name, base URL
+  and optional key for any other OpenAI-compatible endpoint; `/logout
+  [provider]` removes one. Keys go to `~/.axio/agent/auth.json`.
+- `/effort` picks reasoning effort; `/effort <level>` sets it.
+- `/resume` picks a saved session from this directory to continue.
+- `/new`, `/undo` (put back the files the last turn wrote or edited),
+  `/output` (the last tool call's full result), `/compact`, `/profile`,
+  `/session`, `/help`, `/quit`, plus plugin commands and skills.
+
+Model and effort choices last for the session; set `"model"` or `"effort"` in
+`~/.axio/agent/settings.json` for a default.
 Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out

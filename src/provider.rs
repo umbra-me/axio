@@ -193,6 +193,77 @@ pub(crate) fn post_stream(
     Ok(BufReader::new(body.into_reader()))
 }
 
+/// An API base URL and the headers its requests need.
+pub(crate) type Connection = (String, Vec<(&'static str, String)>);
+
+/// Fetches a JSON document, with the provider's error when the status is not 2xx.
+pub(crate) fn get_json(url: &str, headers: &[(&str, String)]) -> Result<serde_json::Value, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .into();
+    let mut req = agent.get(url);
+    for (k, v) in headers {
+        req = req.header(*k, v);
+    }
+    let resp = req
+        .call()
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.into_body().read_to_string().unwrap_or_default();
+    if !(200..300).contains(&status) {
+        return Err(format!("{status} from {url}: {}", error_body(&text)));
+    }
+    serde_json::from_str(&text).map_err(|_| format!("{url} did not return JSON"))
+}
+
+/// The ids in a `{"data": [{"id": …}]}` model list, sorted.
+pub(crate) fn model_ids(list: &serde_json::Value) -> Result<Vec<String>, String> {
+    let data = list["data"]
+        .as_array()
+        .ok_or("the model list had no data")?;
+    let mut ids: Vec<String> = data
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(String::from))
+        .collect();
+    ids.sort();
+    Ok(ids)
+}
+
+/// Providers with a built-in endpoint.
+pub const KNOWN: [&str; 3] = ["anthropic", "openai", "openrouter"];
+
+/// Providers set up on this machine: known ones with a key, then any other
+/// endpoint saved with a base URL.
+pub fn signed_in() -> Vec<String> {
+    let mut out: Vec<String> = KNOWN
+        .iter()
+        .filter(|p| !crate::auth::missing_key(p))
+        .map(|p| p.to_string())
+        .collect();
+    if let Some(path) = crate::auth::path() {
+        for (name, entry) in crate::auth::read(path) {
+            if name != "mcp" && !out.contains(&name) && entry["baseUrl"].is_string() {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// The models `provider` offers, as `provider/id`.
+pub fn models(provider: &str) -> Result<Vec<String>, String> {
+    let ids = match provider {
+        "anthropic" => anthropic::models()?,
+        p => openai::models(p)?,
+    };
+    Ok(ids
+        .into_iter()
+        .map(|id| format!("{provider}/{id}"))
+        .collect())
+}
+
 /// The API's `type: message` from a JSON error body, else the body itself.
 fn error_body(text: &str) -> String {
     let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();

@@ -8,26 +8,55 @@ use std::io::BufRead;
 /// OpenAI chat completions, which most hosted and local endpoints also speak.
 /// `openai` and `openrouter` have built-in endpoints; any other provider name
 /// reads `<NAME>_BASE_URL` and an optional `<NAME>_API_KEY`.
-pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
-    let name = req.model.provider.to_uppercase().replace('-', "_");
-    let provider = req.model.provider.as_str();
+/// The endpoint's base, without a trailing slash, and its auth header.
+fn connection(provider: &str) -> Result<super::Connection, String> {
+    let name = provider.to_uppercase().replace('-', "_");
     let base = crate::auth::get(&format!("{name}_BASE_URL"), provider, "baseUrl")
-        .or_else(|| match req.model.provider.as_str() {
+        .or_else(|| match provider {
             "openai" => Some("https://api.openai.com/v1".into()),
             "openrouter" => Some("https://openrouter.ai/api/v1".into()),
             _ => None,
         })
-        .ok_or_else(|| format!("set {name}_BASE_URL, or run `axio auth set {provider} baseUrl`"))?;
+        .ok_or_else(|| format!("set {name}_BASE_URL, or run /login"))?;
     let mut headers = Vec::new();
     if let Some(key) = crate::auth::get(&format!("{name}_API_KEY"), provider, "apiKey") {
         headers.push(("authorization", format!("Bearer {key}")));
     }
-    let reader = post_stream(
-        &format!("{}/chat/completions", base.trim_end_matches('/')),
-        &headers,
-        &body(req),
-    )?;
+    Ok((base.trim_end_matches('/').to_string(), headers))
+}
+
+pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
+    let (base, headers) = connection(&req.model.provider)?;
+    let reader = post_stream(&format!("{base}/chat/completions"), &headers, &body(req))?;
     parse_stream(reader, req, on)
+}
+
+/// The model ids the endpoint offers. OpenAI's list also holds models that
+/// cannot chat, such as embeddings and speech, which are left out.
+pub fn models(provider: &str) -> Result<Vec<String>, String> {
+    let (base, headers) = connection(provider)?;
+    let ids = super::model_ids(&super::get_json(&format!("{base}/models"), &headers)?)?;
+    if provider != "openai" {
+        return Ok(ids);
+    }
+    let not_chat = [
+        "embedding",
+        "tts",
+        "whisper",
+        "dall-e",
+        "moderation",
+        "image",
+        "audio",
+        "realtime",
+        "transcribe",
+        "davinci",
+        "babbage",
+        "sora",
+    ];
+    Ok(ids
+        .into_iter()
+        .filter(|id| !not_chat.iter().any(|n| id.contains(n)))
+        .collect())
 }
 
 fn body(req: &Request) -> Value {
