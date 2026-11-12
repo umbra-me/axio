@@ -184,6 +184,15 @@ Found by a pre-release review.
   the shell instead of pasting the path into the command, so shell syntax in
   a folder name cannot run; installed plugin names are limited to letters,
   digits, `-`, `_` and `.`.
-- Text from the model, commands, MCP servers and error bodies is cleaned of
-  terminal sequences before it is shown, so it cannot write the clipboard
-  (OSC 52), add hidden links, clear the screen or move the cursor.
+- Text from the model, commands, MCP servers, resumed sessions and error
+  bodies is cleaned of terminal sequences before it is shown, so it cannot
+  write the clipboard (OSC 52), add hidden links, clear the screen or move
+  the cursor.
+- Bash deny rules read commands as the shell does: quoted words stay whole,
+  `NAME=value` assignments and wrappers (`command`, `env`, `sudo`, `exec`,
+  `nohup`, `time`, `nice`) are skipped, `/bin/rm` counts as `rm`, and commands
+  inside `"$(…)"` are seen.
+- Path deny rules also refuse a symlink whose target has a denied name, even
+  outside the project, and any file with more than one hard link.
+- WebFetch compares a redirect's port with the scheme's default, and resolves
+  query-only and fragment-only redirects against the current page.

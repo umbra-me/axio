@@ -1329,7 +1329,7 @@ fn run() -> Result<ExitCode, String> {
     let started = mcp::Mcp::start(&servers, &cwd);
     let mcp_failed = started.failed.clone();
     for failed in &started.failed {
-        eprintln!("axio: MCP server failed to start: {failed}");
+        eprintln!("axio: MCP server failed to start: {}", term::clean(failed));
     }
     if profile.modules.sandbox {
         let root = settings::project_root(&cwd);

@@ -391,7 +391,8 @@ pub fn recap(messages: &[crate::message::Message]) -> Vec<String> {
         }
         out.extend(lines[start..].iter().map(|l| format!("  {}", clip(l, 100))));
     }
-    out
+    // Shown as is when a session is resumed; the transcript is outside text.
+    out.iter().map(|l| crate::term::clean(l)).collect()
 }
 
 fn term_width() -> usize {

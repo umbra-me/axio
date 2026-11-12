@@ -98,27 +98,30 @@ pub fn fetch(input: &Value) -> Result<String, String> {
     )))
 }
 
-/// Scheme, host and port of an http(s) URL.
-fn origin(url: &str) -> Option<(&str, &str)> {
+/// Scheme, host and effective port of an http(s) URL, lower-cased.
+fn origin(url: &str) -> Option<(String, String, u16)> {
     let (scheme, rest) = url.split_once("://")?;
-    Some((scheme, rest.split(['/', '?', '#']).next()?))
+    let scheme = scheme.to_ascii_lowercase();
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) if !p.contains(']') => (h, Some(p.parse::<u16>().ok()?)),
+        _ => (hostport, None),
+    };
+    let default = match scheme.as_str() {
+        "http" => 80,
+        "https" => 443,
+        _ => return None,
+    };
+    Some((scheme, host.to_ascii_lowercase(), port.unwrap_or(default)))
 }
 
-/// The same scheme, host and port, or the same host moving to https.
+/// The same scheme, host and port, or the same host moving from http on
+/// port 80 to https on 443.
 fn same_site(from: &str, to: &str) -> bool {
     match (origin(from), origin(to)) {
         (Some(a), Some(b)) => {
-            let host = |h: &str| {
-                let h = h
-                    .rsplit_once('@')
-                    .map_or(h, |(_, h)| h)
-                    .to_ascii_lowercase();
-                h.strip_suffix(":80").map(str::to_string).unwrap_or(h)
-            };
-            (a.0 == b.0 && host(a.1) == host(b.1))
-                || (a.0 == "http"
-                    && b.0 == "https"
-                    && host(a.1) == host(b.1).trim_end_matches(":443"))
+            a == b || (a.0 == "http" && b.0 == "https" && a.1 == b.1 && a.2 == 80 && b.2 == 443)
         }
         _ => false,
     }
@@ -133,6 +136,20 @@ fn join(base: &str, location: &str) -> String {
         return location.to_string();
     };
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let without_fragment = base.split('#').next().unwrap_or(base);
+    if location.is_empty() {
+        return without_fragment.to_string();
+    }
+    if location.starts_with('#') {
+        return format!("{without_fragment}{location}");
+    }
+    if location.starts_with('?') {
+        let path = without_fragment
+            .split('?')
+            .next()
+            .unwrap_or(without_fragment);
+        return format!("{path}{location}");
+    }
     if let Some(l) = location.strip_prefix("//") {
         return format!("{scheme}://{l}");
     }
@@ -299,6 +316,24 @@ mod tests {
         assert!(!same_site("https://a.dev/", "https://b.a.dev/"));
         assert!(!same_site("http://127.0.0.1:1/", "http://127.0.0.1:2/"));
         assert!(!same_site("https://a.dev/", "https://evil@a.dev.evil/"));
+    }
+
+    #[test]
+    fn origins_use_each_schemes_default_port() {
+        assert!(!same_site("https://a.dev/x", "https://a.dev:80/y"));
+        assert!(!same_site("http://a.dev/x", "https://a.dev:80/y"));
+        assert!(same_site("https://a.dev/x", "https://a.dev:443/y"));
+        assert!(same_site("http://a.dev:80/x", "http://a.dev/y"));
+        assert!(same_site("http://a.dev/x", "https://a.dev:443/y"));
+        assert!(!same_site("http://a.dev:8080/x", "https://a.dev/y"));
+    }
+
+    #[test]
+    fn query_and_fragment_redirects_keep_the_path() {
+        let base = "https://a.dev/x/y?old=1";
+        assert_eq!(join(base, "?next=1"), "https://a.dev/x/y?next=1");
+        assert_eq!(join(base, "#part"), "https://a.dev/x/y?old=1#part");
+        assert_eq!(join(base, ""), "https://a.dev/x/y?old=1");
     }
 
     #[test]
