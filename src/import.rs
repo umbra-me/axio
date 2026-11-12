@@ -119,17 +119,14 @@ fn mcp_entry(v: &Value) -> Result<(Value, Option<String>), String> {
         "stdio"
     });
     match kind {
-        "sse" => Err("uses the older SSE transport, which axio does not support".into()),
-        "http" | "streamable-http" => {
+        "http" | "streamable-http" | "sse" => {
             let url = v["url"].as_str().ok_or("has no url")?;
             let headers = v.get("headers").cloned().unwrap_or(json!({}));
             let note = (headers.as_object().is_none_or(|h| h.is_empty())).then(|| {
                 "HTTP server: if it needs a sign-in, run `axio mcp login <name>`".to_string()
             });
-            Ok((
-                json!({"type": "http", "url": url, "headers": headers}),
-                note,
-            ))
+            let kind = if kind == "sse" { "sse" } else { "http" };
+            Ok((json!({"type": kind, "url": url, "headers": headers}), note))
         }
         _ => {
             let command = v["command"].as_str().ok_or("has no command")?;
