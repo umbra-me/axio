@@ -220,28 +220,6 @@ impl Reply {
     }
 }
 
-/// A path as it goes into a shell command: on Windows the command runs in
-/// Git Bash, which reads a backslash as an escape, so forward slashes.
-fn shell_path(p: &Path) -> String {
-    let s = p.display().to_string();
-    if cfg!(windows) {
-        s.replace('\\', "/")
-    } else {
-        s
-    }
-}
-
-fn expand(text: &str, root: Option<&Path>, project: &Path) -> String {
-    let mut out = text.replace("${AXIO_PROJECT_DIR}", &shell_path(project));
-    out = out.replace("${CLAUDE_PROJECT_DIR}", &shell_path(project));
-    if let Some(r) = root {
-        let r = shell_path(r);
-        out = out.replace("${CLAUDE_PLUGIN_ROOT}", &r);
-        out = out.replace("${AXIO_PLUGIN_ROOT}", &r);
-    }
-    out
-}
-
 fn run_one(hook: &Hook, stdin: &str, project: &Path) -> Reply {
     // Hooks are shell commands; Windows has no `sh`, so Git Bash runs them.
     #[cfg(windows)]
@@ -249,7 +227,10 @@ fn run_one(hook: &Hook, stdin: &str, project: &Path) -> Reply {
     #[cfg(not(windows))]
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
-        .arg(expand(&hook.command, hook.root.as_deref(), project))
+        // `${CLAUDE_PLUGIN_ROOT}` and the rest are left to the shell, which
+        // reads them from the environment; pasting a path into the command
+        // text would run any shell syntax in its name.
+        .arg(&hook.command)
         .current_dir(project)
         .env("AXIO_PROJECT_DIR", project)
         .env("CLAUDE_PROJECT_DIR", project)
@@ -624,6 +605,25 @@ mod tests {
             dir.join("guard").display().to_string(),
             "the plugin's own path, as the operating system writes it"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_path_with_shell_syntax_stays_a_path() {
+        let dir = std::env::temp_dir().join(format!("axio-hooks-inject-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("p;touch INJECTED;#");
+        std::fs::create_dir_all(&root).unwrap();
+        let hooks = serde_json::json!({"hooks": {"Stop": [{"hooks": [{"type": "command",
+            "command": "cd ${CLAUDE_PLUGIN_ROOT} 2>/dev/null; cd ${AXIO_PROJECT_DIR}; true"}]}]}});
+        std::fs::write(dir.join("hooks.json"), hooks.to_string()).unwrap();
+        let mut h = Hooks {
+            project_dir: dir.clone(),
+            ..Hooks::default()
+        };
+        h.add_file(&dir.join("hooks.json"), Some(&root)).unwrap();
+        h.run(Event::Stop, None, Map::new());
+        assert!(!dir.join("INJECTED").exists(), "the path ran as a command");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

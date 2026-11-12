@@ -230,7 +230,8 @@ pub fn install(dir: &Path, source: &Source, original: &str) -> Result<Plugin, St
         .find(|p| p.root == staging)
         .map(|p| p.name)
         .ok_or("could not read the plugin")?;
-    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
+    let safe = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.');
+    if name.is_empty() || !name.chars().all(safe) || name.starts_with('.') {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(format!("unusable plugin name {name:?}"));
     }
@@ -554,6 +555,20 @@ mod tests {
             "cannot install a folder into itself"
         );
         std::fs::remove_dir_all(work).unwrap();
+    }
+
+    #[test]
+    fn a_plugin_name_must_be_plain() {
+        let work = tmp("badname");
+        let copy = work.join("src");
+        std::fs::create_dir_all(copy.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            copy.join(".claude-plugin/plugin.json"),
+            r#"{"name": "x; touch injected #"}"#,
+        )
+        .unwrap();
+        let err = install(&work.join("plugins"), &Source::Local(copy), "src").unwrap_err();
+        assert!(err.contains("unusable plugin name"), "{err}");
     }
 
     #[test]

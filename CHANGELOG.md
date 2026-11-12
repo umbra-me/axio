@@ -180,3 +180,7 @@ Found by a pre-release review.
 - WebFetch follows redirects only on the same site (or from http to https);
   a redirect elsewhere comes back as a new address for the model to fetch,
   which needs its own permission.
+- Hooks leave `${CLAUDE_PLUGIN_ROOT}`, `${AXIO_PROJECT_DIR}` and the like to
+  the shell instead of pasting the path into the command, so shell syntax in
+  a folder name cannot run; installed plugin names are limited to letters,
+  digits, `-`, `_` and `.`.
