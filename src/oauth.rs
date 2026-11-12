@@ -430,6 +430,11 @@ pub fn bearer(url: &str, force: bool) -> Option<String> {
 /// Opens `url` in the user's browser and prints it in case that fails.
 pub fn open_browser(url: &str) {
     eprintln!("Opening your browser to sign in. If it does not open, visit:\n{url}");
+    open_url(url);
+}
+
+/// Opens `url` in the user's browser without printing anything.
+pub fn open_url(url: &str) {
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else {

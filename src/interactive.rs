@@ -240,7 +240,11 @@ fn chatgpt_sign_in(term: &mut ui::Term) -> bool {
             return false;
         }
     };
-    crate::oauth::open_browser(&pending.url);
+    eprintln!(
+        "Opening your browser to sign in with ChatGPT. If it does not open, visit:\n{}",
+        pending.url
+    );
+    crate::oauth::open_url(&pending.url);
     note(
         term,
         "Waiting for the browser. If it is on another machine, paste the address it ends on and press Enter. Esc cancels.",
@@ -288,9 +292,29 @@ fn chatgpt_sign_in(term: &mut ui::Term) -> bool {
     };
     print!("\r\x1b[K");
     let _ = std::io::stdout().flush();
-    match reply.and_then(|(code, client)| pending.finish(&code, &client)) {
-        Ok(()) => {
-            note(term, "signed in with ChatGPT");
+    let reply = match reply {
+        Ok(r) => r,
+        Err(e) => {
+            note(term, &format!("axio: {e}"));
+            return false;
+        }
+    };
+    if reply.code.is_ok() {
+        note(term, "finishing sign-in…");
+    }
+    let outcome = match &reply.code {
+        Ok((code, client)) => pending.finish(code, client),
+        Err(e) => Err(e.clone()),
+    };
+    reply.answer(&outcome);
+    match outcome {
+        Ok(email) => {
+            let who = email.map_or(String::new(), |e| format!(" as {e}"));
+            note(term, &format!("signed in with ChatGPT{who}"));
+            note(
+                term,
+                "limits for axio's use of your plan: https://chatgpt.com/settings/usage",
+            );
             true
         }
         Err(e) => {
@@ -348,7 +372,13 @@ pub fn logout(term: &mut ui::Term, cache: &mut ModelCache, arg: &str) {
     } else {
         arg.to_string()
     };
-    match auth::forget(&path, &name) {
+    let forgot = if name == crate::chatgpt::PROVIDER {
+        // The issued client stays, so signing in again asks only for the account.
+        crate::chatgpt::sign_out()
+    } else {
+        auth::forget(&path, &name)
+    };
+    match forgot {
         Ok(true) => {
             cache.remove(&name);
             note(term, &format!("removed {name} from {}", path.display()));
