@@ -212,6 +212,7 @@ impl Host {
             Some(Finished {
                 result: Err(e),
                 session: None,
+                spend: Default::default(),
             })
         };
         let mut queue: std::collections::VecDeque<usize> = (0..plans.len()).collect();
@@ -353,6 +354,10 @@ impl Host {
             .as_ref()
             .and_then(|v| v["session"].as_str())
             .map(String::from);
+        let spend = end
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v["spend"].clone()).ok())
+            .unwrap_or_default();
         let mut notes: String = plan
             .notes
             .iter()
@@ -388,6 +393,7 @@ impl Host {
         Finished {
             result: out,
             session: session.map(std::path::PathBuf::from),
+            spend,
         }
     }
 }
@@ -429,8 +435,9 @@ fn stop(running: &mut [Running]) {
     }
 }
 
-/// A sub-agent's result and the transcript it left.
+/// A sub-agent's result, the transcript it left and what it spent.
 pub struct Finished {
     pub result: Result<String, String>,
     pub session: Option<std::path::PathBuf>,
+    pub spend: crate::cost::Spend,
 }

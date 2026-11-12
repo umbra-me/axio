@@ -302,6 +302,14 @@ Commands:
   The model browser also shows the effort under the list: Left and Right
   change it for the highlighted model.
 - `/resume` picks a saved session from this directory to continue.
+- A dim status line under the prompt shows the model, how full the context
+  is and what the session has cost so far: an estimate from each reply's
+  token counts and the published prices of Claude models (fast mode, cache
+  reads and writes, side jobs and sub-agents included). A ChatGPT sign-in
+  shows "ChatGPT plan"; models without a known price show their tokens.
+  `/status` repeats it.
+- Long tool output is collapsed to its end; Ctrl-O on an empty prompt (or
+  `/output`) shows the last result in full.
 - `/mcp` lists MCP servers with their state (tools and transport, signed in,
   needs sign-in, or why one is not connected); choosing one shows its tools,
   and HTTP servers can be signed in to or out of from there.
