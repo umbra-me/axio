@@ -110,3 +110,5 @@ under Unreleased.
 - Sub-agents read keys saved in `auth.json` (#54).
 - A read-only sub-agent cannot change a project that lives in a temporary
   folder (#62).
+- Up and Down keep walking history past `/command` entries instead of
+  stopping in the command menu (#69).
