@@ -377,7 +377,8 @@ fn mcp_stub_server() {
         };
         let result = match msg["method"].as_str().unwrap_or("") {
             "initialize" => json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
-                                   "serverInfo": {"name": "echo"}}),
+                                   "serverInfo": {"name": "echo"},
+                                   "instructions": "ECHO-RULES: say things politely."}),
             "tools/list" => json!({"tools": [{"name": "say", "description": "Says the text back",
                 "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}),
             "tools/call" => json!({"content": [
@@ -457,6 +458,15 @@ fn sub_agents_use_the_main_agents_mcp_servers() {
         .find(|s| is_child(&s.body))
         .expect("a child ran");
     assert_eq!(tool_names(&child.body), ["mcp__echo__say"]);
+    assert!(
+        system(&child.body).contains("ECHO-RULES"),
+        "the child gets the server's instructions"
+    );
+    let main_first = seen.iter().find(|s| !is_child(&s.body)).unwrap();
+    assert!(
+        system(&main_first.body).contains("ECHO-RULES"),
+        "so does the main agent"
+    );
     let main_last = seen.iter().rev().find(|s| !is_child(&s.body)).unwrap();
     let result = main_last.body["messages"]
         .as_array()

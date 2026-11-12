@@ -144,6 +144,10 @@ impl Agent {
         self.modules = modules;
         self.tools = tools::specs_for(modules);
         self.tools.extend(mcp.specs.iter().cloned());
+        if let Some(section) = mcp.prompt_section(None) {
+            self.system.push_str("\n\n");
+            self.system.push_str(&section);
+        }
         self.mcp = Arc::new(mcp);
     }
 
@@ -1030,6 +1034,13 @@ impl Agent {
         ui.tool_start("Agent", &input);
         match planned {
             Ok(mut plan) => {
+                let granted: Vec<String> = plan.spec.mcp.iter().map(|t| t.name.clone()).collect();
+                if !granted.is_empty()
+                    && let Some(section) = self.mcp.prompt_section(Some(&granted))
+                {
+                    plan.spec.instructions.push_str("\n\n");
+                    plan.spec.instructions.push_str(&section);
+                }
                 if plan.spec.context == crate::child::Sees::Fork {
                     // This reply, which holds the Agent call, is left out.
                     let before = &self.messages[..self.messages.len().saturating_sub(1)];
