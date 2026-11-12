@@ -376,7 +376,7 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     // Keys and base URLs saved with `axio auth` or /login.
     crate::auth::set_home(&home);
     crate::private::set_logs(home.join("logs"));
-    if let Some(c) = spec.sandbox.filter(|_| !crate::sandbox::supported()) {
+    if let Some(c) = spec.sandbox.filter(|_| !crate::sandbox::available()) {
         let p = spec
             .permissions
             .as_ref()
@@ -387,7 +387,9 @@ pub fn main(args: &[String]) -> Result<bool, String> {
             });
         spec.permissions = Some(PermSpec::of(&without_sandbox(p, c)));
         spec.sandbox = None;
-        eprintln!("axio: no sandbox on this platform; permission rules stand in for it");
+        eprintln!(
+            "axio: no working sandbox here (Linux needs bubblewrap); permission rules stand in for it"
+        );
     }
     if let Some(c) = spec.sandbox {
         let root = crate::settings::project_root(&cwd);
@@ -405,7 +407,8 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     Ok(drive(agent, &spec, &mut std::io::stdout().lock()))
 }
 
-/// Where no sandbox exists, a read-only role keeps its promise by rule:
+/// Where no sandbox runs (Windows, or Linux without a usable bubblewrap), a
+/// read-only role keeps its promise by rule:
 /// file changes are refused and every command needs the user's yes, even
 /// one the main agent's rules allow. A
 /// project sandbox only stops writes outside the project, which the main

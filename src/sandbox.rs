@@ -42,9 +42,22 @@ pub fn resolve(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Whether this platform has a sandbox at all (Windows has none).
-pub fn supported() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+/// Whether the sandbox can actually run here: Seatbelt is present on macOS;
+/// on Linux bubblewrap must be installed and allowed to make namespaces,
+/// which some distributions (Ubuntu 24.04) refuse by default.
+pub fn available() -> bool {
+    if cfg!(target_os = "macos") {
+        Path::new("/usr/bin/sandbox-exec").exists()
+    } else if cfg!(target_os = "linux") {
+        Command::new("bwrap")
+            .args(["--ro-bind", "/", "/", "--dev", "/dev", "true"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    } else {
+        false
+    }
 }
 
 /// Turns the sandbox on for this process; called once at startup.
