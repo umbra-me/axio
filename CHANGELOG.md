@@ -7,13 +7,15 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.1.1] - 2026-11-13
+
 ### Fixed
 
 - On Linux without a working bubblewrap (not installed, or blocked from
   making namespaces as on Ubuntu 24.04), the read-only sub-agent roles
   (`explore`, `review`, `research`) ran no work and ended at once. They now
   fall back to permission rules, as on Windows: file changes are refused and
-  every command asks.
+  every command asks (#90).
 
 ## [0.1.0] - 2026-11-13
 
