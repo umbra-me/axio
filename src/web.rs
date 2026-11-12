@@ -292,7 +292,10 @@ mod tests {
         assert_eq!(join("https://a.dev/x", "http://c.dev/"), "http://c.dev/");
         assert!(same_site("https://a.dev/x", "https://A.dev/y"));
         assert!(same_site("http://a.dev/x", "https://a.dev/x"));
-        assert!(!same_site("https://a.dev/x", "http://a.dev/x"), "no downgrade");
+        assert!(
+            !same_site("https://a.dev/x", "http://a.dev/x"),
+            "no downgrade"
+        );
         assert!(!same_site("https://a.dev/", "https://b.a.dev/"));
         assert!(!same_site("http://127.0.0.1:1/", "http://127.0.0.1:2/"));
         assert!(!same_site("https://a.dev/", "https://evil@a.dev.evil/"));
