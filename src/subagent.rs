@@ -185,7 +185,14 @@ impl Host {
 
     /// Runs the planned calls, at most `parallel` at once, and returns their
     /// results in order. Esc stops them all.
-    pub fn run_all(&self, plans: &[&Planned], ui: &mut dyn Ui) -> Vec<Result<String, String>> {
+    /// `mcp` runs the MCP calls children ask for, each on its own thread.
+    pub fn run_all(
+        &self,
+        plans: &[&Planned],
+        mcp: std::sync::Arc<crate::mcp::Mcp>,
+        ui: &mut dyn Ui,
+    ) -> Vec<Result<String, String>> {
+        let (mcp_tx, mcp_rx) = mpsc::channel::<(usize, Value, Result<String, String>)>();
         let limit = self.settings.parallel.unwrap_or(PARALLEL).max(1);
         let mut results: Vec<Option<Result<String, String>>> = vec![None; plans.len()];
         let mut queue: std::collections::VecDeque<usize> = (0..plans.len()).collect();
@@ -221,6 +228,30 @@ impl Host {
                                 .to_string();
                             }
                             Some("result" | "error") => r.end = Some(v),
+                            Some("mcp_call") => {
+                                let name = v["name"].as_str().unwrap_or("").to_string();
+                                let granted =
+                                    plans[r.index].spec.mcp.iter().any(|t| t.name == name);
+                                let (tx, mcp, index, id, input) = (
+                                    mcp_tx.clone(),
+                                    mcp.clone(),
+                                    r.index,
+                                    v["id"].clone(),
+                                    v["input"].clone(),
+                                );
+                                if granted {
+                                    std::thread::spawn(move || {
+                                        let out = mcp.call(&name, &input, &mut || false);
+                                        let _ = tx.send((index, id, out));
+                                    });
+                                } else {
+                                    let _ = tx.send((
+                                        index,
+                                        id,
+                                        Err(format!("this sub-agent may not use {name}")),
+                                    ));
+                                }
+                            }
                             _ => {}
                         },
                         Err(TryRecvError::Empty) => break,
@@ -231,6 +262,18 @@ impl Host {
                             break;
                         }
                     }
+                }
+            }
+            while let Ok((index, id, out)) = mcp_rx.try_recv() {
+                if let Some(r) = running.iter_mut().find(|r| r.index == index)
+                    && let Some(stdin) = &mut r.stdin
+                {
+                    let (ok, text) = match out {
+                        Ok(t) => (true, t),
+                        Err(e) => (false, e),
+                    };
+                    let line = json!({"type": "mcp_result", "id": id, "ok": ok, "text": text});
+                    let _ = writeln!(stdin, "{line}").and_then(|_| stdin.flush());
                 }
             }
             for n in finished.into_iter().rev() {

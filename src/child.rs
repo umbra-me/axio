@@ -7,7 +7,7 @@ use crate::provider::{Delta, Model, Stop, Usage};
 use crate::tools::Modules;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 pub const RESULT_LIMIT: usize = 8000;
@@ -35,6 +35,10 @@ pub struct Spec {
     pub sandbox: Option<Confine>,
     /// For `context: fork`, a transcript of the main agent's conversation.
     pub history: Option<String>,
+    /// MCP tools the main agent runs for this child, which asks for each
+    /// call on stdout and reads the result on stdin.
+    #[serde(default)]
+    pub mcp: Vec<crate::tools::ToolSpec>,
 }
 
 /// A sandbox for a sub-agent's Bash, Write and Edit.
@@ -96,6 +100,7 @@ pub fn agent(
     a.effort = spec.effort.clone();
     a.max_turns = Some(spec.max_turns.unwrap_or(MAX_TURNS));
     a.set_tools(modules_for(&spec.tools), crate::mcp::Mcp::default());
+    a.add_tools(spec.mcp.clone());
     if let Some(h) = host {
         a.set_subagents(h);
     }
@@ -108,12 +113,19 @@ pub fn agent(
     Ok(a)
 }
 
+/// MCP results from the main agent: (call id, result).
+type Replies = std::sync::mpsc::Receiver<(u64, Result<String, String>)>;
+static REPLIES: std::sync::Mutex<Option<Replies>> = std::sync::Mutex::new(None);
+
 /// Writes progress as JSON lines. Once the reader has gone, the turn stops.
 struct Lines<'a> {
     out: &'a mut dyn Write,
     cwd: PathBuf,
     usage: Usage,
     gone: bool,
+    /// MCP tools the main agent runs for this child.
+    remote: Vec<String>,
+    next_call: u64,
 }
 
 impl Lines<'_> {
@@ -149,6 +161,26 @@ impl Ui for Lines<'_> {
     fn notice(&mut self, text: &str) {
         self.emit(json!({"type": "notice", "text": text}));
     }
+    fn remote_tool(&mut self, name: &str, input: &Value) -> Option<Result<String, String>> {
+        if !self.remote.iter().any(|r| r == name) {
+            return None;
+        }
+        self.next_call += 1;
+        let id = self.next_call;
+        self.emit(json!({"type": "mcp_call", "id": id, "name": name, "input": input}));
+        let guard = REPLIES.lock().ok()?;
+        let Some(rx) = guard.as_ref() else {
+            return Some(Err("MCP tools need an attached sub-agent".into()));
+        };
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok((got, r)) if got == id => return Some(r),
+                Ok(_) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !self.interrupted() => continue,
+                Err(_) => return Some(Err(crate::tools::STOPPED.into())),
+            }
+        }
+    }
 }
 
 /// Runs the task and writes its lines. Returns whether it succeeded.
@@ -159,6 +191,8 @@ pub fn drive(mut agent: Agent, spec: &Spec, out: &mut dyn Write) -> bool {
         cwd: agent.cwd.clone(),
         usage: Usage::default(),
         gone: false,
+        remote: spec.mcp.iter().map(|t| t.name.clone()).collect(),
+        next_call: 0,
     };
     let tools = agent.tool_names();
     let model = format!("{}/{}", agent.model.provider, agent.model.id);
@@ -208,9 +242,23 @@ pub fn main(args: &[String]) -> Result<bool, String> {
     if attached {
         std::io::BufRead::read_line(&mut stdin, &mut text).map_err(|e| e.to_string())?;
         drop(stdin);
-        std::thread::spawn(|| {
-            let mut sink = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut sink);
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Ok(mut r) = REPLIES.lock() {
+            *r = Some(rx);
+        }
+        std::thread::spawn(move || {
+            // MCP results arrive as lines; the end of input means stop.
+            for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if v["type"] == "mcp_result"
+                    && let Some(id) = v["id"].as_u64()
+                {
+                    let text = v["text"].as_str().unwrap_or("").to_string();
+                    let _ = tx.send((id, if v["ok"] == true { Ok(text) } else { Err(text) }));
+                }
+            }
             CANCEL.store(true, std::sync::atomic::Ordering::Relaxed);
         });
     } else {
