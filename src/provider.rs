@@ -298,7 +298,9 @@ pub fn models(provider: &str) -> Result<Vec<String>, String> {
 fn error_body(text: &str) -> String {
     let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
     let e = &v["error"];
-    match (e["type"].as_str(), e["message"].as_str()) {
+    // OpenAI's `code` names the error more exactly than its `type`.
+    let kind = e["code"].as_str().or(e["type"].as_str());
+    match (kind, e["message"].as_str()) {
         (Some(t), Some(m)) => format!("{t}: {m}"),
         (None, Some(m)) => m.to_string(),
         _ => text.trim().to_string(),
@@ -367,6 +369,12 @@ mod tests {
         assert_eq!(
             error_body(r#"{"error":{"message":"bad key","type":"invalid_request_error"}}"#),
             "invalid_request_error: bad key"
+        );
+        assert_eq!(
+            error_body(
+                r#"{"error":{"message":"limit","type":"usage","code":"subscription_sharing_usage_limit_exceeded"}}"#
+            ),
+            "subscription_sharing_usage_limit_exceeded: limit"
         );
         assert_eq!(
             error_body("  <html>gateway</html> "),

@@ -6,7 +6,7 @@
 use crate::crypto::{base64url, random, sha256};
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const PROVIDER: &str = "chatgpt";
@@ -63,21 +63,45 @@ fn device_id() -> Result<String, String> {
     ))
 }
 
+/// A client OpenAI issued to axio on an earlier sign-in. Signing in again
+/// with it asks only which account to use, not to approve axio again.
+struct Returning {
+    client: String,
+    id_token: Option<String>,
+    email: Option<String>,
+}
+
+fn returning() -> Option<Returning> {
+    let entry = stored();
+    Some(Returning {
+        client: entry["clientId"].as_str()?.to_string(),
+        id_token: entry["idToken"].as_str().map(String::from),
+        email: entry["email"].as_str().map(String::from),
+    })
+}
+
 /// A sign-in waiting for the browser to come back.
 pub struct Pending {
     pub url: String,
     verifier: String,
     state: String,
     device: String,
+    /// The client from an earlier sign-in, when there was one.
+    client: Option<String>,
     listener: TcpListener,
 }
 
-fn authorize_url(state: &str, challenge: &str, nonce: &str, device: &str) -> String {
+fn authorize_url(
+    state: &str,
+    challenge: &str,
+    nonce: &str,
+    device: &str,
+    again: Option<&Returning>,
+) -> String {
     let host = format!("urn:uuid:{device}");
     let redirect = redirect();
-    let params = [
-        ("client_id", CLIENT),
-        ("agent_name_hint", "axio"),
+    let mut params = vec![
+        ("client_id", again.map_or(CLIENT, |r| r.client.as_str())),
         ("ext_agent_host_id", host.as_str()),
         ("response_type", "code"),
         ("redirect_uri", redirect.as_str()),
@@ -88,6 +112,18 @@ fn authorize_url(state: &str, challenge: &str, nonce: &str, device: &str) -> Str
         ("code_challenge_method", "S256"),
         ("nonce", nonce),
     ];
+    match again {
+        // The name is only offered when axio is added; a returning client keeps it.
+        None => params.push(("agent_name_hint", "axio")),
+        Some(r) => {
+            if let Some(t) = &r.id_token {
+                params.push(("id_token_hint", t));
+            }
+            if let Some(e) = &r.email {
+                params.push(("login_hint", e));
+            }
+        }
+    }
     format!("{AUTHORIZE}?{}", crate::oauth::form(&params))
 }
 
@@ -115,28 +151,38 @@ pub fn start() -> Result<Pending, String> {
         entry.insert("deviceId".into(), json!(device));
         store(entry)?;
     }
+    let again = returning();
     let url = authorize_url(
         &state,
         &base64url(&sha256(verifier.as_bytes())),
         &nonce,
         &device,
+        again.as_ref(),
     );
     Ok(Pending {
         url,
         verifier,
         state,
         device,
+        client: again.map(|r| r.client),
         listener,
     })
 }
 
-/// The code and issued client id from the query of the page the browser
-/// returned to.
-fn returned(query: &Map<String, Value>, state: &str) -> Result<(String, String), String> {
+/// The code and client from the query of the page the browser returned to.
+/// A returning client may be left out of the reply, but never replaced.
+fn returned(
+    query: &Map<String, Value>,
+    state: &str,
+    saved: Option<&str>,
+) -> Result<(String, String), String> {
     let query = &Value::Object(query.clone());
     if let Some(e) = query["error"].as_str() {
         let why = query["error_description"].as_str().unwrap_or(e);
-        return Err(format!("ChatGPT sign-in was not completed: {why}"));
+        return Err(match e {
+            "access_denied" => "axio was not allowed to use ChatGPT".to_string(),
+            _ => format!("ChatGPT sign-in was not completed: {why}"),
+        });
     }
     if query["state"].as_str() != Some(state) {
         return Err("the sign-in reply did not match this sign-in; try again".into());
@@ -144,10 +190,16 @@ fn returned(query: &Map<String, Value>, state: &str) -> Result<(String, String),
     let code = query["code"]
         .as_str()
         .ok_or("the sign-in reply had no code")?;
-    let client = query["client_id"]
-        .as_str()
-        .filter(|c| !c.trim().is_empty())
-        .ok_or("the sign-in reply had no client id")?;
+    let client = match (
+        query["client_id"].as_str().filter(|c| !c.trim().is_empty()),
+        saved,
+    ) {
+        (Some(c), Some(s)) if c != s => {
+            return Err("the sign-in came back for a different client; try again".into());
+        }
+        (Some(c), _) | (None, Some(c)) => c,
+        (None, None) => return Err("the sign-in reply had no client id".into()),
+    };
     Ok((code.to_string(), client.to_string()))
 }
 
@@ -156,13 +208,39 @@ fn returned(query: &Map<String, Value>, state: &str) -> Result<(String, String),
 fn for_this_sign_in(
     query: &Map<String, Value>,
     state: &str,
+    saved: Option<&str>,
 ) -> Option<Result<(String, String), String>> {
-    (query.get("state").and_then(Value::as_str) == Some(state)).then(|| returned(query, state))
+    (query.get("state").and_then(Value::as_str) == Some(state))
+        .then(|| returned(query, state, saved))
+}
+
+/// The browser's return: the code and client, and the open request, which is
+/// answered once the sign-in has finished so the page tells the outcome.
+pub struct Reply {
+    pub code: Result<(String, String), String>,
+    browser: Option<TcpStream>,
+}
+
+impl Reply {
+    /// Shows the outcome in the browser tab, when the browser is waiting.
+    pub fn answer(self, outcome: &Result<Option<String>, String>) {
+        if let Some(stream) = self.browser {
+            respond(&stream, "200 OK", &page(outcome));
+        }
+    }
+}
+
+fn respond(mut stream: &TcpStream, status: &str, body: &str) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
 }
 
 impl Pending {
-    /// Checks once for the browser's return. `Ok(None)` while waiting.
-    pub fn poll(&self) -> Result<Option<(String, String)>, String> {
+    /// Checks once for the browser's return. `None` while waiting.
+    pub fn poll(&self) -> Result<Option<Reply>, String> {
         let stream = match self.listener.accept() {
             Ok((s, _)) => s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
@@ -178,43 +256,41 @@ impl Pending {
             .strip_prefix(CALLBACK)
             .and_then(|r| r.strip_prefix('?'))
         else {
-            let _ = write!(
-                &stream,
-                "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
-            );
+            respond(&stream, "404 Not Found", "");
             return Ok(None);
         };
-        let result = for_this_sign_in(&crate::oauth::query(q), &self.state);
-        let page = match &result {
-            None => "This page is not from the sign-in axio is waiting for.",
-            Some(Ok(_)) => "Signed in to ChatGPT. You can close this tab and return to axio.",
-            Some(Err(e)) => e.as_str(),
-        };
-        let page = format!("<html><body><p>{page}</p></body></html>");
-        let _ = write!(
-            &stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{page}",
-            page.len()
-        );
-        result.transpose()
+        match for_this_sign_in(&crate::oauth::query(q), &self.state, self.client.as_deref()) {
+            None => {
+                let stale = Err("This page is from an earlier sign-in. Use the newest tab, or run /login chatgpt again.".into());
+                respond(&stream, "200 OK", &page(&stale));
+                Ok(None)
+            }
+            Some(code) => Ok(Some(Reply {
+                code,
+                browser: Some(stream),
+            })),
+        }
     }
 
     /// The same, from the address the browser ended on, pasted in when the
     /// browser runs on another machine.
-    pub fn pasted(&self, url: &str) -> Result<(String, String), String> {
+    pub fn pasted(&self, url: &str) -> Result<Reply, String> {
         let url = url.trim();
         let rest = url
             .strip_prefix(&redirect())
-            .or_else(|| url.strip_prefix(&format!("http://localhost:{PORT}{CALLBACK}")))
             .ok_or_else(|| format!("paste the whole address, starting {}", redirect()))?;
         let q = rest
             .strip_prefix('?')
             .ok_or("that address has no sign-in reply")?;
-        returned(&crate::oauth::query(q), &self.state)
+        Ok(Reply {
+            code: returned(&crate::oauth::query(q), &self.state, self.client.as_deref()),
+            browser: None,
+        })
     }
 
-    /// Trades the code for tokens and saves them.
-    pub fn finish(self, code: &str, client: &str) -> Result<(), String> {
+    /// Trades the code for tokens and saves them. Returns the account's
+    /// email, when OpenAI gives one, to show which account was used.
+    pub fn finish(&self, code: &str, client: &str) -> Result<Option<String>, String> {
         let redirect = redirect();
         let token = crate::oauth::token_request(
             TOKEN,
@@ -227,40 +303,139 @@ impl Pending {
                 ("resource", API),
             ],
         )?;
-        store(credential(&token, client, &self.device, now())?)
+        let Value::Object(mut entry) = stored() else {
+            unreachable!()
+        };
+        entry.extend(credential(&token, now())?);
+        entry.insert("clientId".into(), json!(client));
+        entry.insert("deviceId".into(), json!(self.device));
+        let email = token["id_token"].as_str().and_then(email_in);
+        if let Some(t) = token["id_token"].as_str() {
+            entry.insert("idToken".into(), json!(t));
+        }
+        if let Some(e) = &email {
+            entry.insert("email".into(), json!(e));
+        }
+        store(entry)?;
+        Ok(email)
     }
 }
 
-/// What is saved from a token reply. The grant must allow direct use.
-fn credential(
-    token: &Value,
-    client: &str,
-    device: &str,
-    at: u64,
-) -> Result<Map<String, Value>, String> {
+/// The email in an ID token, shown as a label only: axio never decides
+/// anything from it, so it does not check the token's signature.
+fn email_in(id_token: &str) -> Option<String> {
+    let payload = id_token.split('.').nth(1)?;
+    let claims: Value = serde_json::from_slice(&base64url_decode(payload)?).ok()?;
+    claims["email"].as_str().map(String::from)
+}
+
+fn base64url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in s.trim_end_matches('=').bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The page the browser lands on: whether axio can now use ChatGPT, and
+/// where the plan's use by axio is managed.
+fn page(outcome: &Result<Option<String>, String>) -> String {
+    let (title, lead, body) = match outcome {
+        Ok(email) => (
+            "axio is signed in to ChatGPT",
+            "You're signed in",
+            format!(
+                "<p>axio can now use your ChatGPT plan{}.</p><p class=\"next\">Go back to your terminal; this tab can be closed.</p><p class=\"small\">Limits for axio's use of your plan, and its access, are in <a href=\"https://chatgpt.com/settings/usage\">ChatGPT settings</a>.</p>",
+                email.as_deref().map_or(String::new(), |e| format!(
+                    " as <strong>{}</strong>",
+                    escape(e)
+                ))
+            ),
+        ),
+        Err(e) => (
+            "axio sign-in did not finish",
+            "Sign-in didn't finish",
+            format!(
+                "<p>{}</p><p class=\"next\">Run <code>/login chatgpt</code> in axio to try again.</p>",
+                escape(e)
+            ),
+        ),
+    };
+    let mark = if outcome.is_ok() { "✓" } else { "!" };
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><style>
+:root{{--bg:#fafaf9;--fg:#1c1917;--dim:#57534e;--line:#e7e5e4;--ok:#15803d;--bad:#b91c1c;color-scheme:light dark}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#0c0a09;--fg:#fafaf9;--dim:#a8a29e;--line:#292524;--ok:#4ade80;--bad:#f87171}}}}
+*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--fg);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}}
+main{{width:100%;max-width:440px}}
+.brand{{font:600 15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;color:var(--dim);margin-bottom:40px}}
+.mark{{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:var(--bg);background:var(--{tone});margin-bottom:20px}}
+h1{{font-size:26px;line-height:1.2;margin:0 0 12px;font-weight:650}}p{{margin:0 0 10px;color:var(--dim)}}strong{{color:var(--fg);font-weight:600}}
+.next{{color:var(--fg)}}.small{{font-size:14px;margin-top:28px;padding-top:16px;border-top:1px solid var(--line)}}a{{color:inherit}}
+code{{font:14px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--line);padding:1px 6px;border-radius:4px}}
+</style></head><body><main><div class="brand">axio</div><div class="mark">{mark}</div><h1>{lead}</h1>{body}</main></body></html>"#,
+        tone = if outcome.is_ok() { "ok" } else { "bad" },
+    )
+}
+
+/// What is saved from a token reply. The grant must allow direct use; a
+/// refresh may leave the refresh token out, which keeps the old one.
+fn credential(token: &Value, at: u64) -> Result<Map<String, Value>, String> {
     let scopes = token["scope"].as_str().unwrap_or("");
     if !scopes.split_whitespace().any(|s| s == DIRECT) {
-        return Err(format!("the ChatGPT sign-in did not grant {DIRECT}"));
+        return Err(format!(
+            "this ChatGPT account did not allow axio to use its plan ({DIRECT} was not granted)"
+        ));
     }
     let access = token["access_token"].as_str().ok_or("no access token")?;
-    let refresh = token["refresh_token"].as_str().ok_or("no refresh token")?;
     let life = token["expires_in"].as_u64().unwrap_or(3600);
-    let Value::Object(m) = json!({
-        "access": access,
-        "refresh": refresh,
-        "expires": at + life.saturating_sub(MARGIN),
-        "clientId": client,
-        "deviceId": device,
-    }) else {
+    let mut m = Map::new();
+    m.insert("access".into(), json!(access));
+    m.insert("expires".into(), json!(at + life.saturating_sub(MARGIN)));
+    if let Some(r) = token["refresh_token"].as_str().filter(|r| !r.is_empty()) {
+        m.insert("refresh".into(), json!(r));
+    }
+    Ok(m)
+}
+
+/// Forgets the tokens but keeps the issued client, so signing in again
+/// does not add axio to the account a second time.
+pub fn sign_out() -> Result<bool, String> {
+    let Value::Object(mut entry) = stored() else {
         unreachable!()
     };
-    Ok(m)
+    let had = entry.contains_key("refresh");
+    for k in ["access", "refresh", "expires"] {
+        entry.remove(k);
+    }
+    store(entry)?;
+    Ok(had)
 }
 
 /// A current access token, refreshed first when it is about to expire.
 pub fn bearer() -> Result<String, String> {
     let entry = stored();
-    let expired = "the ChatGPT sign-in has expired; run /login chatgpt";
     let (Some(refresh), Some(client)) = (entry["refresh"].as_str(), entry["clientId"].as_str())
     else {
         return Err("not signed in to ChatGPT; run /login chatgpt".into());
@@ -279,16 +454,30 @@ pub fn bearer() -> Result<String, String> {
             ("resource", API),
         ],
     )
-    .map_err(|e| format!("{expired} ({e})"))?;
-    let device = entry["deviceId"].as_str().unwrap_or("");
-    let mut fresh = credential(&token, client, device, now())?;
-    // A reply without a new refresh token keeps the old one.
-    if fresh["refresh"].as_str().is_none_or(str::is_empty) {
-        fresh.insert("refresh".into(), json!(refresh));
-    }
+    .map_err(|e| {
+        format!(
+            "the ChatGPT sign-in has ended (signed out, disconnected in ChatGPT settings, or unused for 30 days); run /login chatgpt ({e})"
+        )
+    })?;
+    let Value::Object(mut saved) = entry else {
+        unreachable!()
+    };
+    let fresh = credential(&token, now())?;
     let access = fresh["access"].as_str().unwrap_or("").to_string();
-    store(fresh)?;
+    saved.extend(fresh);
+    store(saved)?;
     Ok(access)
+}
+
+/// A plain reason for the errors a ChatGPT plan adds to the API's own.
+pub fn explain(err: &str) -> Option<String> {
+    if err.contains("subscription_sharing_usage_limit_exceeded") {
+        return Some("axio has reached its usage limit on your ChatGPT plan; see https://chatgpt.com/settings/usage".into());
+    }
+    if err.contains("subscription_sharing_user_not_eligible") {
+        return Some("this ChatGPT account's plan cannot be used by other apps".into());
+    }
+    None
 }
 
 /// The models the account can use, from its model list.
@@ -325,10 +514,14 @@ mod tests {
         crate::oauth::query(&crate::oauth::form(pairs))
     }
 
+    fn params(url: &str) -> Map<String, Value> {
+        crate::oauth::query(url.split_once('?').unwrap().1)
+    }
+
     #[test]
-    fn the_authorize_page_names_axio_and_asks_for_direct_use() {
-        let url = authorize_url("s1", "c1", "n1", "0000-dev");
-        let query = crate::oauth::query(url.split_once('?').unwrap().1);
+    fn a_first_sign_in_adds_axio_by_name() {
+        let url = authorize_url("s1", "c1", "n1", "0000-dev", None);
+        let query = params(&url);
         assert!(url.starts_with(AUTHORIZE));
         assert_eq!(query["client_id"], "dynamic_agent_client");
         assert_eq!(query["agent_name_hint"], "axio");
@@ -336,54 +529,113 @@ mod tests {
         assert_eq!(query["redirect_uri"], "http://127.0.0.1:1455/auth/callback");
         assert_eq!(query["resource"], API);
         assert_eq!(query["code_challenge_method"], "S256");
-        assert!(query["scope"].as_str().unwrap().contains(DIRECT));
+        let scope = query["scope"].as_str().unwrap();
+        for s in ["offline_access", "resource.invoke", DIRECT] {
+            assert!(scope.contains(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn signing_in_again_reuses_the_issued_client() {
+        let again = Returning {
+            client: "app_issued".into(),
+            id_token: Some("old.id.token".into()),
+            email: Some("me@example.com".into()),
+        };
+        let query = params(&authorize_url("s1", "c1", "n1", "0000-dev", Some(&again)));
+        assert_eq!(query["client_id"], "app_issued");
+        assert_eq!(query["id_token_hint"], "old.id.token");
+        assert_eq!(query["login_hint"], "me@example.com");
+        assert_eq!(query["ext_agent_host_id"], "urn:uuid:0000-dev");
+        assert!(query.get("agent_name_hint").is_none(), "already added");
     }
 
     #[test]
     fn the_reply_must_match_and_carry_a_client() {
         let ok = q(&[("code", "k"), ("state", "s1"), ("client_id", "cl")]);
-        assert_eq!(returned(&ok, "s1").unwrap(), ("k".into(), "cl".into()));
+        assert_eq!(
+            returned(&ok, "s1", None).unwrap(),
+            ("k".into(), "cl".into())
+        );
         assert!(
-            returned(&ok, "other")
+            returned(&ok, "other", None)
                 .unwrap_err()
                 .contains("did not match")
         );
         let no_client = q(&[("code", "k"), ("state", "s1")]);
         assert!(
-            returned(&no_client, "s1")
+            returned(&no_client, "s1", None)
                 .unwrap_err()
                 .contains("no client id")
         );
-        let refused = q(&[("error", "access_denied"), ("state", "s1")]);
+        assert_eq!(
+            returned(&no_client, "s1", Some("saved")).unwrap().1,
+            "saved",
+            "a returning client may be left out"
+        );
         assert!(
-            returned(&refused, "s1")
+            returned(&ok, "s1", Some("saved"))
                 .unwrap_err()
-                .contains("access_denied")
+                .contains("different client")
+        );
+        let refused = q(&[("error", "access_denied"), ("state", "s1")]);
+        assert_eq!(
+            returned(&refused, "s1", None).unwrap_err(),
+            "axio was not allowed to use ChatGPT"
         );
     }
 
     #[test]
     fn replies_for_another_sign_in_are_ignored() {
         let stale = q(&[("code", "k"), ("state", "old"), ("client_id", "cl")]);
-        assert!(for_this_sign_in(&stale, "s1").is_none());
+        assert!(for_this_sign_in(&stale, "s1", None).is_none());
         let ours = q(&[("error", "access_denied"), ("state", "s1")]);
-        assert!(for_this_sign_in(&ours, "s1").unwrap().is_err());
+        assert!(for_this_sign_in(&ours, "s1", None).unwrap().is_err());
     }
 
     #[test]
     fn a_grant_without_direct_use_is_refused() {
         let token = json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600,
                            "scope": "openid profile"});
-        assert!(
-            credential(&token, "cl", "d", 100)
-                .unwrap_err()
-                .contains(DIRECT)
-        );
-        let token = json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600,
+        assert!(credential(&token, 100).unwrap_err().contains(DIRECT));
+        let token = json!({"access_token": "a", "expires_in": 3600,
                            "scope": format!("openid {DIRECT}")});
-        let c = credential(&token, "cl", "d", 100).unwrap();
+        let c = credential(&token, 100).unwrap();
         assert_eq!(c["expires"], 100 + 3600 - MARGIN);
-        assert_eq!(c["clientId"], "cl");
+        assert!(
+            c.get("refresh").is_none(),
+            "a refresh without one keeps the old"
+        );
+    }
+
+    #[test]
+    fn the_email_comes_from_the_id_token() {
+        let claims = base64url(br#"{"email":"me@example.com","sub":"u1"}"#);
+        assert_eq!(
+            email_in(&format!("eyJhbGciOiJSUzI1NiJ9.{claims}.sig")).as_deref(),
+            Some("me@example.com")
+        );
+        assert_eq!(email_in("not-a-token"), None);
+    }
+
+    #[test]
+    fn the_browser_page_tells_the_outcome() {
+        let ok = page(&Ok(Some("a<b@example.com".into())));
+        assert!(ok.contains("You're signed in"));
+        assert!(ok.contains("a&lt;b@example.com"), "escaped");
+        assert!(ok.contains("https://chatgpt.com/settings/usage"));
+        let failed = page(&Err("axio was not allowed to use ChatGPT".into()));
+        assert!(failed.contains("Sign-in didn't finish"));
+        assert!(failed.contains("/login chatgpt"));
+    }
+
+    #[test]
+    fn plan_errors_are_explained_and_not_retried() {
+        let err = "429 from https://api.openai.com/v1/responses: subscription_sharing_usage_limit_exceeded: limit";
+        let plain = explain(err).unwrap();
+        assert!(plain.contains("chatgpt.com/settings/usage"));
+        assert_eq!(crate::provider::retry_reason(&plain), None);
+        assert_eq!(explain("429 from x: rate_limit_exceeded: slow"), None);
     }
 
     #[test]

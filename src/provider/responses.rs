@@ -11,12 +11,14 @@ use std::io::BufRead;
 
 pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, String> {
     let token = crate::chatgpt::bearer()?;
+    let explained = |e: String| crate::chatgpt::explain(&e).unwrap_or(e);
     let reader = post_stream(
         &format!("{}/responses", crate::chatgpt::API),
         &[("authorization", format!("Bearer {token}"))],
         &body(req),
-    )?;
-    parse_stream(reader, req, on)
+    )
+    .map_err(explained)?;
+    parse_stream(reader, req, on).map_err(explained)
 }
 
 fn body(req: &Request) -> Value {
