@@ -380,9 +380,11 @@ fn mcp_stub_server() {
                                    "serverInfo": {"name": "echo"}}),
             "tools/list" => json!({"tools": [{"name": "say", "description": "Says the text back",
                 "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}),
-            "tools/call" => json!({"content": [{"type": "text",
-                "text": format!("said: {} (pid {})", msg["params"]["arguments"]["text"].as_str().unwrap_or(""),
-                                std::process::id())}]}),
+            "tools/call" => json!({"content": [
+                {"type": "text",
+                 "text": format!("said: {} (pid {})", msg["params"]["arguments"]["text"].as_str().unwrap_or(""),
+                                 std::process::id())},
+                {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}]}),
             _ => continue,
         };
         writeln!(
@@ -466,6 +468,53 @@ fn sub_agents_use_the_main_agents_mcp_servers() {
         .unwrap()
         .to_string();
     assert!(result.contains("child got [said: hi"), "{result}");
+    let child_last = seen.iter().rev().find(|s| is_child(&s.body)).unwrap();
+    assert!(
+        child_last
+            .body
+            .to_string()
+            .contains("data:image/png;base64,iVBORw0KGgo="),
+        "the MCP image reached the sub-agent's model"
+    );
+}
+
+fn mcp_direct(body: &Value) -> Reply {
+    let messages = body["messages"].as_array().unwrap();
+    if messages.iter().any(|m| m["role"] == "tool") {
+        return (Duration::ZERO, text("done"));
+    }
+    (
+        Duration::ZERO,
+        calls(&[("m", "mcp__echo__say", json!({"text": "pic"}))]),
+    )
+}
+
+#[test]
+fn mcp_images_reach_the_model() {
+    let (port, seen) = serve(mcp_direct);
+    let home = home("mcpimg", port);
+    let exe = std::env::current_exe().unwrap();
+    std::fs::write(
+        home.join("mcp.json"),
+        json!({"mcpServers": {"echo": {"command": exe.display().to_string(),
+            "args": ["--exact", "mcp_stub_server", "--nocapture", "--quiet", "--test-threads=1"],
+            "env": {"AXIO_TEST_MCP": "1"}}}})
+        .to_string(),
+    )
+    .unwrap();
+    let out = axio(&home, &["-p", "--no-session", "-m", "stub/main", "go"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let seen = seen.lock().unwrap();
+    let last = seen.last().unwrap().body.to_string();
+    assert!(
+        last.contains("data:image/png;base64,iVBORw0KGgo="),
+        "{last}"
+    );
+    assert!(last.contains("[image 1: image/png, shown below]"), "{last}");
 }
 
 fn hooked(body: &Value) -> Reply {

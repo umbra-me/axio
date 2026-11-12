@@ -199,7 +199,13 @@ impl Host {
         mcp: std::sync::Arc<crate::mcp::Mcp>,
         ui: &mut dyn Ui,
     ) -> Vec<Finished> {
-        let (mcp_tx, mcp_rx) = mpsc::channel::<(usize, Value, Result<String, String>)>();
+        type McpDone = (
+            usize,
+            Value,
+            Result<String, String>,
+            Vec<crate::message::Block>,
+        );
+        let (mcp_tx, mcp_rx) = mpsc::channel::<McpDone>();
         let limit = self.settings.parallel.unwrap_or(PARALLEL).max(1);
         let mut results: Vec<Option<Finished>> = (0..plans.len()).map(|_| None).collect();
         let failed = |e: String| {
@@ -254,14 +260,15 @@ impl Host {
                                 );
                                 if granted {
                                     std::thread::spawn(move || {
-                                        let out = mcp.call(&name, &input, &mut || false);
-                                        let _ = tx.send((index, id, out));
+                                        let (out, images) = mcp.call(&name, &input, &mut || false);
+                                        let _ = tx.send((index, id, out, images));
                                     });
                                 } else {
                                     let _ = tx.send((
                                         index,
                                         id,
                                         Err(format!("this sub-agent may not use {name}")),
+                                        Vec::new(),
                                     ));
                                 }
                             }
@@ -277,7 +284,7 @@ impl Host {
                     }
                 }
             }
-            while let Ok((index, id, out)) = mcp_rx.try_recv() {
+            while let Ok((index, id, out, images)) = mcp_rx.try_recv() {
                 if let Some(r) = running.iter_mut().find(|r| r.index == index)
                     && let Some(stdin) = &mut r.stdin
                 {
@@ -285,7 +292,8 @@ impl Host {
                         Ok(t) => (true, t),
                         Err(e) => (false, e),
                     };
-                    let line = json!({"type": "mcp_result", "id": id, "ok": ok, "text": text});
+                    let line = json!({"type": "mcp_result", "id": id, "ok": ok, "text": text,
+                                      "images": images});
                     let _ = writeln!(stdin, "{line}").and_then(|_| stdin.flush());
                 }
             }
