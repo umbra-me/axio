@@ -326,3 +326,7 @@ directory, so run it where that is acceptable.
 
 Axio started as a Rust CLI agent in 2026. This repository is a fresh start on
 that idea; the desktop app that grew out of it is Axio Atrium.
+
+## Licence
+
+axio is licensed under the [Apache License, Version 2.0](LICENSE).

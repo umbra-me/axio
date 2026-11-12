@@ -74,6 +74,9 @@ under Unreleased.
   `"fastMode"` in settings, the price shown when it turns on, standard speed
   when the provider refuses it (#66).
 
+**Project**
+- Licensed under Apache-2.0 (#67).
+
 **Testing**
 - Terminal checks in `e2e/` (`sh e2e/all.sh target/release/axio`) and a Linux
   container run (`sh e2e/linux.sh`) (#59).
