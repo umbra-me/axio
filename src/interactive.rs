@@ -795,6 +795,124 @@ pub fn skills(term: &mut ui::Term, lib: &crate::skills::Library) -> Option<Strin
     None
 }
 
+/// `/settings`: every setting with its value; Enter changes one in
+/// `~/.axio/agent/settings.json`.
+pub fn settings(agent: &mut Agent, term: &mut ui::Term, home: &Path, models: &mut ModelCache) {
+    let current = match crate::settings::Settings::load(home, None) {
+        Ok(s) => s,
+        Err(e) => return note(term, &format!("axio: {e}")),
+    };
+    let rows = crate::panels::settings_rows(&current);
+    let choices: Vec<Choice> = rows
+        .iter()
+        .map(|r| Choice::new(r.label, format!("{} · {}", r.value, r.about)))
+        .collect();
+    let keys = term.keys.as_mut().expect("keys");
+    let Some(i) = menu::pick(keys, Picker::new("Settings", choices, None), term.color) else {
+        return;
+    };
+    let row = &rows[i];
+    let pick_one = |term: &mut ui::Term, title: &str, options: &[&str]| -> Option<String> {
+        let choices = options.iter().map(|o| Choice::new(*o, "")).collect();
+        let keys = term.keys.as_mut().expect("keys");
+        menu::pick(keys, Picker::new(title, choices, None), term.color)
+            .map(|i| options[i].to_string())
+    };
+    let ask = |term: &mut ui::Term, q: &str| -> Option<String> {
+        let keys = term.keys.as_mut().expect("keys");
+        menu::ask(keys, q, false).filter(|a| !a.trim().is_empty())
+    };
+    let value: serde_json::Value = match row.path {
+        ["model"] => return pick_model(agent, term, models, None),
+        ["effort"] => return pick_effort(agent, term),
+        ["profile"] => {
+            let mut names: Vec<String> = ["minimal", "standard", "full"].map(String::from).to_vec();
+            for e in std::fs::read_dir(home.join("profiles"))
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                if let Some(n) = e
+                    .path()
+                    .file_stem()
+                    .filter(|_| e.path().extension().is_some_and(|x| x == "json"))
+                {
+                    names.push(n.to_string_lossy().into());
+                }
+            }
+            let options: Vec<&str> = names.iter().map(String::as_str).collect();
+            let Some(name) = pick_one(term, "Profile for new sessions", &options) else {
+                return;
+            };
+            serde_json::json!(name)
+        }
+        ["compactModel"] => {
+            let Some(c) = pick_one(
+                term,
+                "Compaction model",
+                &["main model", "fast", "another model…"],
+            ) else {
+                return;
+            };
+            match c.as_str() {
+                "main model" => serde_json::json!("inherit"),
+                "fast" => serde_json::json!("fast"),
+                _ => match ask(term, "Model (provider/model): ") {
+                    Some(m) => serde_json::json!(m.trim()),
+                    None => return,
+                },
+            }
+        }
+        ["importFromOtherHarnesses"] => {
+            match pick_one(term, "Import from other harnesses", &["ask", "off"]) {
+                Some(v) => serde_json::json!(v),
+                None => return,
+            }
+        }
+        ["subagents", "parallel"] => {
+            match pick_one(term, "Sub-agents at once", &["1", "2", "3", "4", "6", "8"]) {
+                Some(v) => serde_json::json!(v.parse::<u64>().unwrap_or(4)),
+                None => return,
+            }
+        }
+        ["subagents", "nesting"] => {
+            match pick_one(term, "Sub-agent nesting", &["0", "1", "2", "3"]) {
+                Some(v) => serde_json::json!(v.parse::<u64>().unwrap_or(0)),
+                None => return,
+            }
+        }
+        ["subagents", "fastModel"] => match ask(term, "Fast model (provider/model): ") {
+            Some(m) => serde_json::json!(m.trim()),
+            None => return,
+        },
+        ["subagents", "resultLimit"] => {
+            match ask(term, "Characters returned: ").and_then(|a| a.trim().parse::<u64>().ok()) {
+                Some(n) => serde_json::json!(n),
+                None => return note(term, "not a number; nothing changed"),
+            }
+        }
+        // On or off: Enter flips it.
+        _ => serde_json::json!(!row.value.starts_with("on")),
+    };
+    if let Err(e) = crate::settings::set_path(home, row.path, value.clone()) {
+        return note(term, &format!("axio: {e}"));
+    }
+    let shown = match &value {
+        serde_json::Value::Bool(true) => "on".to_string(),
+        serde_json::Value::Bool(false) => "off".to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        v => v.to_string(),
+    };
+    let now = match row.path {
+        ["fastMode"] => "; /fast changes this session",
+        _ => "",
+    };
+    note(
+        term,
+        &format!("{}: {shown} for new sessions{now}", row.label),
+    );
+}
+
 /// `/agents`: the sub-agent roles; choosing one shows it in full.
 pub fn agents(term: &mut ui::Term, roles: &[crate::roles::Role], enabled: bool) {
     if !enabled {

@@ -172,6 +172,10 @@ impl Agent {
         }
     }
 
+    pub fn tool_specs(&self) -> &[ToolSpec] {
+        &self.tools
+    }
+
     pub fn mcp(&self) -> &Mcp {
         &self.mcp
     }

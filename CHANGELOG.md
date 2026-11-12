@@ -77,6 +77,8 @@ under Unreleased.
   estimated session cost; Ctrl-O shows the last tool result in full; long
   edit diffs are cut to their start (#70).
 
+- `/context`, `/settings` and `/init` (#71).
+
 **Models**
 - Fast mode as an opt-in toggle on models that have it: `/fast`,
   `"fastMode"` in settings, the price shown when it turns on, standard speed
