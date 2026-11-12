@@ -315,7 +315,7 @@ pub fn remove(dir: &Path, name: &str) -> Result<String, String> {
     Ok(format!("removed {name} ({})", plugin.root.display()))
 }
 
-pub fn list(dirs: &[(&str, PathBuf)]) -> String {
+pub fn list(dirs: &[(&str, PathBuf)], imported: &[crate::import::Item]) -> String {
     let mut out = Vec::new();
     for (scope, dir) in dirs {
         for p in plugins::list(dir, None) {
@@ -328,6 +328,21 @@ pub fn list(dirs: &[(&str, PathBuf)]) -> String {
                 p.version.as_deref().unwrap_or("unversioned")
             ));
             out.extend(describe(&p.root).into_iter().map(|l| format!("  {l}")));
+        }
+    }
+    for i in imported {
+        let crate::import::Kind::Plugin { root, codex } = &i.kind else {
+            continue;
+        };
+        out.push(format!(
+            "{} {} (imported from {}, used in place)",
+            i.name,
+            i.version.as_deref().unwrap_or("unversioned"),
+            i.harness
+        ));
+        // Codex plugins keep these files under `.codex-plugin/`.
+        if !codex {
+            out.extend(describe(root).into_iter().map(|l| format!("  {l}")));
         }
     }
     if out.is_empty() {
@@ -343,7 +358,13 @@ const USAGE: &str = "Usage: axio plugin install <git-url | owner/repo | git:host
        axio plugin remove <name> [--project]";
 
 /// Entry point for `axio plugin …`.
-pub fn main(args: &[String], home: &Path, cwd: &Path) -> Result<(), String> {
+/// `imported` holds the accepted items from other harnesses, when importing is on.
+pub fn main(
+    args: &[String],
+    home: &Path,
+    cwd: &Path,
+    imported: Vec<crate::import::Item>,
+) -> Result<(), String> {
     let project = args.iter().any(|a| a == "--project");
     let rest: Vec<&str> = args
         .iter()
@@ -384,10 +405,13 @@ pub fn main(args: &[String], home: &Path, cwd: &Path) -> Result<(), String> {
         ["list"] => {
             println!(
                 "{}",
-                list(&[
-                    ("global", home.join("plugins")),
-                    ("project", root.join(".axio/plugins"))
-                ])
+                list(
+                    &[
+                        ("global", home.join("plugins")),
+                        ("project", root.join(".axio/plugins"))
+                    ],
+                    &imported
+                )
             );
             Ok(())
         }
@@ -485,12 +509,30 @@ mod tests {
                 .starts_with("updated guard from")
         );
         assert!(p.root.join("bin/extra").exists());
-        let listed = list(&[("global", dir.clone())]);
+        let listed = list(&[("global", dir.clone())], &[]);
         assert!(
             listed.starts_with("guard 0.1.0 (global, from guard-src)\n  hook PreToolUse [Bash]")
         );
         assert!(remove(&dir, "guard").unwrap().starts_with("removed guard"));
-        assert_eq!(list(&[("global", dir.clone())]), "no plugins installed");
+        assert_eq!(
+            list(&[("global", dir.clone())], &[]),
+            "no plugins installed"
+        );
+        let figma = crate::import::Item {
+            harness: "Claude Code",
+            kind: crate::import::Kind::Plugin {
+                root: work.join("guard-src"),
+                codex: false,
+            },
+            label: "plugin",
+            name: "figma".into(),
+            version: Some("2.2.157".into()),
+            support: crate::import::Support::Works,
+            fingerprint: String::new(),
+        };
+        assert!(list(&[("global", dir.clone())], &[figma]).starts_with(
+            "figma 2.2.157 (imported from Claude Code, used in place)\n  hook PreToolUse [Bash]"
+        ));
         std::fs::create_dir_all(work.join("empty")).unwrap();
         assert!(
             install(&dir, &Source::Local(work.join("empty")), "empty")

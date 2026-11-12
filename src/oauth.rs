@@ -278,6 +278,29 @@ fn wait_for_callback(listener: &TcpListener) -> Result<Map<String, Value>, Strin
     }
 }
 
+/// A dynamic client registration reply that holds a `client_id`.
+fn registered_client(register: &str, status: u16, body: &str) -> Result<Value, String> {
+    let reply: Option<Value> = serde_json::from_str(body).ok();
+    if !(200..300).contains(&status) {
+        let why = reply
+            .as_ref()
+            .and_then(|v| v["error_description"].as_str().or(v["error"].as_str()))
+            .map(String::from)
+            .unwrap_or_else(|| body.trim().chars().take(200).collect());
+        return Err(format!(
+            "{register} refused to register axio ({status}{}); some servers accept only clients they have approved",
+            if why.is_empty() {
+                String::new()
+            } else {
+                format!(": {why}")
+            }
+        ));
+    }
+    reply
+        .filter(|v| v["client_id"].is_string())
+        .ok_or_else(|| "the client registration gave no client_id".into())
+}
+
 /// Signs in to the server at `url` through the browser, which `open` shows
 /// the sign-in page in, and stores the token.
 pub fn login(url: &str, open: &dyn Fn(&str)) -> Result<(), String> {
@@ -302,12 +325,13 @@ pub fn login(url: &str, open: &dyn Fn(&str)) -> Result<(), String> {
             .to_string(),
         )
         .map_err(|e| format!("could not register with {register}: {e}"))?;
-    let client: Value =
-        serde_json::from_str(&resp.into_body().read_to_string().unwrap_or_default())
-            .map_err(|_| "the client registration reply was not JSON")?;
-    let client_id = client["client_id"]
-        .as_str()
-        .ok_or("the client registration gave no client_id")?;
+    let status = resp.status().as_u16();
+    let client = registered_client(
+        register,
+        status,
+        &resp.into_body().read_to_string().unwrap_or_default(),
+    )?;
+    let client_id = client["client_id"].as_str().unwrap_or_default();
     let verifier = base64url(&random(32)?);
     let state = base64url(&random(16)?);
     let code_challenge = base64url(&sha256(verifier.as_bytes()));
@@ -600,6 +624,25 @@ mod tests {
         assert!(logout(&url).unwrap());
         assert!(!signed_in(&url));
         std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_refused_registration_says_why() {
+        let reg = "https://api.example.com/register";
+        assert_eq!(
+            registered_client(reg, 403, "Forbidden").unwrap_err(),
+            "https://api.example.com/register refused to register axio (403: Forbidden); some servers accept only clients they have approved"
+        );
+        assert!(
+            registered_client(reg, 400, r#"{"error": "invalid_redirect_uri"}"#)
+                .unwrap_err()
+                .contains("(400: invalid_redirect_uri)")
+        );
+        assert_eq!(
+            registered_client(reg, 201, r#"{"client_id": "c1"}"#).unwrap()["client_id"],
+            "c1"
+        );
+        assert!(registered_client(reg, 200, "{}").is_err());
     }
 }
 

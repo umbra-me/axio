@@ -360,6 +360,8 @@ impl Sources<'_> {
         if let Some(root) = self.project {
             add(root.join(".axio/settings.json"), root.join(".axio/plugins"))?;
         }
+        // `axio import` already listed what an imported item cannot do.
+        let noticed = h.skipped.len();
         for i in &self.imported {
             if let import::Kind::Hooks(file) = &i.kind {
                 h.add_file(file, None)?;
@@ -373,6 +375,7 @@ impl Sources<'_> {
             };
             h.add_file(&file, Some(root))?;
         }
+        h.skipped.truncate(noticed);
         Ok(h)
     }
 
@@ -390,6 +393,7 @@ impl Sources<'_> {
         if let Some(root) = self.project {
             add(root.join(".mcp.json"), root.join(".axio/plugins"))?;
         }
+        let noticed = c.skipped.len();
         for i in &self.imported {
             if let import::Kind::Mcp(entry) = &i.kind {
                 let source = std::path::PathBuf::from(format!("{} (imported)", i.harness));
@@ -408,6 +412,7 @@ impl Sources<'_> {
             };
             c.add_file(&file, Some(root))?;
         }
+        c.skipped.truncate(noticed);
         Ok(c)
     }
 
@@ -425,6 +430,8 @@ impl Sources<'_> {
         for p in self.plugins(self.home.join("plugins")) {
             lib.add_dir(&p.root, Some(&p.name));
         }
+        // The same skill installed in several harnesses is expected.
+        let noticed = lib.shadowed.len();
         for i in &self.imported {
             if let import::Kind::Skills(base) = &i.kind {
                 lib.add_dir(base, None);
@@ -433,6 +440,7 @@ impl Sources<'_> {
         for (name, root, _) in self.imported_plugins() {
             lib.add_dir(root, Some(name));
         }
+        lib.shadowed.truncate(noticed);
         lib
     }
 }
@@ -676,7 +684,16 @@ fn run() -> Result<ExitCode, String> {
     }
     if all.first().is_some_and(|a| a == "plugin") {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-        plugin_cli::main(&all[1..], &context::home(), &cwd)?;
+        let home = context::home();
+        let importing = settings::Settings::load(&home, None)?
+            .import_from_other_harnesses
+            .is_some_and(|v| v == "ask");
+        let imported = if importing {
+            imports(&home, false, false)?
+        } else {
+            Vec::new()
+        };
+        plugin_cli::main(&all[1..], &home, &cwd, imported)?;
         return Ok(ExitCode::SUCCESS);
     }
     let args = if all.first().is_some_and(|a| a == "mcp") {
@@ -1011,6 +1028,58 @@ fn run() -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_items_load_without_repeating_import_notices() {
+        let root = std::env::temp_dir().join(format!("axio-quiet-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |p: &str, t: &str| {
+            let p = root.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        write(
+            "home/mcp.json",
+            r#"{"mcpServers": {"browse": {"command": "browse"}}}"#,
+        );
+        write("home/skills/pdf/SKILL.md", "---\nname: pdf\n---\nmine");
+        write(
+            "codex/hooks.json",
+            r#"{"hooks": {"Notification": [{"hooks": [{"type": "command", "command": "true"}]}],
+                "Stop": [{"hooks": [{"type": "command", "command": "true"}]}]}}"#,
+        );
+        write("pi/skills/pdf/SKILL.md", "---\nname: pdf\n---\ntheirs");
+        let item = |kind, label: &'static str| import::Item {
+            harness: "Codex",
+            kind,
+            label,
+            name: if label == "mcp" { "browse" } else { "x" }.into(),
+            version: None,
+            support: import::Support::Works,
+            fingerprint: String::new(),
+        };
+        let sources = Sources {
+            home: &root.join("home"),
+            project: None,
+            allowed: None,
+            imported: vec![
+                item(import::Kind::Hooks(root.join("codex/hooks.json")), "hooks"),
+                item(
+                    import::Kind::Mcp(serde_json::json!({"command": "other"})),
+                    "mcp",
+                ),
+                item(import::Kind::Skills(root.join("pi")), "skills"),
+            ],
+        };
+        let hooks = sources.hooks(&root).unwrap();
+        assert!(hooks.skipped.is_empty(), "{:?}", hooks.skipped);
+        assert!(hooks.has(hooks::Event::Stop), "the Stop hook still loads");
+        let mcp = sources.mcp().unwrap();
+        assert!(mcp.skipped.is_empty(), "{:?}", mcp.skipped);
+        assert_eq!(mcp.servers.len(), 1);
+        assert!(sources.library().shadowed.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn trust_flag_decides_one_run_only() {
