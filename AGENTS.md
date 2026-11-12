@@ -27,6 +27,11 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
+For changes to the terminal, keys or the turn loop, also run the terminal
+checks (no model is called): `cargo build --release --locked && sh e2e/all.sh
+target/release/axio`. `sh e2e/linux.sh` repeats everything on Linux in a
+disposable container. See `e2e/README.md`.
+
 ## Layout
 
 - `src/main.rs`: arguments, terminal output, interactive loop
