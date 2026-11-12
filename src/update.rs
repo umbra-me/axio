@@ -42,7 +42,14 @@ fn newer(latest: &str, current: &str) -> bool {
 }
 
 fn get(url: &str) -> Result<Vec<u8>, String> {
-    let resp = crate::provider::agent()
+    // GitHub serves release files through a redirect to another host, so
+    // this client follows redirects; it sends no credentials.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .https_only(crate::provider::env("AXIO_UPDATE_URL").is_none())
+        .build()
+        .into();
+    let resp = agent
         .get(url)
         .header("user-agent", concat!("axio/", env!("CARGO_PKG_VERSION")))
         .header("accept", "application/vnd.github+json")

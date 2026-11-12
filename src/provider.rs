@@ -205,8 +205,17 @@ pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, Strin
 }
 
 pub(crate) fn agent() -> ureq::Agent {
+    http(None)
+}
+
+/// An HTTP client that never follows redirects: a redirect would carry
+/// headers such as `x-api-key` to whatever server it names. A 3xx comes
+/// back as an error status instead.
+pub(crate) fn http(timeout: Option<Duration>) -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
+        .max_redirects(0)
+        .timeout_global(timeout)
         .build()
         .into()
 }
@@ -253,12 +262,7 @@ pub(crate) type Connection = (String, Vec<(&'static str, String)>);
 
 /// Fetches a JSON document, with the provider's error when the status is not 2xx.
 pub(crate) fn get_json(url: &str, headers: &[(&str, String)]) -> Result<serde_json::Value, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(15)))
-        .build()
-        .into();
-    let mut req = agent.get(url);
+    let mut req = http(Some(Duration::from_secs(15))).get(url);
     for (k, v) in headers {
         req = req.header(*k, v);
     }
@@ -413,6 +417,47 @@ pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credentials_never_follow_a_redirect() {
+        use crate::testserve::{ok, redirect, serve};
+        let other = serve(|_| ok("{}"));
+        let to = format!("{}/steal", other.base);
+        let first = serve(move |_| redirect(&to));
+        let key = [("x-api-key", "secret".to_string())];
+        let url = format!("{}/v1/messages", first.base);
+        assert!(post_stream(&url, &key, &serde_json::json!({})).is_err());
+        assert!(get_json(&format!("{}/v1/models", first.base), &key).is_err());
+        assert!(
+            other.seen.lock().unwrap().is_empty(),
+            "nothing reached the other origin"
+        );
+    }
+
+    #[test]
+    fn every_credentialed_client_refuses_redirects() {
+        // Only these build their own HTTP client: WebFetch follows redirects
+        // itself, and updates carry no credentials.
+        for (file, text) in [
+            ("mcp.rs", include_str!("mcp.rs")),
+            ("oauth.rs", include_str!("oauth.rs")),
+            ("chatgpt.rs", include_str!("chatgpt.rs")),
+            (
+                "provider/anthropic.rs",
+                include_str!("provider/anthropic.rs"),
+            ),
+            ("provider/openai.rs", include_str!("provider/openai.rs")),
+            (
+                "provider/responses.rs",
+                include_str!("provider/responses.rs"),
+            ),
+        ] {
+            assert!(
+                !text.contains("config_builder"),
+                "{file} builds its own HTTP client"
+            );
+        }
+    }
 
     #[test]
     fn api_errors_read_as_type_and_message() {
