@@ -2,8 +2,8 @@
 name: research
 description: Reads web pages and local files to answer a question that needs outside documentation. Give it the URLs or the exact thing to look up.
 tools: WebFetch, Read
-model: fast
-effort: low
+model: inherit
+effort: inherit
 maxTurns: 20
 context: brief
 sandbox: read-only
