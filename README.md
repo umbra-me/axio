@@ -126,6 +126,7 @@ sandbox is never looser than the main agent's. Settings, all optional:
   "fastModel": "anthropic/claude-haiku-4-5",
   "choices": ["anthropic/claude-haiku-4-5", "chatgpt/gpt-6-luna"],
   "resultLimit": 8000,
+  "fast": false,
   "roles": {"review": {"model": "inherit", "effort": "choose"}}
 }}
 ```
@@ -156,6 +157,16 @@ Grok keep MCP servers in TOML, which axio reads with a small built-in reader.
 `~/.axio/agent/settings.json` holds `model`, `effort` and `profile`, and
 `compactModel` (`fast`, `inherit` or a model) for the model that writes
 compaction summaries; it defaults to the main model.
+
+Fast mode runs the same model up to 2.5x faster at a higher price, on the
+models that have it: Claude Opus 5.5 ($8 / $40 per million tokens), Fable 5.2
+and Mythos 5.2 ($16 / $80), and as a research preview Opus 5 and Opus 4.8
+($10 / $50). It is off by default: `/fast` turns it on or off for the session
+and says the price, `"fastMode": true` makes it the default, and the header
+shows `fast` while it applies. Sub-agents and side jobs (compaction, WebFetch
+prompts) never use it unless `"subagents": {"fast": true}`. If the provider
+refuses fast mode with a rate limit (zero without preview access), axio
+continues at standard speed for the rest of the session.
 `/effort <level>` changes reasoning effort for the session. A
 project's `.axio/settings.json` overrides them, but project configuration
 (`.axio/`, `.mcp.json`) can make axio run programs, so it loads only after you

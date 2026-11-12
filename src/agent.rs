@@ -92,6 +92,11 @@ pub struct Agent {
     pub compact_model: Option<String>,
     /// `subagents.fastModel`: what `fast` means when set.
     pub fast_model: Option<String>,
+    /// Fast mode for the main turns, on models that have it.
+    pub fast: bool,
+    /// Set when the provider refused fast mode with a rate limit; turning
+    /// fast mode on again clears it.
+    pub fast_refused: AtomicBool,
     /// Files the latest turn wrote or edited, with what they held before
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
@@ -134,6 +139,8 @@ impl Agent {
             max_turns: None,
             compact_model: None,
             fast_model: None,
+            fast: false,
+            fast_refused: AtomicBool::new(false),
             changed: Default::default(),
             tool_images: Default::default(),
         }
@@ -287,6 +294,21 @@ impl Agent {
                 Err(e) if e != ABORTED => e,
                 result => return result,
             };
+            // A fast-mode limit (zero without preview access) will not pass
+            // on a retry; standard speed answers at once.
+            if side.is_none()
+                && self.fast
+                && !self.fast_refused.load(Ordering::Relaxed)
+                && err.starts_with("429")
+                && err.contains("fast mode")
+            {
+                self.fast_refused.store(true, Ordering::Relaxed);
+                ui.notice(&format!(
+                    "fast mode is rate limited for {} (or not enabled for this account); using standard speed for the rest of this session",
+                    self.model
+                ));
+                continue;
+            }
             let reason = provider::retry_reason(&err).filter(|_| !shown);
             let Some(reason) = reason.filter(|_| attempt < self.max_retries) else {
                 return Err(match (reason, attempt) {
@@ -333,6 +355,7 @@ impl Agent {
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         // A side job runs on its own model without the main effort.
+        let fast = self.fast && side.is_none() && !self.fast_refused.load(Ordering::Relaxed);
         let (complete, model, system, effort, flag) = (
             self.complete.clone(),
             side.cloned().unwrap_or_else(|| self.model.clone()),
@@ -351,6 +374,7 @@ impl Agent {
                 messages: &messages,
                 tools: &tools,
                 effort: effort.as_deref(),
+                fast,
                 cancel: &flag,
             };
             let deltas = tx.clone();
@@ -1949,5 +1973,55 @@ mod tests {
             Mcp::default(),
         );
         agent.prompt("look it up", &mut Log::default()).unwrap();
+    }
+
+    #[test]
+    fn fast_mode_never_reaches_side_jobs() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let mut agent = agent(move |req, _| {
+            log.lock()
+                .unwrap()
+                .push((req.system == SUMMARY_SYSTEM, req.fast));
+            let text = if req.system == SUMMARY_SYSTEM {
+                "<summary>old work</summary>"
+            } else {
+                "ok"
+            };
+            reply(vec![Block::Text { text: text.into() }], Stop::EndTurn, 10)
+        });
+        agent.fast = true;
+        agent.compact_model = Some("fast".into());
+        agent.prompt("old", &mut Log::default()).unwrap();
+        assert!(agent.compact("manual", &mut Log::default()).unwrap());
+        assert_eq!(*seen.lock().unwrap(), [(false, true), (true, false)]);
+    }
+
+    #[test]
+    fn a_fast_mode_rate_limit_falls_back_to_standard_speed() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let mut agent = agent(move |req, _| {
+            log.lock().unwrap().push(req.fast);
+            if req.fast {
+                return Err("429 from https://api.anthropic.com/v1/messages: rate_limit_error: This request would exceed your rate limit of 0 fast mode input tokens per minute".into());
+            }
+            reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1)
+        });
+        agent.retry_unit = Duration::from_millis(1);
+        agent.fast = true;
+        let mut log = Log::default();
+        agent.prompt("one", &mut log).unwrap();
+        agent.prompt("two", &mut log).unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [true, false, false],
+            "one refused fast request, then standard speed without retrying fast"
+        );
+        assert!(
+            log.events.iter().any(|e| e.contains("standard speed")),
+            "{:?}",
+            log.events
+        );
     }
 }

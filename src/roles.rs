@@ -345,6 +345,7 @@ pub fn spec(
             sandbox,
             history: None,
             resume: None,
+            fast: settings.fast.unwrap_or(false),
             mcp: parent
                 .mcp
                 .iter()
@@ -645,6 +646,25 @@ mod tests {
         assert_eq!(spec.effort.as_deref(), Some("medium"));
         assert_eq!(spec.context, Sees::Rules);
         assert_eq!((spec.max_turns, spec.result_limit), (Some(5), Some(500)));
+        assert!(!spec.fast, "sub-agents are not fast unless asked");
+        let s = Subagents {
+            fast: Some(true),
+            ..s
+        };
+        assert!(
+            resolve(
+                explore,
+                &Call {
+                    task: "t".into(),
+                    ..Call::default()
+                },
+                &p,
+                &s
+            )
+            .unwrap()
+            .0
+            .fast
+        );
         // A per-call context wins over both.
         let call = Call {
             context: Some(Sees::Brief),

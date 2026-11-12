@@ -16,6 +16,8 @@ pub struct Settings {
     pub sandbox_network: Option<bool>,
     /// The model compaction runs on: `fast`, `inherit` or a model.
     pub compact_model: Option<String>,
+    /// Fast mode by default, on models that have it.
+    pub fast_mode: Option<bool>,
     #[serde(default)]
     pub subagents: Subagents,
 }
@@ -30,6 +32,8 @@ pub struct Subagents {
     pub parallel: Option<usize>,
     /// The model a role's `fast` means.
     pub fast_model: Option<String>,
+    /// Fast mode for sub-agents on models that have it (off by default).
+    pub fast: Option<bool>,
     /// Models the main agent may pick for roles set to `choose`.
     pub choices: Option<Vec<String>>,
     /// Characters of a sub-agent's answer returned to the main agent.
@@ -64,6 +68,7 @@ impl Subagents {
             nesting: over.nesting.or(self.nesting),
             parallel: over.parallel.or(self.parallel),
             fast_model: over.fast_model.or(self.fast_model),
+            fast: over.fast.or(self.fast),
             choices: over.choices.or(self.choices),
             result_limit: over.result_limit.or(self.result_limit),
             roles: self.roles,
@@ -91,6 +96,7 @@ impl Settings {
                 .or(self.import_from_other_harnesses),
             sandbox_network: over.sandbox_network.or(self.sandbox_network),
             compact_model: over.compact_model.or(self.compact_model),
+            fast_mode: over.fast_mode.or(self.fast_mode),
             subagents: self.subagents.overlay(over.subagents),
         }
     }

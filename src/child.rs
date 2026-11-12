@@ -41,6 +41,9 @@ pub struct Spec {
     pub mcp: Vec<crate::tools::ToolSpec>,
     /// Continue this saved session instead of starting a new one.
     pub resume: Option<PathBuf>,
+    /// Fast mode, on models that have it.
+    #[serde(default)]
+    pub fast: bool,
 }
 
 /// A sandbox for a sub-agent's Bash, Write and Edit.
@@ -100,6 +103,7 @@ pub fn agent(
     }
     let mut a = Agent::new(Model::parse(model), cwd.clone(), system);
     a.effort = spec.effort.clone();
+    a.fast = spec.fast;
     a.max_turns = Some(spec.max_turns.unwrap_or(MAX_TURNS));
     a.set_tools(modules_for(&spec.tools), crate::mcp::Mcp::default());
     a.add_tools(spec.mcp.clone());

@@ -90,6 +90,15 @@ impl Model {
         info(&self.to_string()).map(|i| i.notes).unwrap_or_default()
     }
 
+    /// Fast mode's price per million tokens (input / output) and whether
+    /// it is a research preview; `None` when the model has no fast mode.
+    pub fn fast_mode(&self) -> Option<anthropic::Fast> {
+        match self.api {
+            Api::Anthropic => anthropic::fast_mode(&self.id),
+            _ => None,
+        }
+    }
+
     /// The level the provider uses when none is sent.
     pub fn default_effort(&self) -> Option<String> {
         if let Some(d) = info(&self.to_string()).and_then(|i| i.default_effort) {
@@ -171,6 +180,8 @@ pub struct Request<'a> {
     pub messages: &'a [Message],
     pub tools: &'a [ToolSpec],
     pub effort: Option<&'a str>,
+    /// Fast mode, sent only to models that have it.
+    pub fast: bool,
     /// Set when the user stops the turn; streams check it between events.
     pub cancel: &'a AtomicBool,
 }
@@ -394,6 +405,7 @@ pub(crate) fn with_request<T>(cancelled: bool, f: impl FnOnce(&Request) -> T) ->
         messages: &[],
         tools: &[],
         effort: None,
+        fast: false,
         cancel: &cancel,
     })
 }

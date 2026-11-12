@@ -74,7 +74,7 @@ Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
 Esc or Ctrl-C stops a running turn, Enter during one sends what you typed to
 the model at its next step, Ctrl-D exits. @path attaches a file.
-Commands: /new, /undo, /output, /compact, /model <model>, /effort <level>,
+Commands: /new, /undo, /output, /compact, /model <model>, /effort <level>, /fast,
 /session, /help, /quit, plus your own
 
 Credentials come from the environment (ANTHROPIC_API_KEY or
@@ -189,7 +189,37 @@ fn model_line(agent: &Agent) -> String {
     if let Some(e) = &agent.effort {
         s.push_str(&format!(" {e}"));
     }
+    let refused = agent
+        .fast_refused
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if agent.fast && !refused && agent.model.fast_mode().is_some() {
+        s.push_str(" fast");
+    }
     s
+}
+
+/// `/fast`: turns fast mode on or off for this session, on models that
+/// have it, and says what it costs.
+fn toggle_fast(agent: &mut Agent) -> String {
+    let Some(f) = agent.model.fast_mode() else {
+        return format!(
+            "fast mode is not available for {}; it runs on Claude Opus 5.5, Fable 5.2 and Mythos 5.2 (research preview on Opus 5 and Opus 4.8)",
+            agent.model
+        );
+    };
+    agent.fast = !agent.fast;
+    agent
+        .fast_refused
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    if !agent.fast {
+        return "fast mode off for this session".into();
+    }
+    format!(
+        "fast mode on for this session: up to 2.5x faster output at ${} / ${} per million tokens{}",
+        f.price.0,
+        f.price.1,
+        if f.preview { " (research preview)" } else { "" }
+    )
 }
 
 fn history_path() -> std::path::PathBuf {
@@ -498,8 +528,9 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 }
 
 /// Built-in commands: name, arguments and what each does.
-const BUILTINS: [(&str, &str, &str); 16] = [
+const BUILTINS: [(&str, &str, &str); 17] = [
     ("model", "[provider/model]", "pick or switch the model"),
+    ("fast", "", "fast mode on or off, on models that have it"),
     ("login", "[provider]", "save an API key for a provider"),
     ("logout", "[provider]", "remove a provider's saved key"),
     ("effort", "[level]", "pick or set reasoning effort"),
@@ -853,6 +884,7 @@ fn run() -> Result<ExitCode, String> {
         .or(profile.effort.clone());
     agent.compact_ratio = profile.compact_at;
     agent.compact_model = config.compact_model.clone();
+    agent.fast = config.fast_mode.unwrap_or(false);
     agent.fast_model = config.subagents.fast_model.clone();
 
     let sessions = session::dir_for(&home, &cwd);
@@ -1073,6 +1105,7 @@ fn run() -> Result<ExitCode, String> {
                 }
                 Err(e) => eprintln!("{}", term.dim(&e)),
             },
+            ("/fast", _) => eprintln!("{}", term.dim(&toggle_fast(&mut agent))),
             ("/effort", level) => {
                 agent.effort = Some(level.to_string());
                 eprintln!("{}", term.dim(&format!("effort: {level} for this session")));
@@ -1143,6 +1176,30 @@ fn run() -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_mode_toggles_only_on_models_that_have_it() {
+        let mut a = Agent::new(
+            Model::parse("anthropic/claude-opus-5-5"),
+            std::env::temp_dir(),
+            String::new(),
+        );
+        assert_eq!(model_line(&a), "claude-opus-5-5");
+        assert!(toggle_fast(&mut a).contains("$8 / $40"));
+        assert!(a.fast);
+        assert_eq!(model_line(&a), "claude-opus-5-5 fast");
+        assert_eq!(toggle_fast(&mut a), "fast mode off for this session");
+        assert!(!a.fast);
+        a.model = Model::parse("anthropic/claude-opus-4-8");
+        assert!(toggle_fast(&mut a).ends_with("(research preview)"));
+        a.model = Model::parse("anthropic/claude-sonnet-5-5");
+        assert!(toggle_fast(&mut a).contains("not available"));
+        assert_eq!(
+            model_line(&a),
+            "claude-sonnet-5-5",
+            "no label where it has no effect"
+        );
+    }
 
     #[test]
     fn imported_items_load_without_repeating_import_notices() {
