@@ -293,8 +293,11 @@ mod tests {
         };
         assert!(s.allows_write(&proj.join("new/file.txt")));
         assert!(!s.allows_write(&proj.join("new/../../escaped.txt")));
-        assert!(
-            !s.allows_write(&proj.join("new/../file.txt")),
+        // Unix resolves `..` only through folders that exist, so this is
+        // refused; Windows resolves it by name, where it stays inside.
+        assert_eq!(
+            s.allows_write(&proj.join("new/../file.txt")),
+            cfg!(windows),
             "fails closed"
         );
     }
