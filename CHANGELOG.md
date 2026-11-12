@@ -119,6 +119,8 @@ under Unreleased.
   terminal checks on Linux and macOS, for every pull request.
 
 **Releases**
+- README status (public beta), a security and privacy section, and
+  `SECURITY.md` for private vulnerability reports.
 - Pushing a `vX.Y.Z` tag publishes static binaries for macOS, Linux and
   Windows with `SHA256SUMS` and the changelog section; `docs/releasing.md`
   describes versions and the steps.
