@@ -5,6 +5,7 @@ mod chatgpt;
 mod child;
 mod compact;
 mod context;
+mod cost;
 mod crypto;
 mod editor;
 mod hooks;
@@ -260,9 +261,10 @@ fn status_lines(
             used * 100 / window.max(1)
         ),
         format!(
-            "this run   {} turns · {} out",
+            "this run   {} turns · {} out · {}",
             term.turns,
-            ui::tokens(term.total_out)
+            ui::tokens(term.total_out),
+            cost_label(agent)
         ),
         format!("MCP        {mcp}"),
         format!(
@@ -274,6 +276,35 @@ fn status_lines(
             }
         ),
     ]
+}
+
+/// The status line under the prompt: model, context and what the session
+/// has cost so far.
+fn footer(agent: &Agent) -> String {
+    let window = agent.model.context_window().max(1);
+    let used = agent.context.max(agent.estimated_context());
+    format!(
+        "{} · {}% context · {}",
+        model_line(agent),
+        used * 100 / window,
+        cost_label(agent)
+    )
+}
+
+/// What the session has cost, or how this model is paid for before any
+/// call has been priced.
+fn cost_label(agent: &Agent) -> String {
+    let spent = agent.spent();
+    if spent != cost::Spend::default() {
+        return spent.label();
+    }
+    if agent.model.provider == chatgpt::PROVIDER {
+        "ChatGPT plan".into()
+    } else if cost::price(&agent.model, false, 0).is_none() {
+        "no price list".into()
+    } else {
+        spent.label()
+    }
 }
 
 /// `/fast`: turns fast mode on or off for this session, on models that
@@ -1224,6 +1255,7 @@ fn run() -> Result<ExitCode, String> {
     loop {
         if prompt.is_empty() {
             println!();
+            editor.footer = footer(&agent);
             let keys = term.keys.as_mut().expect("keys");
             match read_prompt(&mut editor, keys) {
                 Input::Line(line) => {
@@ -1398,6 +1430,17 @@ fn run() -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cost_label_suits_the_model_before_any_call() {
+        let at = |spec: &str| {
+            let a = Agent::new(Model::parse(spec), std::env::temp_dir(), String::new());
+            cost_label(&a)
+        };
+        assert_eq!(at("anthropic/claude-opus-5-5"), "$0.00");
+        assert_eq!(at("chatgpt/gpt-6-luna"), "ChatGPT plan");
+        assert_eq!(at("openrouter/x/y"), "no price list");
+    }
 
     #[test]
     fn fast_mode_toggles_only_on_models_that_have_it() {

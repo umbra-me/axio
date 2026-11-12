@@ -685,7 +685,10 @@ pub fn tool_lines(
             let start = output.len().saturating_sub(4);
             let mut out = Vec::new();
             if start > 0 {
-                out.push(paint(DIM, &format!("… {start} lines above")));
+                out.push(paint(
+                    DIM,
+                    &format!("… {start} lines above · Ctrl-O shows all"),
+                ));
             }
             out.extend(output[start..].iter().map(|l| paint(DIM, &clip(l, 160))));
             out.push(paint(RED, &format!("✗ {}", status.unwrap_or("failed"))));
@@ -717,7 +720,14 @@ pub fn tool_lines(
             let numbered = after
                 .filter(|_| input["replace_all"] != true)
                 .and_then(|(a, at)| edit_diff(input, a, at, color));
-            if let Some(lines) = numbered {
+            if let Some(mut lines) = numbered {
+                // A long edit shows its start; the file holds the rest.
+                const SHOWN: usize = 16;
+                if lines.len() > SHOWN + 2 {
+                    let more = lines.len() - SHOWN;
+                    lines.truncate(SHOWN);
+                    lines.push(paint(DIM, &format!("  … {more} more lines changed")));
+                }
                 return lines;
             }
             let mut out = Vec::new();
@@ -776,7 +786,10 @@ pub fn tool_lines(
             let start = lines.len().saturating_sub(4);
             let mut out = Vec::new();
             if start > 0 {
-                out.push(paint(DIM, &format!("… {} above", plural(start, "line"))));
+                out.push(paint(
+                    DIM,
+                    &format!("… {} above · Ctrl-O shows all", plural(start, "line")),
+                ));
             }
             out.extend(lines[start..].iter().map(|l| paint(DIM, &clip(l, 160))));
             out
@@ -1292,7 +1305,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             tool_lines("Bash", &json!({}), &Ok(long), None, false),
-            ["… 6 lines above", "7", "8", "9", "10"]
+            ["… 6 lines above · Ctrl-O shows all", "7", "8", "9", "10"]
         );
         assert_eq!(
             tool_lines("Bash", &json!({}), &Ok(String::new()), None, false),

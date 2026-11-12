@@ -100,6 +100,8 @@ pub struct Agent {
     /// Files the latest turn wrote or edited, with what they held before
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
+    /// What this session's model calls, and its sub-agents', have cost.
+    spend: std::sync::Mutex<crate::cost::Spend>,
     /// Images MCP tools returned in this round, sent after the results.
     tool_images: std::sync::Mutex<Vec<Block>>,
     mcp: Arc<Mcp>,
@@ -143,6 +145,7 @@ impl Agent {
             fast_refused: AtomicBool::new(false),
             changed: Default::default(),
             tool_images: Default::default(),
+            spend: Default::default(),
         }
     }
 
@@ -156,6 +159,17 @@ impl Agent {
             self.system.push_str(&section);
         }
         self.mcp = Arc::new(mcp);
+    }
+
+    pub fn spent(&self) -> crate::cost::Spend {
+        self.spend.lock().map(|s| *s).unwrap_or_default()
+    }
+
+    /// Adds what a sub-agent spent.
+    pub fn add_spend(&self, other: crate::cost::Spend) {
+        if let Ok(mut s) = self.spend.lock() {
+            s.merge(other);
+        }
     }
 
     pub fn mcp(&self) -> &Mcp {
@@ -300,6 +314,14 @@ impl Agent {
                 &mut shown,
             ) {
                 Err(e) if e != ABORTED => e,
+                Ok(reply) => {
+                    let fast =
+                        side.is_none() && self.fast && !self.fast_refused.load(Ordering::Relaxed);
+                    if let Ok(mut s) = self.spend.lock() {
+                        s.add(side.unwrap_or(&self.model), fast, &reply.usage);
+                    }
+                    return Ok(reply);
+                }
                 result => return result,
             };
             // A fast-mode limit (zero without preview access) will not pass
@@ -711,6 +733,7 @@ impl Agent {
                         .map(|_| crate::subagent::Finished {
                             result: Err(why.clone()),
                             session: None,
+                            spend: Default::default(),
                         })
                         .collect()
                 };
@@ -849,6 +872,7 @@ impl Agent {
     ) -> Result<String, String> {
         let mut rounds = 0;
         loop {
+            self.add_spend(done.spend);
             let Some(session) = done.session.clone() else {
                 return done.result;
             };
@@ -2031,5 +2055,32 @@ mod tests {
             "{:?}",
             log.events
         );
+    }
+
+    #[test]
+    fn spend_counts_every_call_at_its_own_models_price() {
+        let mut agent = agent(|req, _| {
+            let text = if req.system == SUMMARY_SYSTEM {
+                "<summary>old work</summary>"
+            } else {
+                "ok"
+            };
+            Ok(Reply {
+                content: vec![Block::Text { text: text.into() }],
+                stop: Stop::EndTurn,
+                usage: Usage {
+                    input: 100_000,
+                    output: 10_000,
+                    ..Usage::default()
+                },
+            })
+        });
+        agent.model = Model::parse("anthropic/claude-opus-5-5");
+        agent.compact_model = Some("fast".into());
+        agent.prompt("old", &mut Log::default()).unwrap();
+        assert_eq!(agent.spent().label(), "~$0.60");
+        assert!(agent.compact("manual", &mut Log::default()).unwrap());
+        // Haiku 4.5 (the fast model here): 0.10 + 0.05.
+        assert_eq!(agent.spent().label(), "~$0.75");
     }
 }

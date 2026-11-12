@@ -34,6 +34,9 @@ pub struct Editor {
     /// Where `@path` completion looks.
     pub cwd: Option<std::path::PathBuf>,
     search: Option<Search>,
+    /// A dim status line under the input, hidden while the command menu
+    /// is open.
+    pub footer: String,
 }
 
 /// Ctrl-R: the typed query and the history entry it matched.
@@ -405,6 +408,7 @@ impl Editor {
                 });
             }
             Key::Ctrl('i') => self.complete(),
+            Key::Ctrl('o') if self.buf.is_empty() => return Outcome::Submit("/output".into()),
             Key::Char(c) => self.insert(&c.to_string()),
             Key::Paste(s) => {
                 let text = dropped_image(&s, self.cwd.as_deref())
@@ -544,6 +548,13 @@ impl Editor {
             let rows = self.menu_rows(&menu, width);
             row += rows.len() - 1;
             out.push_str(&rows.join("\n"));
+        } else if !self.footer.is_empty() {
+            if col < width {
+                out.push('\n');
+                row += 1;
+            }
+            let line: String = self.footer.chars().take(width - 1).collect();
+            out.push_str(&crate::ui::paint(self.color, crate::ui::DIM, &line));
         }
         Layout {
             text: out,
@@ -832,6 +843,38 @@ mod tests {
             !e.layout(80).text.contains("show the session"),
             "closed once an argument starts"
         );
+    }
+
+    #[test]
+    fn the_status_line_sits_under_the_input() {
+        let mut e = with_commands();
+        e.footer = "opus · 4% context · ~$0.12".into();
+        typed(&mut e, "hello");
+        let l = e.layout(80);
+        assert_eq!(l.text, "› hello\nopus · 4% context · ~$0.12");
+        assert_eq!((l.cursor_row, l.cursor_col, l.end_row), (0, 7, 1));
+        e.set("");
+        typed(&mut e, "/ne");
+        assert!(
+            !e.layout(80).text.contains("context"),
+            "the command menu replaces it"
+        );
+        e.footer = "x".repeat(100);
+        e.set("");
+        assert_eq!(
+            e.layout(40).text.lines().last().unwrap().chars().count(),
+            39,
+            "fits the width"
+        );
+    }
+
+    #[test]
+    fn ctrl_o_on_an_empty_prompt_shows_the_last_output() {
+        let mut e = Editor::default();
+        assert_eq!(e.handle(Key::Ctrl('o')), Outcome::Submit("/output".into()));
+        assert!(e.history.is_empty(), "not kept in history");
+        typed(&mut e, "text");
+        assert_eq!(e.handle(Key::Ctrl('o')), Outcome::Editing);
     }
 
     #[test]

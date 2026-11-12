@@ -240,12 +240,15 @@ pub fn drive(mut agent: Agent, spec: &Spec, out: &mut dyn Write) -> bool {
             let text: String = answer.chars().take(limit).collect();
             lines.emit(
                 json!({"type": "result", "text": text, "truncated": truncated,
-                              "session": session, "usage": usage}),
+                              "session": session, "usage": usage, "spend": agent.spent()}),
             );
             true
         }
         Err(e) => {
-            lines.emit(json!({"type": "error", "message": e, "session": session, "usage": usage}));
+            lines.emit(
+                json!({"type": "error", "message": e, "session": session, "usage": usage,
+                              "spend": agent.spent()}),
+            );
             false
         }
     }
