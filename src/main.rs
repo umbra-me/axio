@@ -33,6 +33,8 @@ mod skills;
 mod sse;
 mod subagent;
 mod term;
+#[cfg(test)]
+mod testserve;
 mod toml_lite;
 mod tools;
 mod ui;

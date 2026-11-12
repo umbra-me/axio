@@ -31,16 +31,38 @@ pub fn fetch(input: &Value) -> Result<String, String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("only http and https URLs can be fetched".into());
     }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(30)))
-        .build()
-        .into();
-    let resp = agent
-        .get(url)
-        .header("user-agent", concat!("axio/", env!("CARGO_PKG_VERSION")))
-        .call()
-        .map_err(|e| format!("could not fetch {url}: {e}"))?;
+    let agent = crate::provider::http(Some(Duration::from_secs(30)));
+    let mut url = url.to_string();
+    let mut hops = 0;
+    let resp = loop {
+        let resp = agent
+            .get(&url)
+            .header("user-agent", concat!("axio/", env!("CARGO_PKG_VERSION")))
+            .call()
+            .map_err(|e| format!("could not fetch {url}: {e}"))?;
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .filter(|_| resp.status().is_redirection());
+        let Some(location) = location else {
+            break resp;
+        };
+        let next = join(&url, location);
+        // Permission covered the address asked for; another site needs a
+        // call of its own, which is checked again.
+        if !same_site(&url, &next) {
+            return Ok(format!(
+                "URL: {url}\n\n{url} redirects to {next}, another site. Fetch that URL to follow it."
+            ));
+        }
+        hops += 1;
+        if hops > 5 {
+            return Err(format!("{url}: too many redirects"));
+        }
+        url = next;
+    };
+    let url = url.as_str();
     let status = resp.status().as_u16();
     let kind = resp
         .headers()
@@ -74,6 +96,52 @@ pub fn fetch(input: &Value) -> Result<String, String> {
         "URL: {url}\n\n{}",
         text.trim()
     )))
+}
+
+/// Scheme, host and port of an http(s) URL.
+fn origin(url: &str) -> Option<(&str, &str)> {
+    let (scheme, rest) = url.split_once("://")?;
+    Some((scheme, rest.split(['/', '?', '#']).next()?))
+}
+
+/// The same scheme, host and port, or the same host moving to https.
+fn same_site(from: &str, to: &str) -> bool {
+    match (origin(from), origin(to)) {
+        (Some(a), Some(b)) => {
+            let host = |h: &str| {
+                let h = h
+                    .rsplit_once('@')
+                    .map_or(h, |(_, h)| h)
+                    .to_ascii_lowercase();
+                h.strip_suffix(":80").map(str::to_string).unwrap_or(h)
+            };
+            (a.0 == b.0 && host(a.1) == host(b.1))
+                || (a.0 == "http"
+                    && b.0 == "https"
+                    && host(a.1) == host(b.1).trim_end_matches(":443"))
+        }
+        _ => false,
+    }
+}
+
+/// A redirect's `location` made absolute against the page it came from.
+fn join(base: &str, location: &str) -> String {
+    if location.contains("://") {
+        return location.to_string();
+    }
+    let Some((scheme, rest)) = base.split_once("://") else {
+        return location.to_string();
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if let Some(l) = location.strip_prefix("//") {
+        return format!("{scheme}://{l}");
+    }
+    if location.starts_with('/') {
+        return format!("{scheme}://{host}{location}");
+    }
+    let path = rest[host.len()..].split(['?', '#']).next().unwrap_or("");
+    let dir = path.rsplit_once('/').map_or("", |(d, _)| d);
+    format!("{scheme}://{host}{dir}/{location}")
 }
 
 fn entity(name: &str) -> Option<char> {
@@ -215,6 +283,44 @@ pub fn html_to_text(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_targets_and_sites() {
+        assert_eq!(join("https://a.dev/x/y?q", "/z"), "https://a.dev/z");
+        assert_eq!(join("https://a.dev/x/y", "z"), "https://a.dev/x/z");
+        assert_eq!(join("https://a.dev/x", "//b.dev/p"), "https://b.dev/p");
+        assert_eq!(join("https://a.dev/x", "http://c.dev/"), "http://c.dev/");
+        assert!(same_site("https://a.dev/x", "https://A.dev/y"));
+        assert!(same_site("http://a.dev/x", "https://a.dev/x"));
+        assert!(!same_site("https://a.dev/x", "http://a.dev/x"), "no downgrade");
+        assert!(!same_site("https://a.dev/", "https://b.a.dev/"));
+        assert!(!same_site("http://127.0.0.1:1/", "http://127.0.0.1:2/"));
+        assert!(!same_site("https://a.dev/", "https://evil@a.dev.evil/"));
+    }
+
+    #[test]
+    fn redirects_are_followed_only_on_the_same_site() {
+        use crate::testserve::{ok, redirect, serve};
+        let other = serve(|_| ok("internal service"));
+        let away = format!("{}/admin", other.base);
+        let site = serve(move |path| match path {
+            "/moved" => redirect("/page"),
+            "/page" => ok("the page"),
+            _ => redirect(&away),
+        });
+        let text = fetch(&json!({"url": format!("{}/moved", site.base)})).unwrap();
+        assert!(text.contains("the page"), "{text}");
+        let text = fetch(&json!({"url": format!("{}/leave", site.base)})).unwrap();
+        assert!(
+            text.contains(&format!("redirects to {}/admin", other.base)),
+            "{text}"
+        );
+        assert!(!text.contains("internal service"), "{text}");
+        assert!(
+            other.seen.lock().unwrap().is_empty(),
+            "the other site was not contacted"
+        );
+    }
 
     #[test]
     fn turns_html_into_text() {

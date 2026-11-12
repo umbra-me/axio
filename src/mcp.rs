@@ -297,10 +297,7 @@ fn http_post(
     initialized: bool,
     msg: &Value,
 ) -> Result<ureq::http::Response<ureq::Body>, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let agent = crate::provider::http(None);
     let send = |token: Option<&str>| {
         let mut req = agent
             .post(url)
@@ -475,10 +472,7 @@ fn resolve_url(base: &str, endpoint: &str) -> String {
 
 impl SseConn {
     fn open(cfg: &ServerConfig, url: &str, cwd: &Path) -> Result<SseConn, String> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .build()
-            .into();
+        let agent = crate::provider::http(None);
         let own = cfg
             .headers
             .iter()

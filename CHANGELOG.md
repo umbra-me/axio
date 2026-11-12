@@ -174,3 +174,9 @@ Found by a pre-release review.
   followed by `..`.
 - Read-only sub-agents without a sandbox (Windows) ask before every command,
   even ones the main agent's rules allow.
+- Requests to model providers, MCP servers and sign-in endpoints no longer
+  follow redirects, which carried headers such as `x-api-key` to the server a
+  redirect named.
+- WebFetch follows redirects only on the same site (or from http to https);
+  a redirect elsewhere comes back as a new address for the model to fetch,
+  which needs its own permission.
