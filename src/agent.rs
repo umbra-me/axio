@@ -45,7 +45,12 @@ pub trait Ui {
     }
     /// Runs a tool someone else owns (a sub-agent's MCP tools, run by the
     /// main agent); `None` when it is not one.
-    fn remote_tool(&mut self, _name: &str, _input: &Value) -> Option<Result<String, String>> {
+    #[allow(clippy::type_complexity)]
+    fn remote_tool(
+        &mut self,
+        _name: &str,
+        _input: &Value,
+    ) -> Option<(Result<String, String>, Vec<Block>)> {
         None
     }
     /// Sub-agents are running: one line on what they are doing.
@@ -90,6 +95,8 @@ pub struct Agent {
     /// Files the latest turn wrote or edited, with what they held before
     /// (`None`: the turn created them), for /undo.
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
+    /// Images MCP tools returned in this round, sent after the results.
+    tool_images: std::sync::Mutex<Vec<Block>>,
     mcp: Arc<Mcp>,
     subagents: Option<Arc<crate::subagent::Host>>,
     tools: Vec<ToolSpec>,
@@ -128,6 +135,7 @@ impl Agent {
             compact_model: None,
             fast_model: None,
             changed: Default::default(),
+            tool_images: Default::default(),
         }
     }
 
@@ -202,6 +210,12 @@ impl Agent {
             "{}\n\n[answered from the page by {by}; fetch without a prompt for the full text]",
             answer.trim()
         ))
+    }
+
+    fn keep_images(&self, images: Vec<Block>) {
+        if let Ok(mut kept) = self.tool_images.lock() {
+            kept.extend(images);
+        }
     }
 
     /// Offers only the named tools. Calls to any other tool are refused.
@@ -685,7 +699,10 @@ impl Agent {
                     };
                 }
             }
-            // Images a Read returned follow the results they belong to.
+            // Images a Read or an MCP tool returned follow the results.
+            if let Ok(mut kept) = self.tool_images.lock() {
+                images.append(&mut kept);
+            }
             results.append(&mut images);
             if self.max_turns == Some(rounds) {
                 results.push(Block::Text {
@@ -943,10 +960,13 @@ impl Agent {
                 if matches!(name, "Write" | "Edit") && !self.mcp.owns(name) {
                     self.remember_original(&input);
                 }
-                let r = if let Some(r) = ui.remote_tool(name, &input) {
+                let r = if let Some((r, images)) = ui.remote_tool(name, &input) {
+                    self.keep_images(images);
                     r
                 } else if self.mcp.owns(name) {
-                    self.mcp.call(name, &input, &mut || ui.interrupted())
+                    let (r, images) = self.mcp.call(name, &input, &mut || ui.interrupted());
+                    self.keep_images(images);
+                    r
                 } else {
                     tools::run_with(self.modules, name, &input, &self.cwd, &mut || {
                         ui.interrupted()

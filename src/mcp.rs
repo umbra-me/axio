@@ -2,7 +2,12 @@
 //! JSON-RPC 2.0 on its stdin and stdout, and offers its tools to the model as
 //! `mcp__<server>__<tool>`.
 
+use crate::message::Block;
 use crate::tools::ToolSpec;
+
+/// The largest image passed to the model (base64 makes it a third larger,
+/// and providers take up to 5 MB).
+const MAX_IMAGE_BYTES: usize = 3_750_000;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -659,7 +664,19 @@ impl Mcp {
         tool: &str,
         input: &Value,
         stop: &mut dyn FnMut() -> bool,
-    ) -> Result<String, String> {
+    ) -> (Result<String, String>, Vec<Block>) {
+        match self.call_raw(tool, input, stop) {
+            Ok(result) => render(&result),
+            Err(e) => (Err(e), Vec::new()),
+        }
+    }
+
+    fn call_raw(
+        &self,
+        tool: &str,
+        input: &Value,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Value, String> {
         let server = self
             .servers
             .iter()
@@ -716,22 +733,73 @@ impl Mcp {
                 }
             }
         };
-        render(&result)
+        Ok(result)
     }
 }
 
-/// Tool results as text: text items joined, other content named.
-fn render(result: &Value) -> Result<String, String> {
+/// Tool results as text plus the images in them. Text and text resources are
+/// kept; images (also image resources) go to the model after the result;
+/// anything else is named so the model knows it was there.
+fn render(result: &Value) -> (Result<String, String>, Vec<Block>) {
     let mut parts = Vec::new();
+    let mut images = Vec::new();
+    let mut image = |data: &str, mime: &str, from: Option<&str>, parts: &mut Vec<String>| {
+        let bytes = data.trim_end_matches('=').len() * 3 / 4;
+        let why = if data.is_empty() {
+            Some("it is empty".to_string())
+        } else if !matches!(
+            mime,
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        ) {
+            Some(format!("{mime} is not a PNG, JPEG, GIF or WebP image"))
+        } else if bytes > MAX_IMAGE_BYTES {
+            Some(format!("too large to show ({:.1} MB)", bytes as f64 / 1e6))
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            parts.push(format!("[image omitted: {why}]"));
+            return;
+        }
+        images.push(Block::Image {
+            media_type: mime.into(),
+            data: data.into(),
+        });
+        let n = images.len();
+        parts.push(match from {
+            Some(uri) => format!("[image {n} ({uri}): {mime}, shown below]"),
+            None => format!("[image {n}: {mime}, shown below]"),
+        });
+    };
     for item in result["content"].as_array().into_iter().flatten() {
+        let s = |v: &Value| v.as_str().unwrap_or("").to_string();
         match item["type"].as_str() {
-            Some("text") => parts.push(item["text"].as_str().unwrap_or("").to_string()),
-            Some("resource") => parts.push(
-                item["resource"]["text"]
-                    .as_str()
-                    .map(String::from)
-                    .unwrap_or_else(|| format!("[resource {}]", item["resource"]["uri"])),
-            ),
+            Some("text") => parts.push(s(&item["text"])),
+            Some("image") => image(&s(&item["data"]), &s(&item["mimeType"]), None, &mut parts),
+            Some("resource") => {
+                let r = &item["resource"];
+                let uri = s(&r["uri"]);
+                let mime = r["mimeType"].as_str().unwrap_or("application/octet-stream");
+                if let Some(text) = r["text"].as_str() {
+                    parts.push(format!("<resource uri=\"{uri}\">\n{text}\n</resource>"));
+                } else if let Some(blob) = r["blob"].as_str() {
+                    if mime.starts_with("image/") {
+                        image(blob, mime, Some(&uri), &mut parts);
+                    } else {
+                        let bytes = blob.trim_end_matches('=').len() * 3 / 4;
+                        parts.push(format!(
+                            "[resource {uri}: {mime}, {bytes} bytes, not shown]"
+                        ));
+                    }
+                } else {
+                    parts.push(format!("[resource {uri}]"));
+                }
+            }
+            Some("resource_link") => parts.push(format!(
+                "[resource link: {} <{}>]",
+                item["name"].as_str().unwrap_or("unnamed"),
+                s(&item["uri"])
+            )),
             Some(other) => parts.push(format!("[{other} content omitted]")),
             None => {}
         }
@@ -741,9 +809,9 @@ fn render(result: &Value) -> Result<String, String> {
     }
     let text = parts.join("\n");
     if result["isError"] == true {
-        Err(text)
+        (Err(text), Vec::new())
     } else {
-        Ok(text)
+        (Ok(text), images)
     }
 }
 
@@ -803,6 +871,60 @@ pub mod stub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Mcp {
+        /// The result without its images.
+        fn call_text(
+            &self,
+            tool: &str,
+            input: &Value,
+            stop: &mut dyn FnMut() -> bool,
+        ) -> Result<String, String> {
+            self.call(tool, input, stop).0
+        }
+    }
+
+    #[test]
+    fn results_keep_images_resources_and_links() {
+        use crate::message::Block;
+        let png = crate::crypto::base64(b"\x89PNG fake");
+        let (text, images) = render(&json!({"content": [
+            {"type": "text", "text": "hello"},
+            {"type": "image", "data": png, "mimeType": "image/png"},
+            {"type": "image", "data": "", "mimeType": "image/png"},
+            {"type": "image", "data": "AAAA", "mimeType": "image/tiff"},
+            {"type": "resource", "resource": {"uri": "file:///a.txt", "text": "inside", "mimeType": "text/plain"}},
+            {"type": "resource", "resource": {"uri": "file:///b.png", "blob": png, "mimeType": "image/png"}},
+            {"type": "resource", "resource": {"uri": "file:///c.bin", "blob": "AAAA", "mimeType": "application/octet-stream"}},
+            {"type": "resource_link", "uri": "file:///d.md", "name": "d"},
+            {"type": "audio", "data": "AAAA", "mimeType": "audio/wav"}
+        ]}));
+        assert_eq!(
+            text.unwrap().lines().collect::<Vec<_>>(),
+            [
+                "hello",
+                "[image 1: image/png, shown below]",
+                "[image omitted: it is empty]",
+                "[image omitted: image/tiff is not a PNG, JPEG, GIF or WebP image]",
+                "<resource uri=\"file:///a.txt\">",
+                "inside",
+                "</resource>",
+                "[image 2 (file:///b.png): image/png, shown below]",
+                "[resource file:///c.bin: application/octet-stream, 3 bytes, not shown]",
+                "[resource link: d <file:///d.md>]",
+                "[audio content omitted]",
+            ]
+        );
+        assert_eq!(images.len(), 2);
+        assert!(
+            matches!(&images[0], Block::Image { media_type, data } if media_type == "image/png" && *data == png)
+        );
+        let huge = "A".repeat(6_000_000);
+        let (text, images) =
+            render(&json!({"content": [{"type": "image", "data": huge, "mimeType": "image/png"}]}));
+        assert!(images.is_empty());
+        assert!(text.unwrap().contains("too large"));
+    }
 
     #[test]
     fn stub_server() {
@@ -867,11 +989,11 @@ mod tests {
         );
         let never = &mut || false;
         assert_eq!(
-            mcp.call("mcp__stub_server__echo", &json!({"text": "hi"}), never),
-            Ok("echo: hi\n[image content omitted]".into())
+            mcp.call_text("mcp__stub_server__echo", &json!({"text": "hi"}), never),
+            Ok("echo: hi\n[image omitted: it is empty]".into())
         );
         assert_eq!(
-            mcp.call("mcp__stub_server__fail", &json!({}), never),
+            mcp.call_text("mcp__stub_server__fail", &json!({}), never),
             Err("it broke".into())
         );
     }
@@ -881,25 +1003,25 @@ mod tests {
         let mcp = Mcp::start(&config(), &std::env::temp_dir());
         let mut polls = 0;
         let started = Instant::now();
-        let stopped = mcp.call("mcp__stub_server__sleep", &json!({}), &mut || {
+        let stopped = mcp.call_text("mcp__stub_server__sleep", &json!({}), &mut || {
             polls += 1;
             polls > 5
         });
         assert_eq!(stopped, Err(crate::tools::STOPPED.into()));
         assert!(started.elapsed() < Duration::from_secs(1));
-        let timed_out = mcp.call("mcp__stub_server__sleep", &json!({}), &mut || false);
+        let timed_out = mcp.call_text("mcp__stub_server__sleep", &json!({}), &mut || false);
         assert_eq!(timed_out, Err("[timed out after 2s]".into()));
         assert_eq!(
-            mcp.call("mcp__stub_server__crash", &json!({}), &mut || false),
+            mcp.call_text("mcp__stub_server__crash", &json!({}), &mut || false),
             Err("the server exited".into())
         );
         assert_eq!(
-            mcp.call(
+            mcp.call_text(
                 "mcp__stub_server__echo",
                 &json!({"text": "back"}),
                 &mut || false
             ),
-            Ok("echo: back\n[image content omitted]".into()),
+            Ok("echo: back\n[image omitted: it is empty]".into()),
             "the server restarts on the next call"
         );
     }
@@ -1048,7 +1170,7 @@ mod tests {
             ["mcp__calc__add"]
         );
         assert_eq!(
-            mcp.call("mcp__calc__add", &json!({"a": 2, "b": 3}), &mut || false),
+            mcp.call_text("mcp__calc__add", &json!({"a": 2, "b": 3}), &mut || false),
             Ok("5".into())
         );
         let log = seen.lock().unwrap();

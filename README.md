@@ -223,7 +223,10 @@ axio starts MCP servers listed in `~/.axio/agent/mcp.json`, in plugins'
 Their tools appear as `mcp__<server>__<tool>`, so hooks can match them with
 `mcp__github__.*`. Local servers run over stdio for the session; a server that
 exits is restarted on its next call, and Esc cancels a running call. `timeout`
-(milliseconds, default ten minutes) bounds each call.
+(milliseconds, default ten minutes) bounds each call. Results keep their text
+and text resources; images (PNG, JPEG, GIF or WebP up to 3.75 MB, including
+image resources) go to the model after the result; other content such as audio,
+binary resources and resource links is named so the model knows it is there.
 
 Remote servers use streamable HTTP:
 

@@ -120,8 +120,9 @@ pub fn agent(
     Ok(a)
 }
 
-/// MCP results from the main agent: (call id, result).
-type Replies = std::sync::mpsc::Receiver<(u64, Result<String, String>)>;
+/// MCP results from the main agent: (call id, result, images).
+type Reply = (u64, Result<String, String>, Vec<crate::message::Block>);
+type Replies = std::sync::mpsc::Receiver<Reply>;
 static REPLIES: std::sync::Mutex<Option<Replies>> = std::sync::Mutex::new(None);
 
 /// Writes progress as JSON lines. Once the reader has gone, the turn stops.
@@ -168,7 +169,11 @@ impl Ui for Lines<'_> {
     fn notice(&mut self, text: &str) {
         self.emit(json!({"type": "notice", "text": text}));
     }
-    fn remote_tool(&mut self, name: &str, input: &Value) -> Option<Result<String, String>> {
+    fn remote_tool(
+        &mut self,
+        name: &str,
+        input: &Value,
+    ) -> Option<(Result<String, String>, Vec<crate::message::Block>)> {
         if !self.remote.iter().any(|r| r == name) {
             return None;
         }
@@ -177,14 +182,17 @@ impl Ui for Lines<'_> {
         self.emit(json!({"type": "mcp_call", "id": id, "name": name, "input": input}));
         let guard = REPLIES.lock().ok()?;
         let Some(rx) = guard.as_ref() else {
-            return Some(Err("MCP tools need an attached sub-agent".into()));
+            return Some((
+                Err("MCP tools need an attached sub-agent".into()),
+                Vec::new(),
+            ));
         };
         loop {
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok((got, r)) if got == id => return Some(r),
+                Ok((got, r, images)) if got == id => return Some((r, images)),
                 Ok(_) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !self.interrupted() => continue,
-                Err(_) => return Some(Err(crate::tools::STOPPED.into())),
+                Err(_) => return Some((Err(crate::tools::STOPPED.into()), Vec::new())),
             }
         }
     }
@@ -263,7 +271,9 @@ pub fn main(args: &[String]) -> Result<bool, String> {
                     && let Some(id) = v["id"].as_u64()
                 {
                     let text = v["text"].as_str().unwrap_or("").to_string();
-                    let _ = tx.send((id, if v["ok"] == true { Ok(text) } else { Err(text) }));
+                    let images = serde_json::from_value(v["images"].clone()).unwrap_or_default();
+                    let r = if v["ok"] == true { Ok(text) } else { Err(text) };
+                    let _ = tx.send((id, r, images));
                 }
             }
             CANCEL.store(true, std::sync::atomic::Ordering::Relaxed);

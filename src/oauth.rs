@@ -613,7 +613,9 @@ mod tests {
         let after = crate::mcp::Mcp::start(&config, &home);
         assert!(after.failed.is_empty(), "{:?}", after.failed);
         assert_eq!(
-            after.call("mcp__remote__whoami", &json!({}), &mut || false),
+            after
+                .call("mcp__remote__whoami", &json!({}), &mut || false)
+                .0,
             Ok("signed in".into())
         );
         let stored = load(&home.join("auth.json"));

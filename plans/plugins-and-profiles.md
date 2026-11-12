@@ -118,6 +118,8 @@ terminal; in `-p` mode it denies. Environment: `AXIO_PROJECT_DIR`,
 - Tools appear to the model as `mcp__<server>__<tool>` with the server's JSON
   schema; `PreToolUse` hooks see the same names.
 - Text and error results in the first version; images and resources later.
+  (Done 2026-11-12: images and image resources reach the model, text
+  resources are inlined, other content is named.)
 - Servers start with the session and stop on exit; a crashed server reports
   errors for its tools and restarts on the next call.
 - Config from plugins' `.mcp.json`, `~/.axio/agent/mcp.json` and the trusted
