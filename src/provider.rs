@@ -51,7 +51,7 @@ impl Model {
         if let Some(n) = env("AXIO_CONTEXT_WINDOW").and_then(|v| v.parse().ok()) {
             return n;
         }
-        if let Some(n) = learned_window(&self.to_string()) {
+        if let Some(n) = info(&self.to_string()).and_then(|i| i.window) {
             return n;
         }
         if self.provider == crate::chatgpt::PROVIDER {
@@ -67,6 +67,39 @@ impl Model {
             _ if million.iter().any(|m| id.contains(m)) => 1_000_000,
             _ if id.contains("-4") => 200_000,
             _ => 1_000_000,
+        }
+    }
+}
+
+impl Model {
+    /// The effort levels this model takes, lowest first; empty when it takes none.
+    pub fn efforts(&self) -> Vec<String> {
+        if let Some(i) = info(&self.to_string()).filter(|i| !i.efforts.is_empty()) {
+            return i.efforts;
+        }
+        let levels: &[&str] = match self.api {
+            Api::Anthropic => anthropic::effort_levels(&self.id),
+            Api::Responses => &["low", "medium", "high", "xhigh"],
+            Api::OpenAi => &["low", "medium", "high"],
+        };
+        levels.iter().map(|l| l.to_string()).collect()
+    }
+
+    /// What each level does, when the model list says.
+    pub fn effort_notes(&self) -> Vec<String> {
+        info(&self.to_string()).map(|i| i.notes).unwrap_or_default()
+    }
+
+    /// The level the provider uses when none is sent.
+    pub fn default_effort(&self) -> Option<String> {
+        if let Some(d) = info(&self.to_string()).and_then(|i| i.default_effort) {
+            return Some(d);
+        }
+        match self.api {
+            _ if self.efforts().is_empty() => None,
+            Api::Anthropic => Some("high".into()),
+            Api::Responses => Some("medium".into()),
+            Api::OpenAi => None,
         }
     }
 }
@@ -242,19 +275,30 @@ pub(crate) fn model_ids(list: &serde_json::Value) -> Result<Vec<String>, String>
     Ok(ids)
 }
 
-static WINDOWS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+/// What a provider's model list says about a model.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Info {
+    pub window: Option<u64>,
+    pub efforts: Vec<String>,
+    /// What each effort level does, in the same order.
+    pub notes: Vec<String>,
+    pub default_effort: Option<String>,
+    pub about: Option<String>,
+}
 
-/// Records a model's context window, as a provider's model list gives it.
-pub fn learn_window(model: &str, tokens: u64) {
-    if let Ok(mut w) = WINDOWS.lock() {
-        w.retain(|(m, _)| m != model);
-        w.push((model.to_string(), tokens));
+static INFO: std::sync::Mutex<Vec<(String, Info)>> = std::sync::Mutex::new(Vec::new());
+
+/// Records what a model list said about `model` (`provider/id`).
+pub fn learn(model: &str, info: Info) {
+    if let Ok(mut all) = INFO.lock() {
+        all.retain(|(m, _)| m != model);
+        all.push((model.to_string(), info));
     }
 }
 
-fn learned_window(model: &str) -> Option<u64> {
-    let w = WINDOWS.lock().ok()?;
-    w.iter().find(|(m, _)| m == model).map(|(_, n)| *n)
+pub fn info(model: &str) -> Option<Info> {
+    let all = INFO.lock().ok()?;
+    all.iter().find(|(m, _)| m == model).map(|(_, i)| i.clone())
 }
 
 /// Providers with a built-in endpoint.
@@ -380,6 +424,51 @@ mod tests {
             error_body("  <html>gateway</html> "),
             "<html>gateway</html>"
         );
+    }
+
+    #[test]
+    fn effort_levels_follow_the_model() {
+        let levels = |spec: &str| Model::parse(spec).efforts();
+        let all = ["low", "medium", "high", "xhigh", "max"];
+        assert!(levels("anthropic/claude-haiku-4-5").is_empty());
+        assert_eq!(
+            levels("anthropic/claude-opus-4-5"),
+            ["low", "medium", "high"]
+        );
+        assert_eq!(
+            levels("anthropic/claude-sonnet-4-6"),
+            ["low", "medium", "high", "max"]
+        );
+        assert_eq!(levels("anthropic/claude-opus-5-5"), all);
+        assert_eq!(
+            Model::parse("anthropic/claude-opus-5-5")
+                .default_effort()
+                .as_deref(),
+            Some("high")
+        );
+        // Every level offered is one the request sends unchanged.
+        for id in ["claude-opus-4-5", "claude-sonnet-4-6", "claude-opus-5-5"] {
+            for l in levels(&format!("anthropic/{id}")) {
+                assert_eq!(
+                    anthropic::supported_effort(id, Some(&l)),
+                    Some(&*l),
+                    "{id} {l}"
+                );
+            }
+        }
+        learn(
+            "chatgpt/gpt-x",
+            Info {
+                efforts: vec!["low".into(), "high".into()],
+                notes: vec!["fast".into(), "deep".into()],
+                default_effort: Some("low".into()),
+                ..Info::default()
+            },
+        );
+        let gpt = Model::parse("chatgpt/gpt-x");
+        assert_eq!(gpt.efforts(), ["low", "high"]);
+        assert_eq!(gpt.effort_notes(), ["fast", "deep"]);
+        assert_eq!(gpt.default_effort().as_deref(), Some("low"));
     }
 
     #[test]

@@ -207,14 +207,19 @@ Commands:
   one of its models. `/login [provider]` saves an API key, or a name, base URL
   and optional key for any other OpenAI-compatible endpoint; `/logout
   [provider]` removes one. Keys go to `~/.axio/agent/auth.json`.
-- `/effort` picks reasoning effort; `/effort <level>` sets it.
+- `/effort` opens a slider of the levels the current model takes (with each
+  level's description when the provider gives one); `/effort <level>` sets it.
+  The `/model` picker also shows the effort under the list: Left and Right
+  change it for the highlighted model.
 - `/resume` picks a saved session from this directory to continue.
 - `/new`, `/undo` (put back the files the last turn wrote or edited),
   `/output` (the last tool call's full result), `/compact`, `/profile`,
   `/session`, `/help`, `/quit`, plus plugin commands and skills.
 
-Model and effort choices last for the session; set `"model"` or `"effort"` in
-`~/.axio/agent/settings.json` for a default.
+In both pickers Enter makes the choice the default for new sessions (saved as
+`"model"` and `"effort"` in `~/.axio/agent/settings.json`) and Tab uses it for
+this session only; typing filters the model list, so Tab stands in for the `s`
+some tools use.
 Keys typed while a turn runs are kept for the next prompt.
 
 ## What it leaves out

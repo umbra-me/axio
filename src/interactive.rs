@@ -28,10 +28,23 @@ fn note(term: &ui::Term, s: &str) {
 
 /// One choice per listed model, the one in use first selected. A model in
 /// use that no list holds is kept at the top so Enter leaves it alone.
-fn model_choices(lists: &[(String, Vec<String>)], current: &str) -> (Vec<Choice>, usize) {
+fn model_choices(
+    lists: &[(String, Vec<String>)],
+    current: &str,
+    default: Option<&str>,
+) -> (Vec<Choice>, usize) {
     let mut choices: Vec<Choice> = lists
         .iter()
-        .flat_map(|(p, ids)| ids.iter().map(move |id| Choice::new(id, display_name(p))))
+        .flat_map(|(p, ids)| {
+            ids.iter().map(move |id| {
+                let about = provider::info(id).and_then(|i| i.about);
+                let mut detail = about.unwrap_or_else(|| display_name(p));
+                if Some(id.as_str()) == default {
+                    detail.push_str(" · default");
+                }
+                Choice::new(id, detail)
+            })
+        })
         .collect();
     let at = match choices.iter().position(|c| c.label == current) {
         Some(i) => {
@@ -102,23 +115,73 @@ pub fn pick_model(
         .filter_map(|p| cache.get(p).map(|ids| (p.clone(), ids.clone())))
         .collect();
     let current = agent.model.to_string();
-    let (choices, at) = model_choices(&lists, &current);
+    let home = crate::context::home();
+    let default = crate::settings::Settings::load(&home, None)
+        .ok()
+        .and_then(|s| s.model);
+    let (choices, at) = model_choices(&lists, &current, default.as_deref());
     let title = match only {
         Some(p) => format!("Model from {}", display_name(p)),
         None => "Model".into(),
     };
     let labels: Vec<String> = choices.iter().map(|c| c.label.clone()).collect();
+    let levels = labels.iter().map(|l| Model::parse(l).efforts()).collect();
+    let effort = agent
+        .effort
+        .clone()
+        .or_else(|| agent.model.default_effort());
     let keys = term.keys.as_mut().expect("keys");
     // A bare name typed in stays with the provider being shown, or in use.
     let prefix = format!("{}/", only.unwrap_or(&agent.model.provider));
-    let picker = Picker::new(&title, choices, Some(at)).allow_typed(&prefix);
-    match menu::choose(keys, picker, term.color) {
-        menu::Step::Picked(i) => agent.model = Model::parse(&labels[i]),
+    let mut picker = Picker::new(&title, choices, Some(at))
+        .allow_typed(&prefix)
+        .with_effort(levels, effort.as_deref());
+    let (spec, scope) = match menu::choose(keys, &mut picker, term.color) {
+        menu::Step::Picked(i) => (labels[i].clone(), menu::Scope::Default),
+        menu::Step::Session(i) => (labels[i].clone(), menu::Scope::Session),
         // A model the list did not show, such as on a server with no list.
-        menu::Step::Typed(id) => agent.model = Model::parse(&id),
-        _ => {}
+        menu::Step::Typed(id) => (id, menu::Scope::Default),
+        _ => return note(term, &format!("model: {} (unchanged)", agent.model)),
+    };
+    agent.model = Model::parse(&spec);
+    if let Some(e) = picker.effort() {
+        agent.effort = Some(e);
     }
-    note(term, &format!("model: {}", agent.model));
+    let saved = match scope {
+        menu::Scope::Default => save_default(&home, &agent.model, agent.effort.as_deref()),
+        menu::Scope::Session => Ok("this session"),
+    };
+    report_choice(term, agent, saved);
+}
+
+/// Saves the model and effort for new sessions.
+fn save_default(home: &Path, model: &Model, effort: Option<&str>) -> Result<&'static str, String> {
+    crate::settings::set(home, "model", serde_json::json!(model.to_string()))?;
+    if let Some(e) = effort {
+        crate::settings::set(home, "effort", serde_json::json!(e))?;
+    }
+    Ok("default for new sessions")
+}
+
+fn report_choice(term: &ui::Term, agent: &Agent, saved: Result<&str, String>) {
+    let effort = match agent.model.efforts().is_empty() {
+        true => " · no effort setting".to_string(),
+        false => agent
+            .effort
+            .as_deref()
+            .and_then(|e| menu::clamp(e, &agent.model.efforts()))
+            .map_or(String::new(), |e| format!(" · {e} effort")),
+    };
+    match saved {
+        Ok(scope) => note(term, &format!("model: {}{effort} ({scope})", agent.model)),
+        Err(e) => note(
+            term,
+            &format!(
+                "model: {}{effort} for this session; could not save the default: {e}",
+                agent.model
+            ),
+        ),
+    }
 }
 
 fn provider_choices(signed_in: &[String], current: &str) -> Vec<Choice> {
@@ -392,27 +455,43 @@ pub fn logout(term: &mut ui::Term, cache: &mut ModelCache, arg: &str) {
     }
 }
 
-const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
-
-/// `/effort` with no argument.
+/// `/effort` with no argument: a slider of the levels the model takes.
 pub fn pick_effort(agent: &mut Agent, term: &mut ui::Term) {
-    let mut choices: Vec<Choice> = EFFORTS.iter().map(|e| Choice::new(*e, "")).collect();
-    choices.push(Choice::new("default", "the model's own default"));
-    let current = match agent.effort.as_deref() {
-        None => Some(EFFORTS.len()),
-        Some(e) => EFFORTS.iter().position(|x| *x == e),
-    };
-    let keys = term.keys.as_mut().expect("keys");
-    if let Some(i) = menu::pick(keys, Picker::new("Effort", choices, current), term.color) {
-        agent.effort = EFFORTS.get(i).map(|e| e.to_string());
+    let levels = agent.model.efforts();
+    if levels.is_empty() {
+        return note(term, &format!("{} has no effort setting", agent.model.id));
     }
-    note(
-        term,
-        &format!(
-            "effort: {} for this session",
-            agent.effort.as_deref().unwrap_or("the model's default")
+    let current = agent
+        .effort
+        .clone()
+        .or_else(|| agent.model.default_effort())
+        .unwrap_or_else(|| "high".into());
+    let title = format!("Effort · {}", agent.model.id);
+    let slider = menu::Slider::new(&title, levels.clone(), agent.model.effort_notes(), &current);
+    let keys = term.keys.as_mut().expect("keys");
+    let Some((i, scope)) = menu::slide(keys, slider, term.color) else {
+        return;
+    };
+    agent.effort = Some(levels[i].clone());
+    let saved = match scope {
+        menu::Scope::Default => crate::settings::set(
+            &crate::context::home(),
+            "effort",
+            serde_json::json!(levels[i]),
+        )
+        .map(|()| "default for new sessions"),
+        menu::Scope::Session => Ok("this session"),
+    };
+    match saved {
+        Ok(scope) => note(term, &format!("effort: {} ({scope})", levels[i])),
+        Err(e) => note(
+            term,
+            &format!(
+                "effort: {} for this session; could not save the default: {e}",
+                levels[i]
+            ),
         ),
-    );
+    }
 }
 
 pub fn age(secs: u64) -> String {
@@ -482,11 +561,20 @@ mod tests {
             ),
             ("local".to_string(), vec!["local/qwen".to_string()]),
         ];
-        let (c, at) = model_choices(&lists, "anthropic/claude-opus-5-5");
+        let (c, at) = model_choices(&lists, "anthropic/claude-opus-5-5", None);
         assert_eq!(at, 1);
         assert_eq!(c[1].detail, "Anthropic · in use");
         assert_eq!(c[2].detail, "local (OpenAI-compatible)");
-        let (c, at) = model_choices(&lists, "openai/gpt-5");
+        provider::learn(
+            "local/qwen",
+            provider::Info {
+                about: Some("Qwen on this machine".into()),
+                ..provider::Info::default()
+            },
+        );
+        let (c, _) = model_choices(&lists, "anthropic/claude-opus-5-5", Some("local/qwen"));
+        assert_eq!(c[2].detail, "Qwen on this machine · default");
+        let (c, at) = model_choices(&lists, "openai/gpt-5", None);
         assert_eq!((at, c.len()), (0, 4));
         assert_eq!(
             (c[0].label.as_str(), c[0].detail.as_str()),

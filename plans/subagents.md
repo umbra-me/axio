@@ -54,8 +54,8 @@ The parent decides, from the role and the brief:
   list passed to the child.
 - **Instructions**: only the role's prompt and the tool instructions it uses;
   no skills list, plugin text or command list unless the role asks for them.
-- **Model and effort**: a fast model at low effort unless the role or brief
-  says otherwise (`fastModel` in settings, for example
+- **Model and effort**: chosen as below; a fast model at low effort when
+  nothing says otherwise (`fastModel` in settings, for example
   `anthropic/claude-haiku-4-5` or `chatgpt/gpt-6-luna`).
 - **MCP servers**: none started in the child. A role that names an MCP tool
   gets it through the parent, which already has the server running and runs
@@ -66,6 +66,25 @@ The parent decides, from the role and the brief:
   read-only sandbox.
 - **Sign-in**: children read the same `auth.json`. The ChatGPT refresh lock
   (#47) already lets many processes refresh one sign-in safely.
+
+## Model and effort
+
+Model and effort are set separately, and each can come from one of four
+places, all of which the user controls:
+
+| Value | Meaning |
+|---|---|
+| `inherit` | the main agent's current model (or effort) |
+| `choose` | the main agent picks per call, from `subagents.choices` when set |
+| a model or level | fixed by the role file, for example `model: fast` or `effort: high` |
+| settings | `subagents.roles.<role>.model` / `.effort` override the role file |
+
+Settings win over the role file; a role's `choose` lets the main agent pick,
+otherwise the main agent cannot override. `fast` resolves to `fastModel`.
+
+The same pickers as the main session (model list with an effort row, the
+effort slider) set a role's model and effort, with `inherit` and `choose`
+listed first, so no one has to edit JSON.
 
 ## What a sub-agent sees
 
@@ -89,8 +108,8 @@ written for Claude Code work unchanged and `axio import` can offer them:
 name: explore
 description: Finds and explains code; read-only.
 tools: Read, Grep, Glob
-model: fast            # fast | inherit | provider/model
-effort: low
+model: fast            # fast | inherit | choose | provider/model
+effort: low            # inherit | choose | a level
 maxTurns: 20
 context: brief         # axio: brief | rules | fork
 sandbox: read-only     # axio: read-only | project
@@ -123,9 +142,11 @@ need to ship.
     "nesting": 0,
     "parallel": 4,
     "fastModel": "anthropic/claude-haiku-4-5",
+    "choices": ["anthropic/claude-haiku-4-5", "chatgpt/gpt-6-luna"],
     "resultLimit": 8000,
     "roles": {
-      "explore": { "model": "chatgpt/gpt-6-luna" },
+      "explore": { "model": "chatgpt/gpt-6-luna", "effort": "low" },
+      "review": { "model": "inherit", "effort": "choose" },
       "code": { "context": "brief" }
     }
   }
@@ -158,7 +179,6 @@ start-to-first-request time, and system-prompt tokens per role.
 
 ## Open questions
 
-- Whether the parent may pick a role's model per call, or only settings may.
 - Whether `review` should be allowed Bash at all, or only read tools.
 - How progress from several parallel sub-agents is shown without crowding the
   terminal.
@@ -169,3 +189,6 @@ start-to-first-request time, and system-prompt tokens per role.
 - What a sub-agent sees is set per role (what the sub-agent does) and can be
   changed in settings.
 - Built-in roles are wanted; this draft proposes four shipped as files.
+- A sub-agent's model, and separately its effort, can be the main agent's
+  (`inherit`), picked by the main agent (`choose`), fixed by the role, or set
+  in settings; the user can change each.
