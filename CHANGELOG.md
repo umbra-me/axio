@@ -2,10 +2,14 @@
 
 Notable changes to axio. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); numbers are pull
-requests in `umbra-me/axio`. axio has not been released yet, so everything is
-under Unreleased.
+requests in `umbra-me/axio`. Versions follow
+[Semantic Versioning](https://semver.org); see `docs/releasing.md`.
 
 ## Unreleased
+
+## [0.1.0] - 2026-11-12
+
+The first public beta. Everything below was built before the first release.
 
 ### Added
 
