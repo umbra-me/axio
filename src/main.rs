@@ -76,7 +76,7 @@ Interactive: Enter sends, Alt-Enter or a trailing \\ adds a line, Tab
 completes a /command or an @path, Up/Down walk history, Ctrl-R searches it,
 Esc or Ctrl-C stops a running turn, Enter during one sends what you typed to
 the model at its next step, Ctrl-D exits. @path attaches a file.
-Commands: /new, /undo, /output, /compact, /status, /context, /init,
+Commands: /new, /undo, /rewind, /history, /output, /compact, /status, /context, /init,
 /model <model>, /effort <level>, /fast, /settings, /mcp, /skills, /agents,
 /hooks, /plugins, /session, /help, /quit, plus your own
 
@@ -739,7 +739,7 @@ fn command(lib: &skills::Library, input: &str) -> Option<Result<String, String>>
 
 /// Built-in commands: name, arguments, what each does and its section in
 /// /help.
-const BUILTINS: [(&str, &str, &str, &str); 26] = [
+const BUILTINS: [(&str, &str, &str, &str); 28] = [
     ("new", "", "start a new session", "Session"),
     ("resume", "", "pick a saved session to continue", "Session"),
     ("compact", "", "summarize the conversation now", "Session"),
@@ -762,6 +762,13 @@ const BUILTINS: [(&str, &str, &str, &str); 26] = [
         "Session",
     ),
     ("context", "", "what fills the context window", "Session"),
+    (
+        "rewind",
+        "",
+        "go back to an earlier message (or Esc twice)",
+        "Session",
+    ),
+    ("history", "", "pick a prompt you typed before", "Session"),
     (
         "init",
         "[notes]",
@@ -1442,6 +1449,16 @@ fn run() -> Result<ExitCode, String> {
                 }
             }
             ("/settings", _) => interactive::settings(&mut agent, &mut term, &home, &mut models),
+            ("/rewind", _) => {
+                if let Some(text) = interactive::rewind(&mut agent, &mut term) {
+                    editor.prefill(&text);
+                }
+            }
+            ("/history", _) => {
+                if let Some(text) = interactive::history(&mut term, &editor.history.clone()) {
+                    editor.prefill(&text);
+                }
+            }
             ("/context", _) => {
                 for l in context_lines(&agent, &library, &cwd, term.color) {
                     eprintln!("  {l}");

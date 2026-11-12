@@ -37,6 +37,8 @@ pub struct Editor {
     /// A dim status line under the input, hidden while the command menu
     /// is open.
     pub footer: String,
+    /// When Esc was last pressed on an empty prompt: twice opens /rewind.
+    last_esc: Option<std::time::Instant>,
 }
 
 /// Ctrl-R: the typed query and the history entry it matched.
@@ -111,6 +113,12 @@ fn complete_path(cwd: &std::path::Path, partial: &str) -> Option<String> {
 impl Editor {
     pub fn text(&self) -> String {
         self.buf.iter().collect()
+    }
+
+    /// Puts text in the prompt to edit, as if typed.
+    pub fn prefill(&mut self, text: &str) {
+        self.browsing = None;
+        self.set(text);
     }
 
     fn set(&mut self, text: &str) {
@@ -406,6 +414,15 @@ impl Editor {
                     hit: None,
                     saved: self.text(),
                 });
+            }
+            Key::Esc if self.buf.is_empty() => {
+                let twice = self
+                    .last_esc
+                    .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(800));
+                self.last_esc = (!twice).then(std::time::Instant::now);
+                if twice {
+                    return Outcome::Submit("/rewind".into());
+                }
             }
             Key::Ctrl('i') => self.complete(),
             Key::Ctrl('o') if self.buf.is_empty() => return Outcome::Submit("/output".into()),
@@ -875,6 +892,23 @@ mod tests {
         assert!(e.history.is_empty(), "not kept in history");
         typed(&mut e, "text");
         assert_eq!(e.handle(Key::Ctrl('o')), Outcome::Editing);
+    }
+
+    #[test]
+    fn esc_twice_on_an_empty_prompt_opens_rewind() {
+        let mut e = Editor::default();
+        assert_eq!(e.handle(Key::Esc), Outcome::Editing);
+        assert_eq!(e.handle(Key::Esc), Outcome::Submit("/rewind".into()));
+        assert!(e.history.is_empty());
+        typed(&mut e, "x");
+        e.handle(Key::Esc);
+        assert_eq!(
+            e.handle(Key::Esc),
+            Outcome::Editing,
+            "not while there is text"
+        );
+        e.prefill("edit me");
+        assert_eq!(e.text(), "edit me");
     }
 
     #[test]

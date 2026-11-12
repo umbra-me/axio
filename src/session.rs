@@ -51,6 +51,11 @@ impl Session {
         self.write_line(&json!({"type": "message", "message": m}))
     }
 
+    /// The conversation goes back to its first `keep` messages.
+    pub fn rewind(&mut self, keep: usize) -> Result<(), String> {
+        self.write_line(&json!({"type": "rewind", "keep": keep}))
+    }
+
     pub fn compaction(&mut self, summary: &str) -> Result<(), String> {
         self.write_line(&json!({"type": "compaction", "summary": summary}))
     }
@@ -82,6 +87,11 @@ pub fn load(path: &Path) -> Result<Vec<Message>, String> {
                 if let Some(summary) = v["summary"].as_str() {
                     close_open_calls(&mut messages, None);
                     compact::apply(&mut messages, summary);
+                }
+            }
+            Some("rewind") => {
+                if let Some(keep) = v["keep"].as_u64() {
+                    messages.truncate(keep as usize);
                 }
             }
             _ => {}
@@ -198,6 +208,28 @@ pub fn recent(dir: &Path, limit: usize) -> Vec<Summary> {
 
 #[cfg(test)]
 mod tests {
+    use crate::message::Message as M;
+
+    #[test]
+    fn a_rewind_line_replays_on_load() {
+        let dir = std::env::temp_dir().join(format!("axio-rewind-session-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Session::create(&dir, &dir).unwrap();
+        for m in [
+            M::user_text("one"),
+            M::Assistant {
+                content: vec![crate::message::Block::Text { text: "a".into() }],
+            },
+            M::user_text("two"),
+        ] {
+            s.append(&m).unwrap();
+        }
+        s.rewind(2).unwrap();
+        s.append(&M::user_text("three")).unwrap();
+        let loaded = load(&s.path).unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[2].text(), "three");
+    }
     use super::*;
 
     #[test]

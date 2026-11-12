@@ -913,6 +913,127 @@ pub fn settings(agent: &mut Agent, term: &mut ui::Term, home: &Path, models: &mu
     );
 }
 
+fn first_line(text: &str, n: usize) -> String {
+    let line = text.lines().next().unwrap_or("").trim();
+    if line.chars().count() <= n {
+        line.to_string()
+    } else {
+        let cut: String = line.chars().take(n - 1).collect();
+        format!("{}…", cut.trim_end())
+    }
+}
+
+/// `/rewind` (or Esc twice): picks one of your messages, cuts the
+/// conversation back to just before it and returns it to edit and resend.
+/// Files Write and Edit changed since can be put back too.
+pub fn rewind(agent: &mut Agent, term: &mut ui::Term) -> Option<String> {
+    let prompts = agent.prompts();
+    if prompts.is_empty() {
+        note(
+            term,
+            "nothing to rewind to: you have sent no messages in this session",
+        );
+        return None;
+    }
+    let n = prompts.len();
+    let rows: Vec<Choice> = prompts
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(back, (_, text))| {
+            let when = match back {
+                0 => "your last message".to_string(),
+                1 => "1 message before".to_string(),
+                k => format!("{k} messages before"),
+            };
+            Choice::new(first_line(text, 80), when)
+        })
+        .collect();
+    let keys = term.keys.as_mut().expect("keys");
+    let picked = menu::pick(
+        keys,
+        Picker::new("Rewind to before", rows, None),
+        term.color,
+    )?;
+    let at = prompts[n - 1 - picked].0;
+    let changed = agent.files_changed_since(at);
+    let files = if changed.is_empty() {
+        false
+    } else {
+        let names: Vec<String> = changed
+            .iter()
+            .map(|p| ui::short_path(&p.display().to_string(), &agent.cwd))
+            .collect();
+        let options = vec![
+            Choice::new("The conversation", "files stay as they are now"),
+            Choice::new(
+                "The conversation and files",
+                format!("puts back {}", first_line(&names.join(", "), 70)),
+            ),
+        ];
+        let keys = term.keys.as_mut().expect("keys");
+        menu::pick(keys, Picker::new("Rewind", options, None), term.color)? == 1
+    };
+    match agent.rewind(at, files) {
+        Ok((text, restored)) => {
+            for (path, kept) in &restored {
+                let what = if *kept { "restored" } else { "removed" };
+                note(
+                    term,
+                    &format!(
+                        "{what} {}",
+                        ui::short_path(&path.display().to_string(), &agent.cwd)
+                    ),
+                );
+            }
+            let also = if files {
+                " Commands the model ran were not undone."
+            } else {
+                ""
+            };
+            note(
+                term,
+                &format!("rewound: edit your message and press Enter to send it again.{also}"),
+            );
+            Some(text)
+        }
+        Err(e) => {
+            note(term, &format!("axio: {e}"));
+            None
+        }
+    }
+}
+
+/// `/history`: every prompt you have typed, newest first; the chosen one
+/// goes into the prompt to edit.
+pub fn history(term: &mut ui::Term, entries: &[String]) -> Option<String> {
+    let mut seen: Vec<&String> = Vec::new();
+    for e in entries.iter().rev() {
+        if !e.trim().is_empty() && !seen.contains(&e) {
+            seen.push(e);
+        }
+    }
+    if seen.is_empty() {
+        note(term, "no prompt history yet");
+        return None;
+    }
+    let rows: Vec<Choice> = seen
+        .iter()
+        .map(|e| {
+            let lines = e.lines().count();
+            let detail = if lines > 1 {
+                format!("{lines} lines")
+            } else {
+                String::new()
+            };
+            Choice::new(first_line(e, 100), detail)
+        })
+        .collect();
+    let keys = term.keys.as_mut().expect("keys");
+    let picked = menu::pick(keys, Picker::new("Prompt history", rows, None), term.color)?;
+    Some(seen[picked].clone())
+}
+
 /// `/agents`: the sub-agent roles; choosing one shows it in full.
 pub fn agents(term: &mut ui::Term, roles: &[crate::roles::Role], enabled: bool) {
     if !enabled {

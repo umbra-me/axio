@@ -62,6 +62,10 @@ pub trait Ui {
 /// Sent with the last tool results a turn limit allows.
 pub const TURN_LIMIT_NOTE: &str = "[axio] You have reached your turn limit. Do not call any more tools; reply now with your final answer from what you have found.";
 
+/// A file a turn changed: the index of the user message whose turn it
+/// was, the path, and its bytes before (`None`: the turn created it).
+type FileChange = (usize, PathBuf, Option<Vec<u8>>);
+
 /// How many times Stop hooks may send the model back to work in one turn.
 const MAX_STOP_CONTINUATIONS: usize = 8;
 
@@ -102,6 +106,11 @@ pub struct Agent {
     changed: std::sync::Mutex<Vec<(PathBuf, Option<Vec<u8>>)>>,
     /// What this session's model calls, and its sub-agents', have cost.
     spend: std::sync::Mutex<crate::cost::Spend>,
+    /// Every file Write and Edit changed, with the index of the user
+    /// message whose turn changed it and what it held before, for /rewind.
+    file_log: std::sync::Mutex<Vec<FileChange>>,
+    /// The index of the user message the running turn answers.
+    turn_at: std::sync::atomic::AtomicUsize,
     /// Images MCP tools returned in this round, sent after the results.
     tool_images: std::sync::Mutex<Vec<Block>>,
     mcp: Arc<Mcp>,
@@ -145,6 +154,8 @@ impl Agent {
             fast_refused: AtomicBool::new(false),
             changed: Default::default(),
             tool_images: Default::default(),
+            file_log: Default::default(),
+            turn_at: Default::default(),
             spend: Default::default(),
         }
     }
@@ -546,6 +557,10 @@ impl Agent {
         }
         let before = self.context.max(self.estimated_context());
         compact::apply(&mut self.messages, &summary);
+        // Message indexes change; file changes before this point stay.
+        if let Ok(mut log) = self.file_log.lock() {
+            log.clear();
+        }
         if let Some(s) = &mut self.session {
             s.compaction(&summary)?;
         }
@@ -586,6 +601,8 @@ impl Agent {
         }
         content.extend(submit.context.into_iter().map(|text| Block::Text { text }));
         self.push(Message::User { content })?;
+        self.turn_at
+            .store(self.messages.len() - 1, Ordering::Relaxed);
         let result = self.run_turn(ui);
         if matches!(&result, Err(e) if e == ABORTED) {
             self.push(Message::user_text(compact::INTERRUPTED))?;
@@ -799,6 +816,12 @@ impl Agent {
         else {
             return;
         };
+        let at = self.turn_at.load(Ordering::Relaxed);
+        if let Ok(mut log) = self.file_log.lock()
+            && !log.iter().any(|(i, p, _)| *i == at && *p == path)
+        {
+            log.push((at, path.clone(), std::fs::read(&path).ok()));
+        }
         if let Ok(mut changed) = self.changed.lock()
             && !changed.iter().any(|(p, _)| *p == path)
         {
@@ -809,6 +832,115 @@ impl Agent {
 
     /// Puts back the files the latest turn wrote or edited, and tells the
     /// model. Returns what was restored (`true`) or removed (`false`).
+    /// The user's own prompts in the conversation, oldest first, with the
+    /// index of the message each is in.
+    pub fn prompts(&self) -> Vec<(usize, String)> {
+        self.messages
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| match m {
+                Message::User { content }
+                    if !content
+                        .iter()
+                        .any(|b| matches!(b, Block::ToolResult { .. })) =>
+                {
+                    let text = content.iter().find_map(|b| match b {
+                        Block::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })?;
+                    // Notes axio adds (hooks, interruptions, summaries) are
+                    // bracketed or tagged; the user's text is not.
+                    (!text.starts_with('[') && !text.starts_with('<')).then_some((i, text))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Goes back to just before message `at`, which must be one of
+    /// `prompts`: the conversation is cut there (and the session records
+    /// it), and with `files` every file Write and Edit changed since is put
+    /// back. Returns the prompt, to edit and send again, and what was
+    /// restored (`true`) or removed (`false`).
+    #[allow(clippy::type_complexity)]
+    pub fn rewind(
+        &mut self,
+        at: usize,
+        files: bool,
+    ) -> Result<(String, Vec<(PathBuf, bool)>), String> {
+        let text = self
+            .prompts()
+            .into_iter()
+            .find(|(i, _)| *i == at)
+            .map(|(_, t)| t)
+            .ok_or("there is no message of yours there")?;
+        let text = text
+            .strip_suffix(compact::INTERRUPTED)
+            .unwrap_or(&text)
+            .to_string();
+        let mut restored = Vec::new();
+        let later: Vec<FileChange> = {
+            let mut log = self.file_log.lock().map_err(|e| e.to_string())?;
+            let (mut later, mut kept): (Vec<_>, Vec<_>) =
+                log.drain(..).partition(|(i, ..)| *i >= at);
+            if !files {
+                // The files stay as the cut turns left them: those changes
+                // now count as made just before `at`, so a deeper rewind
+                // can still put them back.
+                for e in &mut later {
+                    e.0 = at;
+                }
+                kept.append(&mut later);
+            }
+            *log = kept;
+            later
+        };
+        if files {
+            // The first record of each file since `at` holds what it was then.
+            let mut seen: Vec<PathBuf> = Vec::new();
+            for (_, path, before) in later {
+                if seen.contains(&path) {
+                    continue;
+                }
+                seen.push(path.clone());
+                let result = match &before {
+                    Some(bytes) => std::fs::write(&path, bytes),
+                    None => std::fs::remove_file(&path).or_else(|e| {
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            Ok(())
+                        } else {
+                            Err(e)
+                        }
+                    }),
+                };
+                result.map_err(|e| format!("{}: {e}", path.display()))?;
+                restored.push((path, before.is_some()));
+            }
+        }
+        self.messages.truncate(at);
+        if let Some(s) = &mut self.session {
+            s.rewind(at)?;
+        }
+        if let Ok(mut changed) = self.changed.lock() {
+            changed.clear();
+        }
+        self.context = self.estimated_context();
+        Ok((text, restored))
+    }
+
+    /// Files Write and Edit changed since message `at`.
+    pub fn files_changed_since(&self, at: usize) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = Vec::new();
+        if let Ok(log) = self.file_log.lock() {
+            for (i, p, _) in log.iter() {
+                if *i >= at && !paths.contains(p) {
+                    paths.push(p.clone());
+                }
+            }
+        }
+        paths
+    }
+
     pub fn undo(&mut self) -> Result<Vec<(PathBuf, bool)>, String> {
         let changed = std::mem::take(&mut *self.changed.lock().map_err(|e| e.to_string())?);
         if changed.is_empty() {
@@ -2086,5 +2218,57 @@ mod tests {
         assert!(agent.compact("manual", &mut Log::default()).unwrap());
         // Haiku 4.5 (the fast model here): 0.10 + 0.05.
         assert_eq!(agent.spent().label(), "~$0.75");
+    }
+
+    #[test]
+    fn rewind_cuts_the_conversation_and_can_put_files_back() {
+        let dir = std::env::temp_dir().join(format!("axio-rewind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "original").unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        let (a2, b2) = (a.display().to_string(), b.display().to_string());
+        let mut agent = agent(move |req, _| {
+            let last = req.messages.last().unwrap();
+            let asked = last.text();
+            if matches!(last, Message::User { content } if content.iter().any(|b| matches!(b, Block::ToolResult { .. })))
+            {
+                return reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1);
+            }
+            let (path, content) = if asked.contains("one") {
+                (&a2, "first")
+            } else {
+                (&b2, "new")
+            };
+            reply(
+                vec![Block::ToolCall {
+                    id: "w".into(),
+                    name: "Write".into(),
+                    input: json!({"file_path": path, "content": content}),
+                }],
+                Stop::ToolUse,
+                1,
+            )
+        });
+        agent.cwd = dir.clone();
+        agent.prompt("change one", &mut Log::default()).unwrap();
+        agent.prompt("change two", &mut Log::default()).unwrap();
+        let prompts = agent.prompts();
+        assert_eq!(
+            prompts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(),
+            ["change one", "change two"]
+        );
+        // Back to before "change two": the conversation only.
+        let (text, restored) = agent.rewind(prompts[1].0, false).unwrap();
+        assert_eq!((text.as_str(), restored.len()), ("change two", 0));
+        assert_eq!(agent.prompts().len(), 1);
+        assert!(b.exists(), "files stay unless asked");
+        // Back to before "change one", files too.
+        let (text, restored) = agent.rewind(prompts[0].0, true).unwrap();
+        assert_eq!(text, "change one");
+        assert!(agent.messages.is_empty());
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "original");
+        assert!(!b.exists(), "a file the later turns created is removed");
+        assert_eq!(restored.len(), 2);
     }
 }
