@@ -28,6 +28,7 @@ export AXIO_PERMISSION_MODE=bypassPermissions
   timeout 60 python3 "$D/resume.py" "$B" "$(h)"
   timeout 60 python3 "$D/resize.py" "$B" "$(h)"
   timeout 60 python3 "$D/mention.py" "$B" "$(h)"
+  timeout 60 python3 "$D/escapes.py" "$B" "$(h)"
   timeout 60 python3 "$D/compact.py" "$B" "$(h)"
   timeout 60 python3 "$D/pick.py" "$B" "$(h)"
   timeout 60 python3 "$D/output.py" "$B" "$(h)"

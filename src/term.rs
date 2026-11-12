@@ -553,9 +553,104 @@ pub fn input_within(wait: std::time::Duration) -> bool {
     unsafe { poll(&mut fd, 1, ms) > 0 }
 }
 
+/// Text from outside axio (the model, tools, MCP servers, error bodies)
+/// made safe to print: every escape sequence goes, whether CSI, OSC, DCS,
+/// SOS, PM, APC or two-byte, in 7- or 8-bit form, as do control characters
+/// other than newline and tab and the bidirectional overrides. Otherwise such
+/// text could set the clipboard (OSC 52), hide or forge output, or move the
+/// cursor. axio's own colours are added after cleaning.
+pub fn clean(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\n' | '\t' => out.push(c),
+            '\x1b' => match it.next() {
+                Some('[') => skip_csi(&mut it),
+                Some(']' | 'P' | 'X' | '^' | '_') => skip_string(&mut it),
+                _ => {}
+            },
+            '\u{9b}' => skip_csi(&mut it),
+            '\u{90}' | '\u{98}' | '\u{9d}' | '\u{9e}' | '\u{9f}' => skip_string(&mut it),
+            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {}
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Parameters and intermediates (0x20-0x3F), then one final byte.
+fn skip_csi(it: &mut std::iter::Peekable<std::str::Chars>) {
+    while let Some(&c) = it.peek() {
+        match c {
+            '\x20'..='\x3f' => {
+                it.next();
+            }
+            '\x40'..='\x7e' => {
+                it.next();
+                return;
+            }
+            _ => return,
+        }
+    }
+}
+
+/// Up to BEL, ST (ESC \\ or 0x9C), or the end of the text.
+fn skip_string(it: &mut std::iter::Peekable<std::str::Chars>) {
+    while let Some(c) = it.next() {
+        match c {
+            '\x07' | '\u{9c}' => return,
+            '\x1b' => {
+                if it.peek() == Some(&'\\') {
+                    it.next();
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `clean` applied to every string inside a JSON value.
+pub fn clean_value(v: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => Value::String(clean(s)),
+        Value::Array(a) => Value::Array(a.iter().map(clean_value).collect()),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, v)| (clean(k), clean_value(v))).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clean_drops_every_escape_and_control() {
+        let cases = [
+            ("a\x1b]52;c;SGVsbG8=\x07b", "ab"), // OSC 52 clipboard, BEL
+            ("a\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\b", "alinkb"), // OSC 8, ST
+            ("a\x1bP1$qm\x1b\\b", "ab"),        // DCS
+            ("a\x1b_hidden\x1b\\b", "ab"),      // APC
+            ("a\x1b[2J\x1b[1;1Hb", "ab"),       // clear, move
+            ("a\x1b[38;5;196mred\x1b[0mb", "aredb"), // colour
+            ("a\u{9b}2Jb", "ab"),               // 8-bit CSI
+            ("a\u{9d}52;c;x\u{9c}b", "ab"),     // 8-bit OSC and ST
+            ("a\x1b7\x1bcb", "ab"),             // two-byte escapes
+            ("a\rb\x08c\x00d\x7fe", "abcde"),   // CR, BS, NUL, DEL
+            ("one\n\ttwo", "one\n\ttwo"),       // kept
+            ("a\u{202e}b\u{2066}c", "abc"),     // bidi overrides
+            ("héllo ✓", "héllo ✓"),
+            ("cut\x1b]52;c;abc", "cut"), // unterminated
+        ];
+        for (input, want) in cases {
+            assert_eq!(clean(input), want, "{input:?}");
+        }
+    }
 
     fn keys(input: &[u8]) -> Vec<Key> {
         let mut bytes: VecDeque<u8> = input.iter().copied().collect();
