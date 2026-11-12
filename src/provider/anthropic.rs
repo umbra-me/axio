@@ -30,10 +30,19 @@ pub fn complete(req: &Request, on: &mut dyn FnMut(Delta)) -> Result<Reply, Strin
 /// The model ids the account can use.
 pub fn models() -> Result<Vec<String>, String> {
     let (base, headers) = connection()?;
-    super::model_ids(&super::get_json(
-        &format!("{base}/v1/models?limit=1000"),
-        &headers,
-    )?)
+    let list = super::get_json(&format!("{base}/v1/models?limit=1000"), &headers)?;
+    for m in list["data"].as_array().into_iter().flatten() {
+        if let (Some(id), Some(name)) = (m["id"].as_str(), m["display_name"].as_str()) {
+            super::learn(
+                &format!("{PROVIDER}/{id}"),
+                super::Info {
+                    about: Some(name.to_string()),
+                    ..super::Info::default()
+                },
+            );
+        }
+    }
+    super::model_ids(&list)
 }
 
 fn body(req: &Request) -> Value {
@@ -86,8 +95,21 @@ fn summarizes_thinking(id: &str) -> bool {
     !before_adaptive(id)
 }
 
+/// The effort levels a model takes; none for those that reject effort.
+pub fn effort_levels(id: &str) -> &'static [&'static str] {
+    if id.contains("opus-4-5") {
+        &["low", "medium", "high"]
+    } else if before_adaptive(id) && id.starts_with("claude-") {
+        &[]
+    } else if id.contains("-4-6") {
+        &["low", "medium", "high", "max"]
+    } else {
+        &["low", "medium", "high", "xhigh", "max"]
+    }
+}
+
 /// The effort to send, if any: earlier models reject it or some levels.
-fn supported_effort<'a>(id: &str, effort: Option<&'a str>) -> Option<&'a str> {
+pub(crate) fn supported_effort<'a>(id: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
     if id.contains("opus-4-5") {
         return Some(if matches!(effort, "xhigh" | "max") {

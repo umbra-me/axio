@@ -529,9 +529,27 @@ fn model_slugs(list: &Value) -> Result<Vec<String>, String> {
         .filter(|m| m["visibility"].as_str().is_none_or(|v| v == "list"))
         .filter_map(|m| {
             let slug = m["slug"].as_str()?;
-            if let Some(n) = m["context_window"].as_u64() {
-                crate::provider::learn_window(&format!("{PROVIDER}/{slug}"), n);
-            }
+            let levels = m["supported_reasoning_levels"].as_array();
+            let field = |k: &str| -> Vec<String> {
+                levels
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|l| l[k].as_str().map(String::from))
+                    .collect()
+            };
+            crate::provider::learn(
+                &format!("{PROVIDER}/{slug}"),
+                crate::provider::Info {
+                    window: m["context_window"].as_u64(),
+                    efforts: field("effort"),
+                    notes: field("description"),
+                    default_effort: m["default_reasoning_level"].as_str().map(String::from),
+                    about: m["description"]
+                        .as_str()
+                        .or(m["display_name"].as_str())
+                        .map(String::from),
+                },
+            );
             Some(slug.to_string())
         })
         .collect())
