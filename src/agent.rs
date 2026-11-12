@@ -561,7 +561,17 @@ impl Agent {
             if !pending.is_empty() {
                 let host = self.subagents.clone().expect("pending agents have a host");
                 let plans: Vec<_> = pending.iter().map(|p| &p.4).collect();
-                let outs = host.run_all(&plans, ui);
+                let outs = match (&hook_stop, stopped) {
+                    (Some(reason), _) => plans
+                        .iter()
+                        .map(|_| Err(format!("not run: a hook ended the turn ({reason})")))
+                        .collect(),
+                    (None, true) => plans
+                        .iter()
+                        .map(|_| Err(format!("not run: {}", tools::STOPPED)))
+                        .collect(),
+                    (None, false) => host.run_all(&plans, ui),
+                };
                 for ((slot, id, input, context, _), out) in pending.into_iter().zip(outs) {
                     stopped = stopped || matches!(&out, Err(e) if e.ends_with(tools::STOPPED));
                     let (out, end) = self.post_tool(&id, "Agent", &input, out, context, ui);
@@ -1615,5 +1625,41 @@ mod tests {
             &content[0],
             Block::ToolResult { is_error: true, .. }
         ));
+    }
+
+    #[test]
+    fn queued_agent_calls_do_not_start_once_the_turn_ends() {
+        let mut agent = agent(|req, _| {
+            if req.messages.len() == 1 {
+                let mut calls = vec![Block::ToolCall {
+                    id: "a".into(),
+                    name: "Agent".into(),
+                    input: json!({"description": "d", "prompt": "p", "subagent_type": "explore"}),
+                }];
+                calls.extend(bash("b", "true"));
+                return reply(calls, Stop::ToolUse, 1);
+            }
+            reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1)
+        });
+        let (roles, _) = crate::roles::load(&[]);
+        let host =
+            crate::subagent::Host::new(roles, crate::settings::Subagents::default(), 0).unwrap();
+        agent.set_subagents(host);
+        with_hooks(
+            &mut agent,
+            hook(
+                "PreToolUse",
+                "Bash",
+                r#"echo '{"continue": false, "stopReason": "halt"}'"#,
+            ),
+        );
+        agent.prompt("go", &mut Log::default()).unwrap();
+        let Some(Message::User { content }) = agent.messages.last() else {
+            panic!("results")
+        };
+        assert!(
+            matches!(&content[0], Block::ToolResult { id, output, is_error: true } if id == "a" && output.contains("not run")),
+            "{content:?}"
+        );
     }
 }
