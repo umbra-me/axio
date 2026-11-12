@@ -851,7 +851,8 @@ fn run() -> Result<ExitCode, String> {
     let resumed = if agent.messages.is_empty() {
         String::new()
     } else {
-        format!("resumed {} messages · ", agent.messages.len())
+        let n = agent.messages.len();
+        format!("resumed {n} message{} · ", if n == 1 { "" } else { "s" })
     };
     eprintln!(
         "{}",
