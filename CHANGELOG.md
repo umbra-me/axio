@@ -23,6 +23,10 @@ requests in `umbra-me/axio`. Versions follow
 ### Fixed
 
 - ACP: replayed tool calls keep their file locations (#100).
+- In a folder under your home folder that is not a git repository, the
+  home folder's own `~/.axio` made the whole home folder the project: a
+  trust question about it on Windows, and with the sandbox module, writes
+  allowed across the home folder rather than the project (#101).
 
 ## [0.2.0] - 2026-11-16
 

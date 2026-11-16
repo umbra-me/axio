@@ -195,8 +195,26 @@ pub fn set_path(home: &Path, path: &[&str], value: serde_json::Value) -> Result<
 
 /// The nearest ancestor holding `.git` or `.axio`, else `cwd` itself.
 pub fn project_root(cwd: &Path) -> PathBuf {
+    let mut global: Vec<PathBuf> = crate::context::home()
+        .parent()
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    if let Some(h) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        global.push(Path::new(&h).join(".axio"));
+    }
+    root_of(cwd, &global)
+}
+
+/// The nearest folder with `.git` or `.axio`. The `.axio` folders in
+/// `global` hold axio's own settings, so they never mark a project: the home
+/// folder would otherwise become the project of every folder under it.
+fn root_of(cwd: &Path, global: &[PathBuf]) -> PathBuf {
     cwd.ancestors()
-        .find(|d| d.join(".git").exists() || d.join(".axio").is_dir())
+        .find(|d| {
+            let marker = d.join(".axio");
+            d.join(".git").exists() || (marker.is_dir() && !global.contains(&marker))
+        })
         .unwrap_or(cwd)
         .to_path_buf()
 }
@@ -268,6 +286,22 @@ impl Trust {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_global_axio_folder_does_not_make_home_a_project() {
+        let t = std::env::temp_dir().join(format!("axio-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let (home, work) = (t.join("home"), t.join("home/notes/today"));
+        std::fs::create_dir_all(home.join(".axio/plugins")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let global = [home.join(".axio")];
+        assert_eq!(root_of(&work, &global), work, "home's .axio is axio's own");
+        std::fs::create_dir_all(home.join("notes/.axio")).unwrap();
+        assert_eq!(root_of(&work, &global), home.join("notes"));
+        std::fs::create_dir_all(work.join(".git")).unwrap();
+        assert_eq!(root_of(&work, &global), work);
+        let _ = std::fs::remove_dir_all(&t);
+    }
 
     #[test]
     fn set_path_writes_nested_keys_and_keeps_the_rest() {
