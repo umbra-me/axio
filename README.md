@@ -36,11 +36,10 @@ Release binaries for macOS, Linux and Windows are on the
 SHA-256 against that file and replaces the running binary; it only reads
 from GitHub when you run it.
 
-Runs on macOS and Linux. Windows support is experimental: it builds and
-passes the test suite, and needs [Git for Windows](https://gitforwindows.org)
-for `Bash` and hooks (`AXIO_BASH` points at another bash). Windows has no
-`sandbox` module; read-only sub-agents are held to read-only by permission
-rules instead.
+Runs on macOS, Linux and Windows 11. On Windows it needs
+[Git for Windows](https://gitforwindows.org) for `Bash` and hooks
+(`AXIO_BASH` points at another bash). Windows has no `sandbox` module;
+read-only sub-agents are held to read-only by permission rules instead.
 
 ## What it does
 
