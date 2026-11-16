@@ -756,6 +756,16 @@ impl Agent {
     /// until the model answers without calling a tool. A stopped turn returns
     /// `Err(ABORTED)` and leaves a history the provider still accepts.
     pub fn prompt(&mut self, text: &str, ui: &mut dyn Ui) -> Result<(), String> {
+        self.prompt_with(text, Vec::new(), ui)
+    }
+
+    /// `prompt` with blocks the client attached (images, file contents).
+    pub fn prompt_with(
+        &mut self,
+        text: &str,
+        attached: Vec<Block>,
+        ui: &mut dyn Ui,
+    ) -> Result<(), String> {
         let submit = self.hook(Hook::UserPromptSubmit, None, json!({"prompt": text}), ui);
         if let Some(reason) = submit.block.or(submit.stop) {
             ui.notice(&format!("prompt blocked by a hook: {reason}"));
@@ -775,6 +785,7 @@ impl Agent {
             *s = Speed::default();
         }
         let mut content = vec![Block::Text { text: text.into() }];
+        content.extend(attached);
         for (block, note) in crate::context::mentions(text, &self.cwd) {
             ui.notice(&note);
             content.push(block);

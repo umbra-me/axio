@@ -54,6 +54,7 @@ disposable container. See `e2e/README.md`.
 - `src/settings.rs`: settings files and project trust
 - `src/compact.rs`: compaction to recent user requests plus a summary
 - `src/agent.rs`: the turn loop (model, tools, repeat), tool lists and the turn limit
+- `src/acp.rs`: `axio acp`, the Agent Client Protocol on stdin and stdout
 - `src/child.rs`: `axio agent`, a sub-agent's process (JSON spec on stdin, JSON lines on stdout)
 - `src/subagent.rs`, `src/roles.rs`, `agents/`: the Agent tool, role files and the four built-in roles
 - `src/provider.rs`: model names, what model lists report (context, effort levels), retries

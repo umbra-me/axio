@@ -7,6 +7,13 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- `axio acp` serves the Agent Client Protocol (version 1), so Zed, Axio
+  Atrium and other ACP clients can run axio: sessions with load, permission
+  questions, diffs, plans, slash commands, and model, effort and mode
+  options (#93).
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed

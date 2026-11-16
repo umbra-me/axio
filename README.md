@@ -415,6 +415,28 @@ for this session only (`s` in the effort slider; in the browser Tab switches
 sides and typing filters).
 Keys typed while a turn runs are kept for the next prompt.
 
+## Editors and Axio Atrium (ACP)
+
+`axio acp` serves the [Agent Client Protocol](https://agentclientprotocol.com)
+(version 1) on stdin and stdout, so an ACP client such as Zed or Axio Atrium
+can run axio as its agent: give the client the command `axio acp`.
+
+Each session is set up as `axio -p` would be in its folder: your settings,
+profile, plugins, hooks, skills and MCP servers, plus any MCP servers the
+client passes. A project's own configuration loads only if you trusted it
+before, in a terminal, or when the client starts `axio acp --trust`;
+`--profile <name>` picks a profile.
+
+- Changes and commands ask through the client, with the same choices the
+  terminal offers. The modes are axio's permission modes.
+- Model, effort and mode are session options. The model list fills in once
+  the signed-in providers have answered.
+- Write and Edit show a diff of the whole file; TodoWrite becomes the client's
+  plan; `/compact`, your commands and skills appear as slash commands.
+- Sessions are the usual JSONL files, so a session started in the client can
+  be continued with `axio -c` and the other way round (`session/load`).
+- With the sandbox module on, one `axio acp` process serves one project.
+
 ## Security and privacy
 
 - **What leaves your machine**: your conversation, the files and command
