@@ -7,6 +7,8 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.2.0] - 2026-11-16
+
 ### Added
 
 - `axio acp` serves the Agent Client Protocol (version 1), so Zed, Axio
