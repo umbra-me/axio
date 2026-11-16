@@ -139,18 +139,31 @@ struct Session {
 pub struct Server {
     peer: Arc<Peer>,
     make: Make,
+    /// `~/.axio/agent`, for listing saved sessions.
+    home: PathBuf,
     sessions: HashMap<String, Session>,
     /// Every model the signed-in providers offer, once listed.
     models: Vec<String>,
+    /// Whether the client reads and writes files for axio (its buffers).
+    files: Editor,
+}
+
+/// The client's file capabilities.
+#[derive(Clone, Copy, Default)]
+struct Editor {
+    read: bool,
+    write: bool,
 }
 
 impl Server {
-    pub fn new(peer: Arc<Peer>, make: Make) -> Server {
+    pub fn new(peer: Arc<Peer>, make: Make, home: PathBuf) -> Server {
         Server {
             peer,
             make,
+            home,
             sessions: HashMap::new(),
             models: Vec::new(),
+            files: Editor::default(),
         }
     }
 
@@ -173,16 +186,25 @@ impl Server {
         let method = msg["method"].as_str().unwrap_or("").to_string();
         let params = &msg["params"];
         let r = match method.as_str() {
-            "initialize" => Ok(json!({
+            "initialize" => {
+                let fs = &params["clientCapabilities"]["fs"];
+                self.files = Editor {
+                    read: fs["readTextFile"] == true,
+                    write: fs["writeTextFile"] == true,
+                };
+                Ok(json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "agentCapabilities": {
                     "loadSession": true,
                     "promptCapabilities": {"image": true, "audio": false, "embeddedContext": true},
                     "mcpCapabilities": {"http": true, "sse": true},
+                    "sessionCapabilities": {"list": {}},
                 },
                 "authMethods": [],
                 "agentInfo": {"name": "axio", "title": "Axio", "version": env!("CARGO_PKG_VERSION")},
-            })),
+                }))
+            }
+            "session/list" => Ok(list(&self.home, params)),
             "authenticate" => Ok(json!({})),
             "session/new" | "session/load" => {
                 return self.open(id, &method, params);
@@ -318,6 +340,7 @@ impl Server {
             cwd: s.agent.cwd.clone(),
             pending: None,
             current: None,
+            files: self.files,
             stop: None,
             spoke: false,
             gap: false,
@@ -624,14 +647,21 @@ fn absolute(cwd: &Path, p: &str) -> PathBuf {
 
 /// What the client shows for a call before it runs: where it works and,
 /// for Write and Edit, the change as a diff of the whole file.
-fn preview(tool: &str, input: &Value, cwd: &Path) -> (Value, Value) {
+fn preview(
+    tool: &str,
+    input: &Value,
+    cwd: &Path,
+    read: &mut dyn FnMut(&Path) -> Option<String>,
+) -> (Value, Value) {
     let Some(path) = input["file_path"].as_str().map(|p| absolute(cwd, p)) else {
         return (json!([]), json!([]));
     };
     let shown = path.display().to_string();
     let locations = json!([{"path": shown}]);
-    let small = std::fs::metadata(&path).is_ok_and(|m| m.len() <= DIFF_FILE_LIMIT);
-    let old = small.then(|| std::fs::read_to_string(&path).ok()).flatten();
+    let old = match tool {
+        "Write" | "Edit" => read(&path),
+        _ => None,
+    };
     let s = |k: &str| input[k].as_str().unwrap_or("");
     let diff = match tool {
         "Write" => json!({"type": "diff", "path": shown, "oldText": old, "newText": s("content")}),
@@ -652,6 +682,12 @@ fn preview(tool: &str, input: &Value, cwd: &Path) -> (Value, Value) {
         _ => return (locations, json!([])),
     };
     (locations, json!([diff]))
+}
+
+/// A file's text for a diff, unless it is too large to show whole.
+fn disk_text(path: &Path) -> Option<String> {
+    let small = std::fs::metadata(path).is_ok_and(|m| m.len() <= DIFF_FILE_LIMIT);
+    small.then(|| std::fs::read_to_string(path).ok()).flatten()
 }
 
 fn clip(text: &str) -> String {
@@ -699,7 +735,7 @@ fn replay(peer: &Peer, sid: &str, messages: &[Message], cwd: &Path) {
                             "sessionUpdate": "agent_message_chunk",
                             "content": {"type": "text", "text": text}}),
                         Block::ToolCall { id, name, input } => {
-                            let (locations, _) = preview(name, &Value::Null, cwd);
+                            let (locations, _) = preview(name, input, cwd, &mut |_| None);
                             json!({"sessionUpdate": "tool_call", "toolCallId": id,
                                    "title": title(name, input, cwd), "kind": kind(name),
                                    "status": "pending", "rawInput": input,
@@ -723,6 +759,7 @@ struct Turn<'a> {
     pending: Option<String>,
     /// The running call and its kind.
     current: Option<(String, &'static str)>,
+    files: Editor,
     stop: Option<Stop>,
     /// Text was sent this turn, and a tool call has run since: the client
     /// joins chunks into one message, so the next reply starts a paragraph.
@@ -763,7 +800,19 @@ impl Ui for Turn<'_> {
 
     fn tool_start(&mut self, name: &str, input: &Value) {
         self.gap = true;
-        let (locations, content) = preview(name, input, &self.cwd);
+        let (locations, content) = if self.files.read {
+            let mut files = Buffers {
+                peer: self.peer,
+                session: &self.session,
+            };
+            preview(name, input, &self.cwd, &mut |p| {
+                crate::tools::Files::read(&mut files, p)
+                    .ok()
+                    .and_then(|b| String::from_utf8(b).ok())
+            })
+        } else {
+            preview(name, input, &self.cwd, &mut disk_text)
+        };
         let mut v = json!({"title": title(name, input, &self.cwd), "kind": kind(name),
                            "status": "in_progress", "rawInput": input,
                            "locations": locations, "content": content});
@@ -834,6 +883,33 @@ impl Ui for Turn<'_> {
         true
     }
 
+    /// Read, Write and Edit go through the client when it offers files, so
+    /// they see unsaved buffers and the editor sees the changes.
+    fn remote_tool(
+        &mut self,
+        name: &str,
+        input: &Value,
+    ) -> Option<(Result<String, String>, Vec<Block>)> {
+        let path = input["file_path"].as_str()?;
+        let through = match name {
+            "Read" => self.files.read && crate::context::image_type(Path::new(path)).is_none(),
+            "Write" => self.files.write,
+            "Edit" => self.files.read && self.files.write,
+            _ => false,
+        };
+        if !through {
+            return None;
+        }
+        let mut files = Buffers {
+            peer: self.peer,
+            session: &self.session,
+        };
+        Some((
+            crate::tools::run_files(name, input, &self.cwd, &mut files),
+            Vec::new(),
+        ))
+    }
+
     fn ask(&mut self, question: &str) -> bool {
         self.permission(question, &["Yes".into(), "No".into()]) == Some(0)
     }
@@ -874,6 +950,105 @@ impl Ui for Turn<'_> {
         }
         outcome["optionId"].as_str()?.parse().ok()
     }
+}
+
+/// Files read and written through the client.
+struct Buffers<'a> {
+    peer: &'a Peer,
+    session: &'a str,
+}
+
+impl Buffers<'_> {
+    fn ask(&self, method: &str, mut params: Value, path: &Path) -> Result<Value, String> {
+        params["sessionId"] = json!(self.session);
+        params["path"] = json!(path.display().to_string());
+        let r = self
+            .peer
+            .request(method, params)
+            .ok_or_else(|| crate::tools::STOPPED.to_string())?;
+        match r.get("error") {
+            Some(e) => Err(format!(
+                "{}: {}",
+                path.display(),
+                e["message"].as_str().unwrap_or("the editor refused")
+            )),
+            None => Ok(r["result"].clone()),
+        }
+    }
+}
+
+impl crate::tools::Files for Buffers<'_> {
+    fn read(&mut self, path: &Path) -> Result<Vec<u8>, String> {
+        let r = self.ask("fs/read_text_file", json!({}), path)?;
+        Ok(r["content"].as_str().unwrap_or("").as_bytes().to_vec())
+    }
+    fn write(&mut self, path: &Path, text: &str) -> Result<(), String> {
+        self.ask("fs/write_text_file", json!({"content": text}), path)
+            .map(|_| ())
+    }
+}
+
+/// Saved sessions, newest first: one folder's when `cwd` is given, else all.
+fn list(home: &Path, params: &Value) -> Value {
+    const PAGE: usize = 50;
+    let dirs: Vec<PathBuf> = match params["cwd"].as_str() {
+        Some(c) => vec![crate::session::dir_for(home, Path::new(c))],
+        None => std::fs::read_dir(home.join("sessions"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect(),
+    };
+    let mut rows: Vec<(std::time::SystemTime, Value)> = Vec::new();
+    for dir in dirs {
+        for s in crate::session::recent(&dir, usize::MAX) {
+            let Some(cwd) = header_cwd(&s.path) else {
+                continue;
+            };
+            let title: String = s
+                .first_prompt
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect();
+            rows.push((
+                s.modified,
+                json!({"sessionId": session_id(&s.path), "cwd": cwd, "title": title,
+                       "updatedAt": crate::context::iso_time(s.modified)}),
+            ));
+        }
+    }
+    rows.sort_by_key(|a| std::cmp::Reverse(a.0));
+    let start: usize = params["cursor"]
+        .as_str()
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    let page: Vec<Value> = rows
+        .iter()
+        .skip(start)
+        .take(PAGE)
+        .map(|(_, v)| v.clone())
+        .collect();
+    let mut out = json!({ "sessions": page });
+    if start + PAGE < rows.len() {
+        out["nextCursor"] = json!((start + PAGE).to_string());
+    }
+    out
+}
+
+/// The folder a session was started in, from its header line.
+fn header_cwd(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let mut first = String::new();
+    std::io::BufReader::new(std::fs::File::open(path).ok()?)
+        .read_line(&mut first)
+        .ok()?;
+    let v: Value = serde_json::from_str(&first).ok()?;
+    Some(v["cwd"].as_str()?.to_string())
 }
 
 /// For hooks run outside a prompt (SessionStart, SessionEnd).
@@ -921,7 +1096,7 @@ mod tests {
             let out = Buf(Arc::new(Mutex::new(Vec::new())));
             let peer = Peer::new(Box::new(out.clone()));
             let (tx, rx) = channel();
-            let (p, sessions) = (peer.clone(), dir.join("sessions"));
+            let (p, sessions, home) = (peer.clone(), dir.to_path_buf(), dir.to_path_buf());
             let server = std::thread::spawn(move || {
                 let make: Make = Box::new(move |cwd, resume, _| {
                     let mut a = Agent::new(
@@ -932,6 +1107,7 @@ mod tests {
                     a.set_tools(crate::tools::Modules::default(), crate::mcp::Mcp::default());
                     a.max_retries = 0;
                     a.set_permissions(crate::permissions::Permissions::default());
+                    let sessions = crate::session::dir_for(&sessions, cwd);
                     match resume {
                         Some(id) => {
                             let path = sessions.join(format!("{id}.jsonl"));
@@ -951,7 +1127,7 @@ mod tests {
                     });
                     Ok((a, Library::default()))
                 });
-                Server::new(p, make).run(rx);
+                Server::new(p, make, home).run(rx);
             });
             Client {
                 peer,
@@ -1332,6 +1508,156 @@ mod tests {
             .map(|o| o["value"].as_str().unwrap())
             .collect();
         assert_eq!(values, ["openai/gpt-test", "anthropic/a"]);
+    }
+
+    #[test]
+    fn files_go_through_an_editor_that_offers_them() {
+        let dir = temp("clientfs");
+        std::fs::write(dir.join("notes.txt"), "ON DISK").unwrap();
+        let mut c = Client::start(&dir, |req| {
+            let tool = match req.messages.len() {
+                1 => call("Read", json!({"file_path": "notes.txt"})),
+                3 => call(
+                    "Write",
+                    json!({"file_path": "out.txt", "content": "via editor"}),
+                ),
+                5 => call(
+                    "Edit",
+                    json!({"file_path": "notes.txt", "old_string": "UNSAVED", "new_string": "EDITED"}),
+                ),
+                _ => return reply(Stop::EndTurn, vec![text("done")]),
+            };
+            reply(Stop::ToolUse, vec![tool])
+        });
+        c.call(
+            "initialize",
+            json!({"protocolVersion": 1, "clientCapabilities":
+                   {"fs": {"readTextFile": true, "writeTextFile": true}}}),
+        );
+        let sid = c.new_session(&dir);
+        c.call(
+            "session/set_mode",
+            json!({"sessionId": sid, "modeId": "bypassPermissions"}),
+        );
+        c.next += 1;
+        let id = c.next;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt",
+                      "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]}}),
+        );
+        // Answer every file request as an editor would, until the turn ends.
+        let mut answered = Vec::new();
+        let mut writes = Vec::new();
+        let done = loop {
+            for v in c.lines() {
+                let m = v["method"].as_str().unwrap_or("");
+                if !m.starts_with("fs/") || answered.contains(&v["id"]) {
+                    continue;
+                }
+                answered.push(v["id"].clone());
+                assert_eq!(v["params"]["sessionId"], sid.as_str());
+                let result = if m == "fs/read_text_file" {
+                    json!({"content": "UNSAVED BUFFER"})
+                } else {
+                    writes.push(v["params"]["content"].clone());
+                    json!({})
+                };
+                c.send(json!({"jsonrpc": "2.0", "id": v["id"], "result": result}));
+            }
+            let finished = |v: &Value| v["id"] == id && v.get("method").is_none();
+            if let Some(r) = c.lines().into_iter().find(finished) {
+                break r;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(writes, [json!("via editor"), json!("EDITED BUFFER")]);
+        assert_eq!(done["result"]["stopReason"], "end_turn");
+        let edit = c
+            .updates("tool_call")
+            .into_iter()
+            .find(|u| u["title"] == "Edit notes.txt")
+            .unwrap();
+        assert_eq!(
+            edit["content"][0]["oldText"], "UNSAVED BUFFER",
+            "diff from the buffer"
+        );
+        let shown = c
+            .updates("tool_call_update")
+            .into_iter()
+            .find(|u| u["status"] == "completed")
+            .unwrap();
+        assert!(
+            shown["content"][0]["content"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("UNSAVED BUFFER")
+        );
+        assert!(!dir.join("out.txt").exists(), "the editor writes, not axio");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("notes.txt")).unwrap(),
+            "ON DISK"
+        );
+    }
+
+    #[test]
+    fn without_editor_files_axio_uses_the_disk() {
+        let dir = temp("diskfs");
+        std::fs::write(dir.join("notes.txt"), "ON DISK").unwrap();
+        let mut c = Client::start(&dir, |req| {
+            once(req, call("Read", json!({"file_path": "notes.txt"})))
+        });
+        c.call(
+            "initialize",
+            json!({"protocolVersion": 1, "clientCapabilities": {}}),
+        );
+        let sid = c.new_session(&dir);
+        c.call(
+            "session/prompt",
+            json!({"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]}),
+        );
+        let shown = &c.updates("tool_call_update")[0];
+        assert!(
+            shown["content"][0]["content"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("ON DISK")
+        );
+        assert!(c.lines().iter().all(|v| v["method"] != "fs/read_text_file"));
+    }
+
+    #[test]
+    fn sessions_list_newest_first() {
+        let dir = temp("list");
+        let mut c = Client::start(&dir, |_| reply(Stop::EndTurn, vec![text("ok")]));
+        let r = c.call("initialize", json!({"protocolVersion": 1}));
+        assert!(r["result"]["agentCapabilities"]["sessionCapabilities"]["list"].is_object());
+        let first = c.new_session(&dir);
+        c.call(
+            "session/prompt",
+            json!({"sessionId": first, "prompt": [{"type": "text", "text": "first task\nmore"}]}),
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        let second = c.new_session(&dir);
+        c.call(
+            "session/prompt",
+            json!({"sessionId": second, "prompt": [{"type": "text", "text": "second task"}]}),
+        );
+        let r = c.call("session/list", json!({"cwd": dir}));
+        let rows = r["result"]["sessions"].as_array().unwrap();
+        let ids: Vec<&str> = rows
+            .iter()
+            .map(|s| s["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, [second.as_str(), first.as_str()]);
+        assert_eq!(rows[1]["title"], "first task");
+        assert_eq!(rows[1]["cwd"], dir.display().to_string());
+        let at = rows[0]["updatedAt"].as_str().unwrap();
+        assert!(
+            at.len() == 20 && at.ends_with('Z') && at.contains('T'),
+            "{at}"
+        );
+        let all = c.call("session/list", json!({}));
+        assert_eq!(all["result"]["sessions"].as_array().unwrap().len(), 2);
     }
 
     #[test]

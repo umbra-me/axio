@@ -7,8 +7,15 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- ACP: `session/list` lists saved sessions, and when the client offers file
+  access Read, Write and Edit go through it, so they see unsaved buffers and
+  edit diffs start from them (#100).
+
 ### Fixed
 
+- ACP: replayed tool calls keep their file locations (#100).
 - In a folder under your home folder that is not a git repository, the
   home folder's own `~/.axio` made the whole home folder the project: a
   trust question about it on Windows, and with the sandbox module, writes
