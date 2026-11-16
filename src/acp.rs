@@ -319,6 +319,8 @@ impl Server {
             pending: None,
             current: None,
             stop: None,
+            spoke: false,
+            gap: false,
         };
         let result = if text.trim() == "/compact" {
             s.agent.compact("manual", &mut turn).map(|_| ())
@@ -722,6 +724,10 @@ struct Turn<'a> {
     /// The running call and its kind.
     current: Option<(String, &'static str)>,
     stop: Option<Stop>,
+    /// Text was sent this turn, and a tool call has run since: the client
+    /// joins chunks into one message, so the next reply starts a paragraph.
+    spoke: bool,
+    gap: bool,
 }
 
 impl Turn<'_> {
@@ -740,7 +746,15 @@ impl Turn<'_> {
 impl Ui for Turn<'_> {
     fn delta(&mut self, d: Delta) {
         let (kind, text) = match d {
-            Delta::Text(t) => ("agent_message_chunk", t),
+            Delta::Text(t) => {
+                if self.gap && self.spoke {
+                    self.update(json!({"sessionUpdate": "agent_message_chunk",
+                                       "content": {"type": "text", "text": "\n\n"}}));
+                }
+                self.gap = false;
+                self.spoke = true;
+                ("agent_message_chunk", t)
+            }
             Delta::ThinkingText(t) => ("agent_thought_chunk", t),
             _ => return,
         };
@@ -748,6 +762,7 @@ impl Ui for Turn<'_> {
     }
 
     fn tool_start(&mut self, name: &str, input: &Value) {
+        self.gap = true;
         let (locations, content) = preview(name, input, &self.cwd);
         let mut v = json!({"title": title(name, input, &self.cwd), "kind": kind(name),
                            "status": "in_progress", "rawInput": input,
@@ -1100,6 +1115,33 @@ mod tests {
         );
         let said = c.updates("agent_message_chunk");
         assert_eq!(said.last().unwrap()["content"]["text"], "done");
+    }
+
+    #[test]
+    fn replies_either_side_of_a_tool_call_stay_apart() {
+        let dir = temp("gap");
+        let mut c = Client::start(&dir, |req| {
+            let mut r = once(req, call("Bash", json!({"command": "true"})));
+            if r.stop == Stop::ToolUse {
+                r.content.insert(0, text("Let me check:"));
+            }
+            r
+        });
+        let sid = c.new_session(&dir);
+        c.call(
+            "session/set_mode",
+            json!({"sessionId": sid, "modeId": "bypassPermissions"}),
+        );
+        c.call(
+            "session/prompt",
+            json!({"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]}),
+        );
+        let said: String = c
+            .updates("agent_message_chunk")
+            .iter()
+            .map(|u| u["content"]["text"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(said, "Let me check:\n\ndone");
     }
 
     #[test]
