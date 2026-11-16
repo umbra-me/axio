@@ -13,6 +13,13 @@ requests in `umbra-me/axio`. Versions follow
   access Read, Write and Edit go through it, so they see unsaved buffers and
   edit diffs start from them (#100).
 
+### Changed
+
+- Windows is supported, no longer experimental: build, tests, `e2e/acp.py`
+  and the interactive terminal through ConPTY are verified on Windows 11.
+  Still true: no `sandbox` module, and Git for Windows is needed for `Bash`
+  and hooks (#102).
+
 ### Fixed
 
 - ACP: replayed tool calls keep their file locations (#100).
