@@ -27,6 +27,10 @@ requests in `umbra-me/axio`. Versions follow
   home folder's own `~/.axio` made the whole home folder the project: a
   trust question about it on Windows, and with the sandbox module, writes
   allowed across the home folder rather than the project (#101).
+- With no one to ask (`-p`, sub-agents), a refused call no longer suggests
+  `--permission-mode acceptEdits` when that would not allow it, for example
+  a command in that mode; it names a matching allow rule instead (#103).
+- `/status` says "1 turn", not "1 turns" (#103).
 
 ## [0.2.0] - 2026-11-16
 

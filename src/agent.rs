@@ -268,8 +268,20 @@ impl Agent {
             Verdict::Ask { question, rule } => (question, rule),
         };
         if !ui.can_ask() {
+            // Only ways out that would allow this call in the current mode.
+            let rule = match &rule {
+                Some(r) => format!("an allow rule such as \"{r}\" in settings"),
+                None => "an allow rule in settings".into(),
+            };
+            let how = if matches!(name, "Write" | "Edit")
+                && p.mode != crate::permissions::Mode::AcceptEdits
+            {
+                format!("--permission-mode acceptEdits or bypassPermissions, or {rule}")
+            } else {
+                format!("--permission-mode bypassPermissions, or {rule}")
+            };
             return Some(format!(
-                "not run: {name} needs permission and there is no one to ask; the user can allow it with --permission-mode acceptEdits or bypassPermissions, or an allow rule in settings"
+                "not run: {name} needs permission and there is no one to ask; the user can allow it with {how}"
             ));
         }
         #[derive(Clone)]
@@ -1454,6 +1466,44 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::Mutex;
+
+    /// Without anyone to ask, the refusal names a way out that would work in
+    /// the mode the agent is in.
+    #[test]
+    fn refusals_without_a_person_suggest_what_would_allow_the_call() {
+        struct Nobody;
+        impl Ui for Nobody {
+            fn delta(&mut self, _: Delta) {}
+            fn tool_start(&mut self, _: &str, _: &Value) {}
+            fn tool_end(&mut self, _: &Result<String, String>) {}
+            fn stopped(&mut self, _: &Stop) {}
+            fn usage(&mut self, _: Usage) {}
+        }
+        use crate::permissions::{Mode, Permissions};
+        let mut a = Agent::new(
+            Model::parse("anthropic/claude-test"),
+            "/w".into(),
+            String::new(),
+        );
+        let refuse = |a: &Agent, mode, name: &str, input: Value| {
+            a.set_mode(mode);
+            a.check_permission(name, &input, &mut Nobody).unwrap()
+        };
+        a.set_permissions(Permissions::default());
+        let bash = json!({"command": "git diff --stat"});
+        let edits = refuse(&a, Mode::AcceptEdits, "Bash", bash.clone());
+        assert!(!edits.contains("acceptEdits"), "already in it: {edits}");
+        assert!(edits.contains("Bash(git diff:*)"), "{edits}");
+        assert!(edits.contains("bypassPermissions"), "{edits}");
+        let write = json!({"file_path": "/w/a.txt", "content": "x"});
+        let w = refuse(&a, Mode::Default, "Write", write);
+        assert!(w.contains("acceptEdits"), "{w}");
+        let b = refuse(&a, Mode::Default, "Bash", bash);
+        assert!(
+            !b.contains("acceptEdits"),
+            "acceptEdits would not allow it: {b}"
+        );
+    }
 
     #[derive(Default)]
     struct Log {

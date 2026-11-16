@@ -19,7 +19,7 @@ fn short(text: &str, n: usize) -> String {
     }
 }
 
-fn plural(n: usize, word: &str) -> String {
+pub fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
