@@ -12,6 +12,7 @@ requests in `umbra-me/axio`. Versions follow
 - With no one to ask (`-p`, sub-agents), a refused call no longer suggests
   `--permission-mode acceptEdits` when that would not allow it, for example
   a command in that mode; it names a matching allow rule instead (#103).
+- `/status` says "1 turn", not "1 turns" (#103).
 
 ### Added
 

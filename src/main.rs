@@ -279,8 +279,8 @@ fn status_lines(
             used * 100 / window.max(1)
         ),
         format!(
-            "this run   {} turns · {} out · {}",
-            term.turns,
+            "this run   {} · {} out · {}",
+            panels::plural(term.turns as usize, "turn"),
             ui::tokens(term.total_out),
             cost_label(agent)
         ),
@@ -1848,6 +1848,25 @@ fn run() -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_counts_one_turn_in_the_singular() {
+        let tmp = std::env::temp_dir();
+        let a = Agent::new(
+            Model::parse("anthropic/claude-opus-5-5"),
+            tmp.clone(),
+            String::new(),
+        );
+        let profile = profile::load(&tmp, "standard").unwrap();
+        let mut term = ui::Term::new(&tmp, false, false);
+        term.turns = 1;
+        let lines = status_lines(&a, &profile, None, &term, &[], &[]);
+        let run = lines.iter().find(|l| l.starts_with("this run")).unwrap();
+        assert!(run.contains("1 turn ·"), "{run}");
+        term.turns = 2;
+        let lines = status_lines(&a, &profile, None, &term, &[], &[]);
+        assert!(lines.iter().any(|l| l.contains("2 turns ·")));
+    }
 
     #[test]
     fn status_lines_show_only_the_chosen_items() {
