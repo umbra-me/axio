@@ -953,8 +953,11 @@ mod tests {
             }
         }
 
+        /// Whole lines only: the server may be partway through writing one.
         fn lines(&self) -> Vec<Value> {
-            String::from_utf8_lossy(&self.out.0.lock().unwrap())
+            let out = self.out.0.lock().unwrap().clone();
+            let done = out.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+            String::from_utf8_lossy(&out[..done])
                 .lines()
                 .map(|l| serde_json::from_str(l).unwrap())
                 .collect()
