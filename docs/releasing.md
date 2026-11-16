@@ -38,7 +38,7 @@ changelog section and `SHA256SUMS`:
 | `axio-x86_64-apple-darwin` | macOS, Intel |
 | `axio-x86_64-unknown-linux-musl` | Linux x86_64 (static) |
 | `axio-aarch64-unknown-linux-musl` | Linux arm64 (static) |
-| `axio-x86_64-pc-windows-msvc.exe` | Windows x86_64 (experimental) |
+| `axio-x86_64-pc-windows-msvc.exe` | Windows x86_64 |
 
 `axio update` downloads the asset for its platform from the latest release
 and refuses it unless its SHA-256 matches `SHA256SUMS`.

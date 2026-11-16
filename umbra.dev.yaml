@@ -14,4 +14,4 @@ fixtures: {kind: synthetic, services: []}
 previews: []
 manual_gates:
   - Live provider runs spend money on user-owned credentials and need explicit authorization.
-  - Windows acceptance is unverified; the bash tool expects bash on PATH.
+  - Windows is supported but has no sandbox module; the bash tool expects Git for Windows bash on PATH.

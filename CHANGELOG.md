@@ -7,22 +7,30 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
-### Fixed
-
-- With no one to ask (`-p`, sub-agents), a refused call no longer suggests
-  `--permission-mode acceptEdits` when that would not allow it, for example
-  a command in that mode; it names a matching allow rule instead (#103).
-- `/status` says "1 turn", not "1 turns" (#103).
-
 ### Added
 
 - ACP: `session/list` lists saved sessions, and when the client offers file
   access Read, Write and Edit go through it, so they see unsaved buffers and
   edit diffs start from them (#100).
 
+### Changed
+
+- Windows is supported, no longer experimental: build, tests, `e2e/acp.py`
+  and the interactive terminal through ConPTY are verified on Windows 11.
+  Still true: no `sandbox` module, and Git for Windows is needed for `Bash`
+  and hooks (#102).
+
 ### Fixed
 
 - ACP: replayed tool calls keep their file locations (#100).
+- In a folder under your home folder that is not a git repository, the
+  home folder's own `~/.axio` made the whole home folder the project: a
+  trust question about it on Windows, and with the sandbox module, writes
+  allowed across the home folder rather than the project (#101).
+- With no one to ask (`-p`, sub-agents), a refused call no longer suggests
+  `--permission-mode acceptEdits` when that would not allow it, for example
+  a command in that mode; it names a matching allow rule instead (#103).
+- `/status` says "1 turn", not "1 turns" (#103).
 
 ## [0.2.0] - 2026-11-16
 
