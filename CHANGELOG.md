@@ -7,6 +7,8 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.3.0] - 2026-11-16
+
 ### Added
 
 - ACP: `session/list` lists saved sessions, and when the client offers file
