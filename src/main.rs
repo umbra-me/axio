@@ -1,3 +1,4 @@
+mod acp;
 mod agent;
 mod auth;
 mod background;
@@ -43,7 +44,7 @@ mod web;
 
 use agent::Agent;
 use provider::Model;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -57,6 +58,7 @@ Usage: axio [options] [prompt...]
        axio auth list | set <provider> [field] | remove <provider>
        axio profile [name]   (show or set the default profile)
        axio update [--check]   (install the latest release)
+       axio acp [--profile <name>] [--trust]   (serve the Agent Client Protocol)
 
 ax is the same as axio; axio-full, axio-min (or any axio-<profile>) start
 that profile.
@@ -112,6 +114,8 @@ struct Args {
     mcp_command: Option<Vec<String>>,
     /// `axio agents`: list the sub-agent roles.
     list_roles: bool,
+    /// MCP servers an ACP client adds, in `mcp.json` form.
+    client_mcp: Option<serde_json::Value>,
     prompt: Vec<String>,
 }
 
@@ -610,15 +614,15 @@ fn trusted_project(
 
 /// Where configuration comes from: `~/.axio/agent`, then a trusted project,
 /// with plugins limited to those the profile allows.
-struct Sources<'a> {
-    home: &'a std::path::Path,
-    project: Option<&'a std::path::Path>,
-    allowed: Option<&'a [String]>,
+struct Sources {
+    home: PathBuf,
+    project: Option<PathBuf>,
+    allowed: Option<Vec<String>>,
     /// Accepted items from other harnesses, used in place.
     imported: Vec<import::Item>,
 }
 
-impl Sources<'_> {
+impl Sources {
     fn imported_plugins(&self) -> impl Iterator<Item = (&str, &std::path::Path, bool)> {
         self.imported
             .iter()
@@ -630,17 +634,18 @@ impl Sources<'_> {
             })
             .filter(|(name, _, _)| {
                 self.allowed
+                    .as_ref()
                     .is_none_or(|a| a.iter().any(|n| n == "*" || n == name))
             })
     }
 
     fn plugins(&self, dir: std::path::PathBuf) -> Vec<plugins::Plugin> {
-        plugins::list(&dir, self.allowed)
+        plugins::list(&dir, self.allowed.as_deref())
     }
 
     /// Hooks from global settings and plugins, then a trusted project's.
     fn hooks(&self, cwd: &std::path::Path) -> Result<hooks::Hooks, String> {
-        let mut h = hooks::Hooks::new(self.project.unwrap_or(cwd).to_path_buf());
+        let mut h = hooks::Hooks::new(self.project.as_deref().unwrap_or(cwd).to_path_buf());
         let mut add = |settings: std::path::PathBuf, dir: std::path::PathBuf| {
             h.add_file(&settings, None)?;
             for p in self.plugins(dir) {
@@ -649,7 +654,7 @@ impl Sources<'_> {
             Ok::<_, String>(())
         };
         add(self.home.join("settings.json"), self.home.join("plugins"))?;
-        if let Some(root) = self.project {
+        if let Some(root) = &self.project {
             add(root.join(".axio/settings.json"), root.join(".axio/plugins"))?;
         }
         // `axio import` already listed what an imported item cannot do.
@@ -683,14 +688,14 @@ impl Sources<'_> {
             self.imported_plugins()
                 .map(|(_, root, _)| root.to_path_buf()),
         );
-        if let Some(root) = self.project {
+        if let Some(root) = &self.project {
             plugin_roots.extend(
                 self.plugins(root.join(".axio/plugins"))
                     .into_iter()
                     .map(|p| p.root),
             );
         }
-        let mut dirs = roles::dirs(self.home, self.project, &plugin_roots);
+        let mut dirs = roles::dirs(&self.home, self.project.as_deref(), &plugin_roots);
         // Imported folders sit just below axio's own.
         let at = plugin_roots.len();
         for i in &self.imported {
@@ -708,7 +713,7 @@ impl Sources<'_> {
             .into_iter()
             .map(|p| (p.name, p.version, p.root))
             .collect();
-        if let Some(root) = self.project {
+        if let Some(root) = &self.project {
             v.extend(
                 self.plugins(root.join(".axio/plugins"))
                     .into_iter()
@@ -733,7 +738,7 @@ impl Sources<'_> {
             Ok::<_, String>(())
         };
         add(self.home.join("mcp.json"), self.home.join("plugins"))?;
-        if let Some(root) = self.project {
+        if let Some(root) = &self.project {
             add(root.join(".mcp.json"), root.join(".axio/plugins"))?;
         }
         let noticed = c.skipped.len();
@@ -763,13 +768,13 @@ impl Sources<'_> {
     /// global ones, then `~/.axio/agent` and its plugins.
     fn library(&self) -> skills::Library {
         let mut lib = skills::Library::default();
-        if let Some(root) = self.project {
+        if let Some(root) = &self.project {
             lib.add_dir(&root.join(".axio"), None);
             for p in self.plugins(root.join(".axio/plugins")) {
                 lib.add_dir(&p.root, Some(&p.name));
             }
         }
-        lib.add_dir(self.home, None);
+        lib.add_dir(&self.home, None);
         for p in self.plugins(self.home.join("plugins")) {
             lib.add_dir(&p.root, Some(&p.name));
         }
@@ -1101,6 +1106,297 @@ fn mcp_command(sub: &[String], servers: &mcp::Config) -> Result<(), String> {
     }
 }
 
+/// An agent configured from settings, the profile, plugins and imports,
+/// with what the interactive loop shows about where it came from.
+struct Prepared {
+    agent: Agent,
+    library: skills::Library,
+    sources: Sources,
+    project: Option<PathBuf>,
+    profile: profile::Profile,
+    status_line: settings::StatusLine,
+    servers: mcp::Config,
+    mcp_failed: Vec<String>,
+    role_list: Vec<roles::Role>,
+    resumed: usize,
+    source: &'static str,
+}
+
+/// Builds the agent for `cwd`. `None` when `args` asked for a listing
+/// (`axio mcp`, `axio agents`) that has been printed.
+fn prepare(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    args: &Args,
+    interactive: bool,
+) -> Result<Option<Prepared>, String> {
+    let project = trusted_project(home, cwd, args, interactive)?;
+    let config = settings::Settings::load(home, project.as_deref())?;
+    let profile_name = args
+        .profile
+        .clone()
+        .or_else(|| {
+            std::env::args()
+                .next()
+                .and_then(|a| profile::from_program(&a))
+        })
+        .or_else(|| std::env::var("AXIO_PROFILE").ok())
+        .or(config.profile.clone())
+        .unwrap_or_else(|| profile::DEFAULT.into());
+    let profile = profile::load(home, &profile_name)?;
+    // Off unless the user opted in with `axio import` or the setting.
+    let imported = if args.no_import || config.import_from_other_harnesses.as_deref() != Some("ask")
+    {
+        Vec::new()
+    } else {
+        imports(home, interactive, false)?
+    };
+    let sources = Sources {
+        home: home.to_path_buf(),
+        project: project.clone(),
+        allowed: profile.plugins.clone(),
+        imported,
+    };
+    let library = sources.library();
+    for shadowed in &library.shadowed {
+        eprintln!("axio: ignored duplicate {shadowed}");
+    }
+    let spec = args
+        .model
+        .clone()
+        .or_else(|| std::env::var("AXIO_MODEL").ok())
+        .or(config.model)
+        .or(profile.model.clone())
+        .unwrap_or_else(|| provider::DEFAULT_MODEL.into());
+    let mut agent = Agent::new(
+        Model::parse(&spec),
+        cwd.to_path_buf(),
+        context::system_prompt(cwd, library.prompt_section().as_deref()),
+    );
+    agent.effort = args
+        .effort
+        .clone()
+        .or_else(|| std::env::var("AXIO_EFFORT").ok())
+        .or(config.effort)
+        .or(profile.effort.clone());
+    agent.compact_ratio = profile.compact_at;
+    agent.compact_model = config.compact_model.clone();
+    agent.fast = config.fast_mode.unwrap_or(false);
+    let mode_name = args
+        .permission_mode
+        .clone()
+        .or_else(|| std::env::var("AXIO_PERMISSION_MODE").ok())
+        .or(config.permissions.default_mode.clone())
+        .unwrap_or_else(|| "default".into());
+    let mode = permissions::Mode::parse(&mode_name).ok_or_else(|| {
+        format!(
+            "unknown permission mode {mode_name}: default, acceptEdits, plan or bypassPermissions"
+        )
+    })?;
+    let parse_rules = |list: &[String]| -> Vec<permissions::Rule> {
+        list.iter()
+            .filter_map(|r| {
+                let parsed = permissions::Rule::parse(r);
+                if parsed.is_none() {
+                    eprintln!("axio: ignored the permission rule {r:?}");
+                }
+                parsed
+            })
+            .collect()
+    };
+    let root = settings::project_root(cwd);
+    let mut allow = parse_rules(&config.permissions.allow);
+    allow.extend(permissions::project_rules(home, &root));
+    agent.set_permissions(permissions::Permissions {
+        mode,
+        allow,
+        deny: parse_rules(&config.permissions.deny),
+    });
+    agent.rules_home = Some((home.to_path_buf(), root));
+    let status_line = config.status_line.clone();
+    agent.fast_model = config.subagents.fast_model.clone();
+
+    let sessions = session::dir_for(home, cwd);
+    let resume = match (args.session.clone(), args.resume_latest, args.pick_session) {
+        (Some(p), _, _) => Some(p),
+        (None, true, _) => Some(session::latest(&sessions).ok_or("no session to continue here")?),
+        (None, false, true) => Some(pick_session(&sessions)?),
+        _ => None,
+    };
+    let source = if resume.is_some() {
+        "resume"
+    } else {
+        "startup"
+    };
+    let mut resumed = 0;
+    if let Some(path) = resume {
+        agent.messages = session::load(&path)?;
+        resumed = agent.messages.len();
+        agent.session = Some(session::Session::open(path)?);
+    } else if !args.no_session {
+        agent.session = Some(session::Session::create(&sessions, cwd)?);
+    }
+    agent.hooks = sources.hooks(cwd)?;
+    for skipped in &agent.hooks.skipped {
+        eprintln!("axio: skipped hook: {skipped}");
+    }
+    let mut servers = sources.mcp()?;
+    if let Some(doc) = &args.client_mcp {
+        servers.add(doc, None, std::path::Path::new("the ACP client"));
+    }
+    if let Some(sub) = &args.mcp_command {
+        mcp_command(sub, &servers)?;
+        return Ok(None);
+    }
+    for skipped in &servers.skipped {
+        eprintln!("axio: skipped MCP server: {skipped}");
+    }
+    let started = mcp::Mcp::start(&servers, cwd);
+    let mcp_failed = started.failed.clone();
+    for failed in &started.failed {
+        eprintln!("axio: MCP server failed to start: {}", term::clean(failed));
+    }
+    if profile.modules.sandbox {
+        let root = settings::project_root(cwd);
+        sandbox::activate(sandbox::Sandbox::for_project(
+            &root,
+            config.sandbox_network.unwrap_or(false),
+        ))?;
+    }
+    agent.set_tools(profile.modules, started);
+    let (roles, role_errors) = sources.roles();
+    for e in &role_errors {
+        eprintln!("axio: skipped role file {e}");
+    }
+    if args.list_roles {
+        for r in &roles {
+            let pick = |p: &roles::Pick| match p {
+                roles::Pick::Inherit => "inherit".to_string(),
+                roles::Pick::Choose => "choose".to_string(),
+                roles::Pick::Value(v) => v.clone(),
+            };
+            let tools = r
+                .tools
+                .as_ref()
+                .map_or("the main agent's".into(), |t| t.join(", "));
+            println!(
+                "{}  model {} · effort {} · tools {tools}\n    {}\n    {}",
+                r.name,
+                pick(&r.model),
+                pick(&r.effort),
+                r.description,
+                r.source
+            );
+        }
+        return Ok(None);
+    }
+    let role_list = roles.clone();
+    if profile.modules.agents && subagent::depth() == 0 {
+        agent.set_subagents(subagent::Host::new(roles, config.subagents.clone(), 0)?);
+    }
+    if !agent.messages.is_empty() {
+        // No reply has measured the context yet; estimate it so a long
+        // resumed session can still compact before its first prompt.
+        agent.context = agent.estimated_context();
+    }
+    Ok(Some(Prepared {
+        agent,
+        library,
+        sources,
+        project,
+        profile,
+        status_line,
+        servers,
+        mcp_failed,
+        role_list,
+        resumed,
+        source,
+    }))
+}
+
+/// `axio acp`: serves the Agent Client Protocol on stdin and stdout. Each
+/// session is configured as a `-p` run in its folder would be.
+fn acp_main(flags: &[String]) -> Result<(), String> {
+    let mut trust = false;
+    let mut profile = None;
+    let mut it = flags.iter();
+    while let Some(f) = it.next() {
+        match f.as_str() {
+            "--trust" => trust = true,
+            "--profile" => profile = Some(it.next().ok_or("--profile needs a name")?.clone()),
+            other => return Err(format!("axio acp: unknown option {other}")),
+        }
+    }
+    let home = context::home();
+    oauth::set_home(&home);
+    let _ = private::dir(&home);
+    private::set_logs(home.join("logs"));
+    let make: acp::Make = Box::new(move |cwd, resume, mcp| {
+        let session = match resume {
+            Some(id) => {
+                let path = session::dir_for(&home, cwd).join(format!("{id}.jsonl"));
+                if !path.is_file() {
+                    return Err(format!("no session {id} in {}", cwd.display()));
+                }
+                Some(path)
+            }
+            None => None,
+        };
+        let args = Args {
+            print: true,
+            trust,
+            profile: profile.clone(),
+            session,
+            client_mcp: Some(mcp.clone()),
+            ..Args::default()
+        };
+        let p = prepare(&home, cwd, &args, false)?.ok_or("nothing to run")?;
+        let root = settings::project_root(cwd);
+        let root = root.canonicalize().unwrap_or(root);
+        // The sandbox is set once per process, for the first folder.
+        if sandbox::active().is_some_and(|s| !s.writable.contains(&root)) {
+            return Err(format!(
+                "this axio acp process is sandboxed to another project; start another for {}",
+                root.display()
+            ));
+        }
+        Ok((p.agent, p.library))
+    });
+    let peer = acp::Peer::new(Box::new(io::stdout()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = peer.clone();
+    let to_server = tx.clone();
+    std::thread::spawn(move || {
+        for line in io::stdin().lock().lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str(&line) {
+                Ok(msg) => {
+                    if let Some(m) = reader.route(msg) {
+                        let _ = to_server.send(m);
+                    }
+                }
+                Err(e) => eprintln!("axio acp: ignored a line that is not JSON: {e}"),
+            }
+        }
+        reader.close();
+    });
+    // Model lists need the network; sessions start without waiting.
+    std::thread::spawn(move || {
+        let models: Vec<String> = provider::signed_in()
+            .iter()
+            .filter_map(|p| provider::models(p).ok())
+            .flatten()
+            .collect();
+        let _ =
+            tx.send(serde_json::json!({"method": "_axio/models", "params": {"models": models}}));
+    });
+    acp::Server::new(peer, make).run(rx);
+    background::stop_all();
+    Ok(())
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -1139,6 +1435,10 @@ fn run() -> Result<ExitCode, String> {
         } else {
             ExitCode::FAILURE
         });
+    }
+    if all.first().is_some_and(|a| a == "acp") {
+        acp_main(&all[1..])?;
+        return Ok(ExitCode::SUCCESS);
     }
     if all.first().is_some_and(|a| a == "update") {
         return update::main(&all[1..]);
@@ -1209,171 +1509,23 @@ fn run() -> Result<ExitCode, String> {
     let _ = private::dir(&home);
     private::set_logs(home.join("logs"));
     let interactive = !args.print && io::stdin().is_terminal();
-    let project = trusted_project(&home, &cwd, &args, interactive)?;
-    let config = settings::Settings::load(&home, project.as_deref())?;
-    let profile_name = args
-        .profile
-        .clone()
-        .or_else(|| {
-            std::env::args()
-                .next()
-                .and_then(|a| profile::from_program(&a))
-        })
-        .or_else(|| std::env::var("AXIO_PROFILE").ok())
-        .or(config.profile.clone())
-        .unwrap_or_else(|| profile::DEFAULT.into());
-    let profile = profile::load(&home, &profile_name)?;
-    // Off unless the user opted in with `axio import` or the setting.
-    let imported = if args.no_import || config.import_from_other_harnesses.as_deref() != Some("ask")
-    {
-        Vec::new()
-    } else {
-        imports(&home, interactive, false)?
+    let Some(Prepared {
+        mut agent,
+        library,
+        sources,
+        project,
+        profile,
+        mut status_line,
+        servers,
+        mcp_failed,
+        role_list,
+        resumed,
+        source,
+    }) = prepare(&home, &cwd, &args, interactive)?
+    else {
+        return Ok(ExitCode::SUCCESS);
     };
-    let sources = Sources {
-        home: &home,
-        project: project.as_deref(),
-        allowed: profile.plugins.as_deref(),
-        imported,
-    };
-    let library = sources.library();
-    for shadowed in &library.shadowed {
-        eprintln!("axio: ignored duplicate {shadowed}");
-    }
-    let spec = args
-        .model
-        .or_else(|| std::env::var("AXIO_MODEL").ok())
-        .or(config.model)
-        .or(profile.model.clone())
-        .unwrap_or_else(|| provider::DEFAULT_MODEL.into());
-    let mut agent = Agent::new(
-        Model::parse(&spec),
-        cwd.clone(),
-        context::system_prompt(&cwd, library.prompt_section().as_deref()),
-    );
-    agent.effort = args
-        .effort
-        .clone()
-        .or_else(|| std::env::var("AXIO_EFFORT").ok())
-        .or(config.effort)
-        .or(profile.effort.clone());
-    agent.compact_ratio = profile.compact_at;
-    agent.compact_model = config.compact_model.clone();
-    agent.fast = config.fast_mode.unwrap_or(false);
-    let mode_name = args
-        .permission_mode
-        .clone()
-        .or_else(|| std::env::var("AXIO_PERMISSION_MODE").ok())
-        .or(config.permissions.default_mode.clone())
-        .unwrap_or_else(|| "default".into());
-    let mode = permissions::Mode::parse(&mode_name).ok_or_else(|| {
-        format!(
-            "unknown permission mode {mode_name}: default, acceptEdits, plan or bypassPermissions"
-        )
-    })?;
-    let parse_rules = |list: &[String]| -> Vec<permissions::Rule> {
-        list.iter()
-            .filter_map(|r| {
-                let parsed = permissions::Rule::parse(r);
-                if parsed.is_none() {
-                    eprintln!("axio: ignored the permission rule {r:?}");
-                }
-                parsed
-            })
-            .collect()
-    };
-    let root = settings::project_root(&cwd);
-    let mut allow = parse_rules(&config.permissions.allow);
-    allow.extend(permissions::project_rules(&home, &root));
-    agent.set_permissions(permissions::Permissions {
-        mode,
-        allow,
-        deny: parse_rules(&config.permissions.deny),
-    });
-    agent.rules_home = Some((home.clone(), root));
-    let mut status_line = config.status_line.clone();
-    agent.fast_model = config.subagents.fast_model.clone();
-
     let sessions = session::dir_for(&home, &cwd);
-    let resume = match (args.session, args.resume_latest, args.pick_session) {
-        (Some(p), _, _) => Some(p),
-        (None, true, _) => Some(session::latest(&sessions).ok_or("no session to continue here")?),
-        (None, false, true) => Some(pick_session(&sessions)?),
-        _ => None,
-    };
-    let source = if resume.is_some() {
-        "resume"
-    } else {
-        "startup"
-    };
-    let mut resumed = 0;
-    if let Some(path) = resume {
-        agent.messages = session::load(&path)?;
-        resumed = agent.messages.len();
-        agent.session = Some(session::Session::open(path)?);
-    } else if !args.no_session {
-        agent.session = Some(session::Session::create(&sessions, &cwd)?);
-    }
-    agent.hooks = sources.hooks(&cwd)?;
-    for skipped in &agent.hooks.skipped {
-        eprintln!("axio: skipped hook: {skipped}");
-    }
-    let servers = sources.mcp()?;
-    if let Some(sub) = &args.mcp_command {
-        mcp_command(sub, &servers)?;
-        return Ok(ExitCode::SUCCESS);
-    }
-    for skipped in &servers.skipped {
-        eprintln!("axio: skipped MCP server: {skipped}");
-    }
-    let started = mcp::Mcp::start(&servers, &cwd);
-    let mcp_failed = started.failed.clone();
-    for failed in &started.failed {
-        eprintln!("axio: MCP server failed to start: {}", term::clean(failed));
-    }
-    if profile.modules.sandbox {
-        let root = settings::project_root(&cwd);
-        sandbox::activate(sandbox::Sandbox::for_project(
-            &root,
-            config.sandbox_network.unwrap_or(false),
-        ))?;
-    }
-    agent.set_tools(profile.modules, started);
-    let (roles, role_errors) = sources.roles();
-    for e in &role_errors {
-        eprintln!("axio: skipped role file {e}");
-    }
-    if args.list_roles {
-        for r in &roles {
-            let pick = |p: &roles::Pick| match p {
-                roles::Pick::Inherit => "inherit".to_string(),
-                roles::Pick::Choose => "choose".to_string(),
-                roles::Pick::Value(v) => v.clone(),
-            };
-            let tools = r
-                .tools
-                .as_ref()
-                .map_or("the main agent's".into(), |t| t.join(", "));
-            println!(
-                "{}  model {} · effort {} · tools {tools}\n    {}\n    {}",
-                r.name,
-                pick(&r.model),
-                pick(&r.effort),
-                r.description,
-                r.source
-            );
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-    let role_list = roles.clone();
-    if profile.modules.agents && subagent::depth() == 0 {
-        agent.set_subagents(subagent::Host::new(roles, config.subagents.clone(), 0)?);
-    }
-    if !agent.messages.is_empty() {
-        // No reply has measured the context yet; estimate it so a long
-        // resumed session can still compact before its first prompt.
-        agent.context = agent.estimated_context();
-    }
 
     let no_color = std::env::var_os("NO_COLOR").is_some();
     let mut term = ui::Term::new(
@@ -1793,7 +1945,7 @@ mod tests {
             fingerprint: String::new(),
         };
         let sources = Sources {
-            home: &root.join("home"),
+            home: root.join("home"),
             project: None,
             allowed: None,
             imported: vec![
