@@ -45,5 +45,6 @@ export AXIO_PERMISSION_MODE=bypassPermissions
   timeout 60 python3 "$D/rewind_history.py" "$B" "$(h)"
   timeout 90 python3 "$D/permissions.py" "$B" "$(h)"
   timeout 60 python3 "$D/acp.py" "$B" "$(h)"
+  timeout 60 python3 "$D/get.py" "$B" "$(h)"
 } 2>&1 | grep -E '^(PASS|FAIL)' > "$OUT"
 grep FAIL "$OUT"; echo "$(grep -c PASS "$OUT") passed, $(grep -c FAIL "$OUT") failed"

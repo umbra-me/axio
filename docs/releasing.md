@@ -42,3 +42,16 @@ changelog section and `SHA256SUMS`:
 
 `axio update` downloads the asset for its platform from the latest release
 and refuses it unless its SHA-256 matches `SHA256SUMS`.
+`scripts/get.sh` does the same check before it installs anything.
+
+## After the release
+
+Update the Homebrew formula from the published `SHA256SUMS` and merge it as
+`chore(release): homebrew formula for X.Y.Z`:
+
+```sh
+sh scripts/formula.sh X.Y.Z
+```
+
+The formula cannot ship in the release commit itself, because the sums exist
+only once the release workflow has built the binaries.
