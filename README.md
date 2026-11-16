@@ -446,7 +446,13 @@ before, in a terminal, or when the client starts `axio acp --trust`;
 - Write and Edit show a diff of the whole file; TodoWrite becomes the client's
   plan; `/compact`, your commands and skills appear as slash commands.
 - Sessions are the usual JSONL files, so a session started in the client can
-  be continued with `axio -c` and the other way round (`session/load`).
+  be continued with `axio -c` and the other way round (`session/load`);
+  `session/list` shows a folder's saved sessions.
+- When the client offers file access, Read, Write and Edit go through it: they
+  see unsaved buffers, and the editor applies the changes. Commands still run
+  in axio, under its sandbox and permission rules, not in the editor's
+  terminal. A client that also asks about each write (Axio Atrium does) asks
+  twice in the default mode; the Accept edits mode leaves its question only.
 - With the sandbox module on, one `axio acp` process serves one project.
 
 ## Security and privacy

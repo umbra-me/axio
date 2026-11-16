@@ -177,10 +177,54 @@ pub fn run(
         return Err(format!("tool input was not valid JSON: {raw}"));
     }
     match name {
-        "Read" => read(cwd, input),
-        "Write" => write(cwd, input),
-        "Edit" => edit(cwd, input),
+        "Read" | "Write" | "Edit" => run_files(name, input, cwd, &mut Disk),
         "Bash" => bash(cwd, input, stop),
+        other => Err(format!("unknown tool: {other}")),
+    }
+}
+
+/// Where Read, Write and Edit find files: the disk, or the buffers of an
+/// editor that axio serves over ACP.
+pub trait Files {
+    fn read(&mut self, path: &Path) -> Result<Vec<u8>, String>;
+    /// Writes `text`, making missing folders.
+    fn write(&mut self, path: &Path, text: &str) -> Result<(), String>;
+    fn exists(&mut self, path: &Path) -> bool {
+        self.read(path).is_ok()
+    }
+}
+
+pub struct Disk;
+
+impl Files for Disk {
+    fn read(&mut self, path: &Path) -> Result<Vec<u8>, String> {
+        std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+    fn write(&mut self, path: &Path, text: &str) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+    fn exists(&mut self, path: &Path) -> bool {
+        path.exists()
+    }
+}
+
+/// Read, Write or Edit, with files from `files`.
+pub fn run_files(
+    name: &str,
+    input: &Value,
+    cwd: &Path,
+    files: &mut dyn Files,
+) -> Result<String, String> {
+    if let Value::String(raw) = input {
+        return Err(format!("tool input was not valid JSON: {raw}"));
+    }
+    match name {
+        "Read" => read(cwd, input, files),
+        "Write" => write(cwd, input, files),
+        "Edit" => edit(cwd, input, files),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -201,7 +245,7 @@ pub(crate) fn resolve(cwd: &Path, path: &str) -> PathBuf {
     cwd.join(expanded)
 }
 
-fn read(cwd: &Path, input: &Value) -> Result<String, String> {
+fn read(cwd: &Path, input: &Value, files: &mut dyn Files) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "file_path")?);
     if crate::context::image_type(&path).is_some() {
         // The agent attaches the image itself after the tool results.
@@ -213,7 +257,7 @@ fn read(cwd: &Path, input: &Value) -> Result<String, String> {
             "[image, {kb} KB: shown to you after the tool results]"
         ));
     }
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = files.read(&path)?;
     if bytes[..bytes.len().min(8192)].contains(&0) {
         return Err(format!(
             "{} is a binary file; inspect it with a command such as file or xxd",
@@ -257,14 +301,11 @@ fn read(cwd: &Path, input: &Value) -> Result<String, String> {
     Ok(out)
 }
 
-fn write(cwd: &Path, input: &Value) -> Result<String, String> {
+fn write(cwd: &Path, input: &Value, files: &mut dyn Files) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "file_path")?);
     crate::sandbox::check_write(&path)?;
     let content = str_arg(input, "content")?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    std::fs::write(&path, content).map_err(|e| format!("{}: {e}", path.display()))?;
+    files.write(&path, content)?;
     Ok(format!(
         "wrote {} bytes to {}",
         content.len(),
@@ -272,26 +313,23 @@ fn write(cwd: &Path, input: &Value) -> Result<String, String> {
     ))
 }
 
-fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
+fn edit(cwd: &Path, input: &Value, files: &mut dyn Files) -> Result<String, String> {
     let path = resolve(cwd, str_arg(input, "file_path")?);
     crate::sandbox::check_write(&path)?;
     let old = str_arg(input, "old_string")?;
     let new = str_arg(input, "new_string")?;
-    let err = |e: std::io::Error| format!("{}: {e}", path.display());
     if old.is_empty() {
-        if path.exists() {
+        if files.exists(&path) {
             return Err(format!(
                 "{} already exists; give old_string, or use Write to replace it",
                 path.display()
             ));
         }
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(err)?;
-        }
-        std::fs::write(&path, new).map_err(err)?;
+        files.write(&path, new)?;
         return Ok(format!("created {}", path.display()));
     }
-    let text = std::fs::read_to_string(&path).map_err(err)?;
+    let text = String::from_utf8(files.read(&path)?)
+        .map_err(|_| format!("{}: stream did not contain valid UTF-8", path.display()))?;
     let all = input["replace_all"].as_bool().unwrap_or(false);
     match text.matches(old).count() {
         0 => Err(format!("old_string not found in {}", path.display())),
@@ -300,7 +338,7 @@ fn edit(cwd: &Path, input: &Value) -> Result<String, String> {
             path.display()
         )),
         n => {
-            std::fs::write(&path, text.replace(old, new)).map_err(err)?;
+            files.write(&path, &text.replace(old, new))?;
             let times = if n > 1 {
                 format!(" ({n} replacements)")
             } else {
@@ -529,7 +567,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.bin"), [0u8, 1, 2, 0]).unwrap();
-        let err = read(&dir, &json!({"file_path": "a.bin"})).unwrap_err();
+        let err = read(&dir, &json!({"file_path": "a.bin"}), &mut Disk).unwrap_err();
         assert!(err.contains("is a binary file"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
