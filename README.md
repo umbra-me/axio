@@ -6,6 +6,18 @@ A minimal, fast coding agent. One small Rust binary, no runtime, no daemon.
 versions, each listed in [CHANGELOG.md](CHANGELOG.md) with breaking ones
 called out. [docs/releasing.md](docs/releasing.md) explains the numbering.
 
+Install a release (macOS or Linux; checked against the release's `SHA256SUMS`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/umbra-me/axio/main/scripts/get.sh | sh
+# or with Homebrew (the formula lives in this repository):
+brew tap umbra-me/axio https://github.com/umbra-me/axio && brew install umbra-me/axio/axio
+```
+
+`get.sh` puts axio, ax, axio-full and axio-min in `~/.local/bin`
+(`AXIO_INSTALL_DIR` changes that, `AXIO_VERSION=X.Y.Z` picks a version). With
+Homebrew, upgrade with `brew upgrade axio` rather than `axio update`.
+
 ```sh
 ./install.sh               # from a checkout: axio, ax, axio-full, axio-min
 cargo install --git https://github.com/umbra-me/axio --locked   # just axio

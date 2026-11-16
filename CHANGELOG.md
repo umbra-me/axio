@@ -13,6 +13,8 @@ requests in `umbra-me/axio`. Versions follow
   Atrium and other ACP clients can run axio: sessions with load, permission
   questions, diffs, plans, slash commands, and model, effort and mode
   options (#93).
+- Install a release with `scripts/get.sh` (`curl … | sh`, checked against
+  `SHA256SUMS`) or with Homebrew from the formula in this repository (#94).
 
 ## [0.1.1] - 2026-11-13
 
