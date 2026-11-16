@@ -1331,6 +1331,7 @@ fn acp_main(flags: &[String]) -> Result<(), String> {
     oauth::set_home(&home);
     let _ = private::dir(&home);
     private::set_logs(home.join("logs"));
+    let sessions_home = home.clone();
     let make: acp::Make = Box::new(move |cwd, resume, mcp| {
         let session = match resume {
             Some(id) => {
@@ -1392,7 +1393,7 @@ fn acp_main(flags: &[String]) -> Result<(), String> {
         let _ =
             tx.send(serde_json::json!({"method": "_axio/models", "params": {"models": models}}));
     });
-    acp::Server::new(peer, make).run(rx);
+    acp::Server::new(peer, make, sessions_home).run(rx);
     background::stop_all();
     Ok(())
 }

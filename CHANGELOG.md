@@ -7,6 +7,16 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- ACP: `session/list` lists saved sessions, and when the client offers file
+  access Read, Write and Edit go through it, so they see unsaved buffers and
+  edit diffs start from them (#100).
+
+### Fixed
+
+- ACP: replayed tool calls keep their file locations (#100).
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

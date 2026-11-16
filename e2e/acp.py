@@ -78,6 +78,9 @@ ok('config option', r and r['result']['configOptions'][-1]['currentValue'] == 'p
 send({'jsonrpc': '2.0', 'id': 5, 'method': 'session/load', 'params': {'sessionId': sid, 'cwd': HOME, 'mcpServers': []}})
 r = wait(lambda v: v.get('id') == 5 and 'method' not in v)
 ok('session/load', r is not None and 'result' in r)
+send({'jsonrpc': '2.0', 'id': 6, 'method': 'session/list', 'params': {'cwd': HOME}})
+r = wait(lambda v: v.get('id') == 6 and 'method' not in v)
+ok('session/list', r and r['result']['sessions'][0]['sessionId'] == sid and r['result']['sessions'][0]['title'] == 'run it')
 ok('stdout is only JSON', not bad)
 if os.environ.get('ACP_DUMP'):
     json.dump({'sent': sent, 'lines': lines}, open(os.environ['ACP_DUMP'], 'w'))

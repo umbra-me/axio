@@ -248,6 +248,22 @@ fn today() -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// `t` as UTC ISO 8601, to the second.
+pub fn iso_time(t: std::time::SystemTime) -> String {
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    let s = secs % 86_400;
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        s / 3600,
+        s / 60 % 60,
+        s % 60
+    )
+}
+
 /// Howard Hinnant's days-to-civil conversion, to avoid a date dependency.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
