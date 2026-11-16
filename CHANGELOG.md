@@ -7,6 +7,12 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Fixed
+
+- With no one to ask (`-p`, sub-agents), a refused call no longer suggests
+  `--permission-mode acceptEdits` when that would not allow it, for example
+  a command in that mode; it names a matching allow rule instead (#103).
+
 ### Added
 
 - ACP: `session/list` lists saved sessions, and when the client offers file
