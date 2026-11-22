@@ -13,6 +13,9 @@ requests in `umbra-me/axio`. Versions follow
   another folder, so a client can ask about a conversation on the side while
   the original goes on untouched; advertised as `sessionCapabilities.fork`
   (#107).
+- ACP: after each request a `usage_update` says how full the context is
+  (tokens in use and the model's window), and each turn's reply carries the
+  session's running token totals, so a client can show both (#109).
 
 ## [0.3.0] - 2026-11-16
 
