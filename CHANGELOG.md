@@ -7,6 +7,13 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Changed
+
+- MCP tool definitions past about 2,000 tokens are held back: the system
+  prompt lists the tools, and the model loads the ones it needs with
+  `LoadTools`, so a large server no longer rides along on every request
+  (#114).
+
 ## [0.5.0] - 2026-11-23
 
 ### Added

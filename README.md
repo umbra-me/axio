@@ -320,6 +320,13 @@ and text resources; images (PNG, JPEG, GIF or WebP up to 3.75 MB, including
 image resources) go to the model after the result; other content such as audio,
 binary resources and resource links is named so the model knows it is there.
 
+When the servers' tool definitions come to more than about 2,000 tokens,
+axio holds them back: the system prompt lists each tool with a short line,
+and the model loads the ones it needs with `LoadTools` (or calls one by
+name). A loaded tool is offered for the rest of the session, including after
+a resume or fork; a compaction drops them until they are loaded again.
+`/context` shows the list as "MCP tool list".
+
 Remote servers use streamable HTTP:
 
 ```json
