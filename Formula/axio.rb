@@ -2,28 +2,28 @@
 class Axio < Formula
   desc "Minimal, fast coding agent in one Rust binary"
   homepage "https://github.com/umbra-me/axio"
-  version "0.3.0"
+  version "0.4.0"
   license "Apache-2.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/umbra-me/axio/releases/download/v0.3.0/axio-aarch64-apple-darwin"
-      sha256 "0b967c4b9045b4d1b213fb1eb854d2ab9385002bbb35108cafd2c562aa959b0f"
+      url "https://github.com/umbra-me/axio/releases/download/v0.4.0/axio-aarch64-apple-darwin"
+      sha256 "82130a988ef3f9f328079eae836677dc2f24a7e4aa5a8115217931dac2357a2a"
     end
     on_intel do
-      url "https://github.com/umbra-me/axio/releases/download/v0.3.0/axio-x86_64-apple-darwin"
-      sha256 "58b179a7779efc84fad33064591d12d4b846b304a50efd715405ef675de16826"
+      url "https://github.com/umbra-me/axio/releases/download/v0.4.0/axio-x86_64-apple-darwin"
+      sha256 "e3f81df62d46dcca96ffaff91ff2d284d8c1a5978be1c0bd794070bbe8ed36d7"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/umbra-me/axio/releases/download/v0.3.0/axio-aarch64-unknown-linux-musl"
-      sha256 "6c464d60cd2ab2cc4fa42f5c8f033fc1b3730e98c8cb0dba012705e9f92820fd"
+      url "https://github.com/umbra-me/axio/releases/download/v0.4.0/axio-aarch64-unknown-linux-musl"
+      sha256 "01352756a3da8a854493667dd56922b8f0f0756cb7a8714c83223bdf7b2b943a"
     end
     on_intel do
-      url "https://github.com/umbra-me/axio/releases/download/v0.3.0/axio-x86_64-unknown-linux-musl"
-      sha256 "0a1620e6647dfc78fb933d014d2e65e287688df52d3ad942ddbd65784199d176"
+      url "https://github.com/umbra-me/axio/releases/download/v0.4.0/axio-x86_64-unknown-linux-musl"
+      sha256 "31d1e6707647771c3475950154038f0f384b669621f0e56b77856151fe5a3cfe"
     end
   end
 
