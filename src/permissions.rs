@@ -874,7 +874,7 @@ impl Permissions {
                 .any(|r| r.tool == "Bash" && r.spec.is_some())
             && let Some(why) = unclear(command)
         {
-            let shown: String = command
+            let shown: String = crate::ui::without_cd(command, cwd)
                 .lines()
                 .next()
                 .unwrap_or("")
@@ -930,7 +930,8 @@ impl Permissions {
                         })
                     })
                     .flatten();
-                (format!("Run `{}`?", first_line(&command)), rule)
+                let shown = crate::ui::without_cd(&command, cwd);
+                (format!("Run `{}`?", first_line(shown)), rule)
             }
             "Write" | "Edit" => (
                 format!("{} {}?", tool, s("file_path")),
@@ -1655,6 +1656,25 @@ mod tests {
             &json!({}),
             &c
         ));
+    }
+
+    #[test]
+    fn a_question_leaves_out_a_cd_into_the_working_directory() {
+        let c = cwd();
+        let command = format!("cd {} && python3 -m unittest", c.display());
+        let Verdict::Ask { question, .. } =
+            Permissions::default().decide("Bash", &bash(&command), &c)
+        else {
+            panic!("default mode asks")
+        };
+        assert_eq!(question, "Run `python3 -m unittest`?");
+        let elsewhere = "cd /elsewhere && ls";
+        let Verdict::Ask { question, .. } =
+            Permissions::default().decide("Bash", &bash(elsewhere), &c)
+        else {
+            panic!("default mode asks")
+        };
+        assert_eq!(question, format!("Run `{elsewhere}`?"));
     }
 
     #[test]
