@@ -7,6 +7,8 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.4.0] - 2026-11-23
+
 ### Added
 
 - ACP: `session/fork` copies a session's history into a new session for
