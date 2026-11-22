@@ -34,7 +34,7 @@ fn spec_size(t: &ToolSpec) -> usize {
 fn load_tools_spec() -> ToolSpec {
     ToolSpec {
         name: LOAD_TOOLS.into(),
-        description: "Loads MCP tools from the list in the system prompt, so you can call them from your next step. They stay loaded for the rest of the session.".into(),
+        description: "Loads MCP tools from the list in the system prompt. Call them in your next reply; nothing else is needed in between. They stay loaded for the rest of the session.".into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -66,7 +66,7 @@ fn held_section(held: &[ToolSpec]) -> String {
         })
         .collect();
     format!(
-        "These MCP tools are not loaded yet. Call {LOAD_TOOLS} with the names you need before using them:\n{}",
+        "These MCP tools are not loaded yet. Call {LOAD_TOOLS} with the names you need, then call them in your next reply:\n{}",
         lines.join("\n")
     )
 }
