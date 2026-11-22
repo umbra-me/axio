@@ -7,6 +7,11 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- ACP: `usage_update` carries what the session has cost so far, priced as
+  the terminal prices it, when every token in it has a known price (#112).
+
 ### Fixed
 
 - A permission question about a command that starts by changing into the

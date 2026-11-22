@@ -384,6 +384,9 @@ impl Server {
             gap: false,
             window: s.agent.model.context_window(),
             spent: Usage::default(),
+            model: s.agent.model.clone(),
+            fast: s.agent.fast && !s.agent.fast_refused.load(Ordering::Relaxed),
+            cost: s.agent.spent(),
         };
         let result = if text.trim() == "/compact" {
             s.agent.compact("manual", &mut turn).map(|_| ())
@@ -821,6 +824,11 @@ struct Turn<'a> {
     window: u64,
     /// Tokens this turn's requests used.
     spent: Usage,
+    /// The session's model and speed, which price each request.
+    model: Model,
+    fast: bool,
+    /// What the session has cost, with this turn's requests so far.
+    cost: crate::cost::Spend,
 }
 
 impl Turn<'_> {
@@ -930,9 +938,15 @@ impl Ui for Turn<'_> {
         self.spent.output += u.output;
         self.spent.cache_read += u.cache_read;
         self.spent.cache_write += u.cache_write;
-        self.update(
-            json!({"sessionUpdate": "usage_update", "used": u.context(), "size": self.window}),
-        );
+        self.cost.add(&self.model, self.fast, &u);
+        let mut update =
+            json!({"sessionUpdate": "usage_update", "used": u.context(), "size": self.window});
+        // Only a whole price: none when some tokens had no price or a plan
+        // paid for them.
+        if self.cost.unpriced_tokens == 0 && !self.cost.on_plan && self.cost.usd > 0.0 {
+            update["cost"] = json!({"amount": self.cost.usd, "currency": "USD"});
+        }
+        self.update(update);
     }
 
     fn interrupted(&mut self) -> bool {
@@ -1517,8 +1531,14 @@ mod tests {
         );
         assert_eq!(usage["cachedReadTokens"], 30);
         // Totals run on across the session's turns.
+        // What it cost, priced as the terminal prices it, running on too.
+        let cost = |c: &Client| c.updates("usage_update").last().unwrap()["cost"].clone();
+        assert_eq!(cost(&c)["currency"], "USD");
+        let amount = |c: &Client| cost(c)["amount"].as_f64().unwrap();
+        assert!((amount(&c) - 0.000806).abs() < 1e-12, "{}", amount(&c));
         let second = ask(&mut c);
         assert_eq!(second["result"]["usage"]["totalTokens"], 300);
+        assert!((amount(&c) - 0.001612).abs() < 1e-12, "{}", amount(&c));
     }
 
     fn write_call(_: &Request) -> Block {
