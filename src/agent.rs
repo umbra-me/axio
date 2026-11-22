@@ -22,6 +22,55 @@ const DIGEST_SYSTEM: &str = "You answer a question about a web page using only t
 /// The most page text a WebFetch prompt is answered from.
 const DIGEST_MAX_CHARS: usize = 200_000;
 
+/// MCP tool definitions past this many characters (about 2,000 tokens) are
+/// held back, since every request would carry them.
+const HOLD_MCP_OVER: usize = 8_000;
+const LOAD_TOOLS: &str = "LoadTools";
+
+fn spec_size(t: &ToolSpec) -> usize {
+    t.name.len() + t.description.len() + t.schema.to_string().len()
+}
+
+fn load_tools_spec() -> ToolSpec {
+    ToolSpec {
+        name: LOAD_TOOLS.into(),
+        description: "Loads MCP tools from the list in the system prompt. Call them in your next reply; nothing else is needed in between. They stay loaded for the rest of the session.".into(),
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tool names, as the list gives them"
+                }
+            },
+            "required": ["names"]
+        }),
+    }
+}
+
+/// The system prompt's list of held-back tools: each name with the first
+/// sentence of its description.
+fn held_section(held: &[ToolSpec]) -> String {
+    let lines: Vec<String> = held
+        .iter()
+        .map(|t| {
+            let first = t
+                .description
+                .split_inclusive(". ")
+                .next()
+                .unwrap_or("")
+                .trim();
+            let short: String = first.chars().take(120).collect();
+            format!("- {}: {short}", t.name)
+        })
+        .collect();
+    format!(
+        "These MCP tools are not loaded yet. Call {LOAD_TOOLS} with the names you need, then call them in your next reply:\n{}",
+        lines.join("\n")
+    )
+}
+
 pub trait Ui {
     fn delta(&mut self, d: Delta);
     fn tool_start(&mut self, name: &str, input: &Value);
@@ -174,6 +223,8 @@ pub struct Agent {
     mcp: Arc<Mcp>,
     subagents: Option<Arc<crate::subagent::Host>>,
     tools: Vec<ToolSpec>,
+    /// MCP tools held back until the model loads them (see `set_tools`).
+    held: Vec<ToolSpec>,
     complete: Arc<Complete>,
 }
 
@@ -203,6 +254,7 @@ impl Agent {
             mcp: Arc::default(),
             subagents: None,
             tools: tools::specs(),
+            held: Vec::new(),
             complete: Arc::new(provider::complete),
             max_retries: 4,
             retry_unit: Duration::from_secs(1),
@@ -228,15 +280,100 @@ impl Agent {
     }
 
     /// The core tools, the profile's modules and started MCP servers' tools.
+    /// MCP tools whose definitions come to more than `HOLD_MCP_OVER`
+    /// characters are held back: the system prompt lists them by name, and
+    /// each is offered once the model loads it with `LoadTools` or calls it.
     pub fn set_tools(&mut self, modules: Modules, mcp: Mcp) {
         self.modules = modules;
         self.tools = tools::specs_for(modules);
-        self.tools.extend(mcp.specs.iter().cloned());
+        self.held.clear();
+        let size: usize = mcp.specs.iter().map(spec_size).sum();
+        if size > HOLD_MCP_OVER {
+            self.held = mcp.specs.clone();
+            self.tools.push(load_tools_spec());
+            self.system.push_str("\n\n");
+            self.system.push_str(&held_section(&self.held));
+        } else {
+            self.tools.extend(mcp.specs.iter().cloned());
+        }
         if let Some(section) = mcp.prompt_section(None) {
             self.system.push_str("\n\n");
             self.system.push_str(&section);
         }
         self.mcp = Arc::new(mcp);
+    }
+
+    /// The held-back MCP tools the conversation has loaded or called,
+    /// leaving out the call `except`. Read from the history, so a resumed
+    /// or forked session offers what it had.
+    fn loaded(&self, except: Option<&str>) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        for m in &self.messages {
+            let Message::Assistant { content } = m else {
+                continue;
+            };
+            for b in content {
+                let Block::ToolCall { id, name, input } = b else {
+                    continue;
+                };
+                if Some(id.as_str()) == except {
+                    continue;
+                }
+                let called = std::iter::once(name.as_str());
+                let asked = (name == LOAD_TOOLS)
+                    .then(|| input["names"].as_array())
+                    .flatten()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|n| n.as_str());
+                for n in called.chain(asked) {
+                    if self.held.iter().any(|t| t.name == n) && !names.contains(&n) {
+                        names.push(n);
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// What the next request offers: the tools, then the loaded held ones.
+    fn offered(&self) -> Vec<ToolSpec> {
+        let loaded = self.loaded(None);
+        let mut tools = self.tools.clone();
+        tools.extend(
+            self.held
+                .iter()
+                .filter(|t| loaded.contains(&t.name.as_str()))
+                .cloned(),
+        );
+        tools
+    }
+
+    /// The answer to a `LoadTools` call.
+    fn load_tools(&self, id: &str, input: &Value) -> Result<String, String> {
+        let names: Vec<&str> = input["names"]
+            .as_array()
+            .ok_or("names must be a list of tool names")?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let before = self.loaded(Some(id));
+        let lines: Vec<String> = names
+            .iter()
+            .map(|n| {
+                if before.contains(n) {
+                    format!("{n} is already loaded.")
+                } else if self.held.iter().any(|t| t.name == *n) {
+                    format!("Loaded {n}.")
+                } else {
+                    format!("There is no MCP tool named {n}; see the list in the system prompt.")
+                }
+            })
+            .collect();
+        if lines.is_empty() {
+            return Err("name at least one tool to load".into());
+        }
+        Ok(lines.join("\n"))
     }
 
     pub fn set_permissions(&mut self, p: crate::permissions::Permissions) {
@@ -358,8 +495,18 @@ impl Agent {
         }
     }
 
-    pub fn tool_specs(&self) -> &[ToolSpec] {
-        &self.tools
+    /// What the next request offers.
+    pub fn tool_specs(&self) -> Vec<ToolSpec> {
+        self.offered()
+    }
+
+    /// The size of the system prompt's list of held-back MCP tools.
+    pub fn held_list_size(&self) -> usize {
+        if self.held.is_empty() {
+            0
+        } else {
+            held_section(&self.held).len()
+        }
     }
 
     pub fn mcp(&self) -> &Mcp {
@@ -457,11 +604,7 @@ impl Agent {
     /// A rough size of the next request, for when no reply has measured it:
     /// the history plus the system prompt and tool definitions.
     pub fn estimated_context(&self) -> u64 {
-        let tools: usize = self
-            .tools
-            .iter()
-            .map(|t| t.name.len() + t.description.len() + t.schema.to_string().len())
-            .sum();
+        let tools: usize = self.offered().iter().map(spec_size).sum();
         compact::estimate_tokens(&self.messages) + (self.system.len() + tools) as u64 / 4
     }
 
@@ -831,7 +974,7 @@ impl Agent {
             let reply = self.call(
                 &self.system,
                 self.messages.clone(),
-                self.tools.clone(),
+                self.offered(),
                 true,
                 None,
                 ui,
@@ -894,8 +1037,12 @@ impl Agent {
                     Err("not run: the user stopped the turn".into())
                 } else if let Some(reason) = &hook_stop {
                     Err(format!("not run: a hook ended the turn ({reason})"))
-                } else if !self.tools.iter().any(|t| t.name == name) {
+                } else if !self.tools.iter().any(|t| t.name == name)
+                    && !self.held.iter().any(|t| t.name == name)
+                {
                     Err(format!("no tool named {name} here"))
+                } else if name == LOAD_TOOLS {
+                    self.load_tools(&id, &input)
                 } else if stop == Stop::MaxTokens {
                     Err("the reply hit the output limit before this call was complete".into())
                 } else if name == "Agent"
@@ -2412,6 +2559,160 @@ mod tests {
             Mcp::default(),
         );
         agent.prompt("look it up", &mut Log::default()).unwrap();
+    }
+
+    /// MCP tools whose definitions come to `size` characters each.
+    fn mcp_with(tools: &[(&str, usize)]) -> Mcp {
+        let mut mcp = Mcp::default();
+        mcp.specs = tools
+            .iter()
+            .map(|(name, size)| ToolSpec {
+                name: (*name).into(),
+                description: format!("Does {name}. {}", "x".repeat(*size)),
+                schema: serde_json::json!({"type": "object"}),
+            })
+            .collect();
+        mcp
+    }
+
+    fn offered(req: &Request) -> Vec<String> {
+        req.tools.iter().map(|t| t.name.clone()).collect()
+    }
+
+    fn results(req: &Request) -> Vec<String> {
+        match req.messages.last() {
+            Some(Message::User { content }) => content
+                .iter()
+                .filter_map(|b| match b {
+                    Block::ToolResult { output, .. } => Some(output.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn large_mcp_tools_wait_until_the_model_loads_them() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let mut agent = agent(move |req, _| {
+            let n = {
+                let mut seen = log.lock().unwrap();
+                seen.push((offered(req), req.system.to_string(), results(req)));
+                seen.len()
+            };
+            match n {
+                1 => reply(
+                    vec![Block::ToolCall {
+                        id: "t1".into(),
+                        name: "LoadTools".into(),
+                        input: serde_json::json!({"names": ["mcp__big__search", "mcp__nope"]}),
+                    }],
+                    Stop::ToolUse,
+                    1,
+                ),
+                2 => reply(
+                    vec![Block::ToolCall {
+                        id: "t2".into(),
+                        name: "LoadTools".into(),
+                        input: serde_json::json!({"names": ["mcp__big__search"]}),
+                    }],
+                    Stop::ToolUse,
+                    1,
+                ),
+                _ => reply(
+                    vec![Block::Text {
+                        text: "done".into(),
+                    }],
+                    Stop::EndTurn,
+                    1,
+                ),
+            }
+        });
+        agent.set_tools(
+            Modules::default(),
+            mcp_with(&[("mcp__big__search", 6_000), ("mcp__big__save", 6_000)]),
+        );
+        agent.prompt("find a screen", &mut Log::default()).unwrap();
+        let seen = seen.lock().unwrap();
+        let (first, system, _) = &seen[0];
+        assert!(first.contains(&"LoadTools".to_string()), "{first:?}");
+        assert!(!first.iter().any(|t| t.starts_with("mcp__")), "{first:?}");
+        assert!(
+            system.contains("mcp__big__search: Does mcp__big__search."),
+            "{system}"
+        );
+        assert!(system.contains("mcp__big__save"), "{system}");
+        // A name it does not have is refused, the rest still load.
+        let (second, _, out) = &seen[1];
+        assert!(
+            second.contains(&"mcp__big__search".to_string()),
+            "{second:?}"
+        );
+        assert!(
+            !second.contains(&"mcp__big__save".to_string()),
+            "{second:?}"
+        );
+        assert!(out[0].contains("Loaded mcp__big__search"), "{out:?}");
+        assert!(out[0].contains("no MCP tool named mcp__nope"), "{out:?}");
+        assert!(seen[2].2[0].contains("already loaded"), "{:?}", seen[2].2);
+    }
+
+    #[test]
+    fn a_held_back_mcp_tool_called_by_name_is_offered_from_then_on() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let mut agent = agent(move |req, _| {
+            let n = {
+                let mut seen = log.lock().unwrap();
+                seen.push((offered(req), results(req)));
+                seen.len()
+            };
+            if n == 1 {
+                reply(
+                    vec![Block::ToolCall {
+                        id: "t1".into(),
+                        name: "mcp__big__save".into(),
+                        input: serde_json::json!({}),
+                    }],
+                    Stop::ToolUse,
+                    1,
+                )
+            } else {
+                reply(
+                    vec![Block::Text {
+                        text: "done".into(),
+                    }],
+                    Stop::EndTurn,
+                    1,
+                )
+            }
+        });
+        agent.set_tools(
+            Modules::default(),
+            mcp_with(&[("mcp__big__search", 6_000), ("mcp__big__save", 6_000)]),
+        );
+        agent.prompt("save it", &mut Log::default()).unwrap();
+        let seen = seen.lock().unwrap();
+        let (second, out) = &seen[1];
+        assert!(!out[0].contains("no tool named"), "{out:?}");
+        assert!(second.contains(&"mcp__big__save".to_string()), "{second:?}");
+    }
+
+    #[test]
+    fn small_mcp_tools_are_offered_from_the_start() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let mut agent = agent(move |req, _| {
+            log.lock().unwrap().push(offered(req));
+            reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1)
+        });
+        agent.set_tools(Modules::default(), mcp_with(&[("mcp__small__ping", 100)]));
+        agent.prompt("hi", &mut Log::default()).unwrap();
+        let first = &seen.lock().unwrap()[0];
+        assert!(first.contains(&"mcp__small__ping".to_string()));
+        assert!(!first.contains(&"LoadTools".to_string()));
     }
 
     #[test]
