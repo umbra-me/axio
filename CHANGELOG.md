@@ -7,6 +7,8 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.5.0] - 2026-11-23
+
 ### Added
 
 - ACP: `usage_update` carries what the session has cost so far, priced as
