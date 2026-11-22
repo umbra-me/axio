@@ -134,6 +134,8 @@ impl Peer {
 struct Session {
     agent: Agent,
     library: Library,
+    /// Tokens the session's turns have used so far.
+    spent: Usage,
 }
 
 pub struct Server {
@@ -342,7 +344,15 @@ impl Server {
             json!({"sessionUpdate": "available_commands_update",
                    "availableCommands": commands(&library)}),
         );
-        self.sessions.insert(sid, Session { agent, library });
+        let spent = Usage::default();
+        self.sessions.insert(
+            sid,
+            Session {
+                agent,
+                library,
+                spent,
+            },
+        );
     }
 
     fn prompt(&mut self, id: Option<Value>, params: &Value) {
@@ -372,6 +382,8 @@ impl Server {
             stop: None,
             spoke: false,
             gap: false,
+            window: s.agent.model.context_window(),
+            spent: Usage::default(),
         };
         let result = if text.trim() == "/compact" {
             s.agent.compact("manual", &mut turn).map(|_| ())
@@ -383,6 +395,18 @@ impl Server {
             }
         };
         let stop = turn.stop.take();
+        let u = &mut s.spent;
+        u.input += turn.spent.input;
+        u.output += turn.spent.output;
+        u.cache_read += turn.spent.cache_read;
+        u.cache_write += turn.spent.cache_write;
+        let usage = json!({
+            "totalTokens": u.context(),
+            "inputTokens": u.input + u.cache_read + u.cache_write,
+            "outputTokens": u.output,
+            "cachedReadTokens": u.cache_read,
+            "cachedWriteTokens": u.cache_write,
+        });
         if let Ok(mut r) = peer.running.lock() {
             *r = None;
         }
@@ -396,14 +420,14 @@ impl Server {
         }
         reply(match result {
             Err(e) if e == crate::agent::ABORTED || cancelled => {
-                Ok(json!({"stopReason": "cancelled"}))
+                Ok(json!({"stopReason": "cancelled", "usage": usage}))
             }
             Err(e) => Err((INTERNAL, e)),
             Ok(()) => Ok(json!({"stopReason": match stop {
                 Some(Stop::MaxTokens) => "max_tokens",
                 Some(Stop::Refusal) => "refusal",
                 _ => "end_turn",
-            }})),
+            }, "usage": usage})),
         });
     }
 }
@@ -793,6 +817,10 @@ struct Turn<'a> {
     /// joins chunks into one message, so the next reply starts a paragraph.
     spoke: bool,
     gap: bool,
+    /// The model's context window, for `usage_update`.
+    window: u64,
+    /// Tokens this turn's requests used.
+    spent: Usage,
 }
 
 impl Turn<'_> {
@@ -896,7 +924,16 @@ impl Ui for Turn<'_> {
         self.stop = Some(stop.clone());
     }
 
-    fn usage(&mut self, _: Usage) {}
+    /// After each request: how full the context is, and what the turn used.
+    fn usage(&mut self, u: Usage) {
+        self.spent.input += u.input;
+        self.spent.output += u.output;
+        self.spent.cache_read += u.cache_read;
+        self.spent.cache_write += u.cache_write;
+        self.update(
+            json!({"sessionUpdate": "usage_update", "used": u.context(), "size": self.window}),
+        );
+    }
 
     fn interrupted(&mut self) -> bool {
         self.peer.stopped()
@@ -1436,6 +1473,52 @@ mod tests {
             json!({"sessionId": "no-such-session", "cwd": side, "mcpServers": []}),
         );
         assert_eq!(missing["error"]["code"], INVALID_PARAMS);
+    }
+
+    fn costly(_: &Request) -> Reply {
+        Reply {
+            stop: Stop::EndTurn,
+            content: vec![text("ok")],
+            usage: Usage {
+                input: 100,
+                output: 20,
+                cache_read: 30,
+                cache_write: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn a_turn_reports_its_context_and_the_sessions_tokens() {
+        let dir = temp("usage");
+        let mut c = Client::start(&dir, costly);
+        let sid = c.new_session(&dir);
+        let ask = |c: &mut Client| {
+            c.call(
+                "session/prompt",
+                json!({"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]}),
+            )
+        };
+        let first = ask(&mut c);
+        let used = c.updates("usage_update");
+        assert_eq!(used.last().unwrap()["used"], 150);
+        assert_eq!(
+            used.last().unwrap()["size"],
+            Model::parse("anthropic/claude-opus-5-5").context_window()
+        );
+        let usage = &first["result"]["usage"];
+        assert_eq!(
+            (
+                usage["totalTokens"].as_u64(),
+                usage["inputTokens"].as_u64(),
+                usage["outputTokens"].as_u64()
+            ),
+            (Some(150), Some(130), Some(20))
+        );
+        assert_eq!(usage["cachedReadTokens"], 30);
+        // Totals run on across the session's turns.
+        let second = ask(&mut c);
+        assert_eq!(second["result"]["usage"]["totalTokens"], 300);
     }
 
     fn write_call(_: &Request) -> Block {
