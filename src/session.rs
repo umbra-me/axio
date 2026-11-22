@@ -125,6 +125,30 @@ fn close_open_calls(messages: &mut Vec<Message>, next: Option<&Message>) {
     }
 }
 
+/// Session `id`'s transcript, in whichever working directory's folder.
+pub fn find(home: &Path, id: &str) -> Option<PathBuf> {
+    let folders = std::fs::read_dir(home.join("sessions")).ok()?;
+    folders
+        .flatten()
+        .map(|f| f.path().join(format!("{id}.jsonl")))
+        .find(|p| p.is_file())
+}
+
+/// A new session for `cwd` that starts with `parent`'s history: its own
+/// header, then the parent's lines as they are. The parent is only read.
+pub fn fork(home: &Path, parent: &Path, cwd: &Path) -> Result<PathBuf, String> {
+    let lines =
+        std::fs::read_to_string(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let mut session = Session::create(&dir_for(home, cwd), cwd)?;
+    if session.path == parent {
+        return Err("the fork would write over its parent".into());
+    }
+    for line in lines.lines().skip(1).filter(|l| !l.trim().is_empty()) {
+        writeln!(session.file, "{line}").map_err(|e| format!("{}: {e}", session.path.display()))?;
+    }
+    Ok(session.path)
+}
+
 /// Sessions are grouped by working directory, like `--Users-me-project--`.
 pub fn dir_for(home: &Path, cwd: &Path) -> PathBuf {
     let slug: String = cwd

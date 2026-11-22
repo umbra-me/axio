@@ -198,7 +198,7 @@ impl Server {
                     "loadSession": true,
                     "promptCapabilities": {"image": true, "audio": false, "embeddedContext": true},
                     "mcpCapabilities": {"http": true, "sse": true},
-                    "sessionCapabilities": {"list": {}},
+                    "sessionCapabilities": {"list": {}, "fork": {}},
                 },
                 "authMethods": [],
                 "agentInfo": {"name": "axio", "title": "Axio", "version": env!("CARGO_PKG_VERSION")},
@@ -208,6 +208,34 @@ impl Server {
             "authenticate" => Ok(json!({})),
             "session/new" | "session/load" => {
                 return self.open(id, &method, params);
+            }
+            // A copy of a session's history in another folder, to ask about
+            // it on the side; the parent goes on untouched.
+            "session/fork" => {
+                let parent = params["sessionId"].as_str().filter(|s| valid_id(s));
+                let found = parent.and_then(|s| crate::session::find(&self.home, s));
+                let cwd = params["cwd"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .filter(|c| c.is_absolute());
+                let (Some(found), Some(cwd)) = (found, cwd) else {
+                    if let Some(id) = &id {
+                        let e = "an axio session and an absolute cwd are required".to_string();
+                        self.peer.reply(id, Err((INVALID_PARAMS, e)));
+                    }
+                    return;
+                };
+                let mut opened = params.clone();
+                match crate::session::fork(&self.home, &found, &cwd) {
+                    Ok(path) => opened["sessionId"] = json!(session_id(&path)),
+                    Err(e) => {
+                        if let Some(id) = &id {
+                            self.peer.reply(id, Err((INTERNAL, e)));
+                        }
+                        return;
+                    }
+                }
+                return self.open(id, &method, &opened);
             }
             "session/prompt" => return self.prompt(id, params),
             "session/set_mode" => self.with(params, |s, _| {
@@ -270,7 +298,7 @@ impl Server {
         if !cwd.is_absolute() {
             return reply(Err((INVALID_PARAMS, "cwd must be an absolute path".into())));
         }
-        let resume = if method == "session/load" {
+        let resume = if method == "session/load" || method == "session/fork" {
             match params["sessionId"].as_str() {
                 Some(s) if valid_id(s) => Some(s),
                 _ => return reply(Err((INVALID_PARAMS, "not an axio session id".into()))),
@@ -298,14 +326,14 @@ impl Server {
         ) {
             return reply(Err((INTERNAL, e)));
         }
-        if resume.is_some() {
+        if method == "session/load" {
             replay(&self.peer, &sid, &agent.messages, &agent.cwd);
         }
         let mut result = json!({
             "modes": modes(&agent),
             "configOptions": options(&agent, &self.models),
         });
-        if resume.is_none() {
+        if method != "session/load" {
             result["sessionId"] = json!(sid);
         }
         reply(Ok(result));
@@ -1352,6 +1380,62 @@ mod tests {
         assert_eq!(bad["error"]["code"], INVALID_PARAMS);
         let rel = c.call("session/new", json!({"cwd": "relative", "mcpServers": []}));
         assert_eq!(rel["error"]["code"], INVALID_PARAMS);
+    }
+
+    /// Says how many messages the request carried.
+    fn count(req: &Request) -> Reply {
+        reply(
+            Stop::EndTurn,
+            vec![text(&format!("saw {}", req.messages.len()))],
+        )
+    }
+
+    #[test]
+    fn a_session_forks_into_another_folder_with_its_history() {
+        let dir = temp("fork");
+        let side = dir.join("side");
+        std::fs::create_dir_all(&side).unwrap();
+        let sid = {
+            let mut c = Client::start(&dir, |_| reply(Stop::EndTurn, vec![text("hi there")]));
+            let sid = c.new_session(&dir);
+            c.call(
+                "session/prompt",
+                json!({"sessionId": sid, "prompt": [{"type": "text", "text": "hello"}]}),
+            );
+            sid
+        };
+        let mut c = Client::start(&dir, count);
+        let init = c.call("initialize", json!({"protocolVersion": 1}));
+        assert!(init["result"]["agentCapabilities"]["sessionCapabilities"]["fork"].is_object());
+        let r = c.call(
+            "session/fork",
+            json!({"sessionId": sid, "cwd": side, "mcpServers": []}),
+        );
+        assert!(r.get("error").is_none(), "{r}");
+        let fork = r["result"]["sessionId"].as_str().unwrap().to_string();
+        assert_ne!(fork, sid);
+        assert!(
+            c.updates("user_message_chunk").is_empty(),
+            "a fork does not replay"
+        );
+        c.call(
+            "session/prompt",
+            json!({"sessionId": fork, "prompt": [{"type": "text", "text": "and then?"}]}),
+        );
+        assert_eq!(
+            c.updates("agent_message_chunk").last().unwrap()["content"]["text"],
+            "saw 3",
+            "the fork's first prompt carries the parent's turn"
+        );
+        // The parent goes on as it was.
+        let parent = crate::session::dir_for(&dir, &dir).join(format!("{sid}.jsonl"));
+        let kept = std::fs::read_to_string(parent).unwrap();
+        assert!(!kept.contains("and then?"), "{kept}");
+        let missing = c.call(
+            "session/fork",
+            json!({"sessionId": "no-such-session", "cwd": side, "mcpServers": []}),
+        );
+        assert_eq!(missing["error"]["code"], INVALID_PARAMS);
     }
 
     fn write_call(_: &Request) -> Block {

@@ -7,6 +7,13 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- ACP: `session/fork` copies a session's history into a new session for
+  another folder, so a client can ask about a conversation on the side while
+  the original goes on untouched; advertised as `sessionCapabilities.fork`
+  (#107).
+
 ## [0.3.0] - 2026-11-16
 
 ### Added
