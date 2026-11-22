@@ -7,6 +7,12 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Fixed
+
+- A permission question about a command that starts by changing into the
+  working directory leaves that out, so a client shows the command itself
+  rather than a long path cut short (#111).
+
 ## [0.4.0] - 2026-11-23
 
 ### Added

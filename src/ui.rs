@@ -435,7 +435,7 @@ fn relative_path(p: &str, cwd: &Path) -> String {
 }
 
 /// Drops a leading `cd <working directory> &&`, which says nothing new.
-fn without_cd<'a>(command: &'a str, cwd: &Path) -> &'a str {
+pub(crate) fn without_cd<'a>(command: &'a str, cwd: &Path) -> &'a str {
     let dir = cwd.display().to_string();
     let Some(rest) = command.trim_start().strip_prefix("cd ") else {
         return command;
