@@ -320,12 +320,13 @@ and text resources; images (PNG, JPEG, GIF or WebP up to 3.75 MB, including
 image resources) go to the model after the result; other content such as audio,
 binary resources and resource links is named so the model knows it is there.
 
-When the servers' tool definitions come to more than about 2,000 tokens,
-axio holds them back: the system prompt lists each tool with a short line,
-and the model loads the ones it needs with `LoadTools` (or calls one by
-name). A loaded tool is offered for the rest of the session, including after
-a resume or fork; a compaction drops them until they are loaded again.
-`/context` shows the list as "MCP tool list".
+axio holds MCP tools back: the system prompt lists each tool with a short
+line, and the model loads the ones it needs with `LoadTools` (or calls one by
+name). A server's own instructions come with the first of its tools the model
+loads, not in every request. A loaded tool is offered for the rest of the
+session, including after a resume or fork; a compaction drops them until they
+are loaded again. `/context` shows the list as "MCP tool list". Sub-agents get
+the tools and instructions their role grants from the start.
 
 Remote servers use streamable HTTP:
 
@@ -456,6 +457,9 @@ before, in a terminal, or when the client starts `axio acp --trust`;
   `_meta.axio.subagent` holds `label`, `status` (`running`, `completed`,
   `failed`), the latest `steps` (each with a `title`), the `tools` count and,
   at the end, a `summary`.
+- Each turn ends with a `usage_update` whose `_meta.axio.context` holds
+  `parts` (each a `label` and estimated `tokens`, as `/context` shows them)
+  and `loadedTools`, the MCP tools the session has loaded.
 - Sessions are the usual JSONL files, so a session started in the client can
   be continued with `axio -c` and the other way round (`session/load`);
   `session/list` shows a folder's saved sessions.
