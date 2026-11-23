@@ -15,7 +15,7 @@ requests in `umbra-me/axio`. Versions follow
   the call stayed in progress after the sub-agent finished (#116).
 
 - Each `axio acp` turn ends with what fills the context, part by part, and
-  the MCP tools the session has loaded, in `_meta.axio.context` (#PR).
+  the MCP tools the session has loaded, in `_meta.axio.context` (#117).
 
 ### Changed
 
@@ -23,7 +23,7 @@ requests in `umbra-me/axio`. Versions follow
   the model loads the ones it needs with `LoadTools`, so a large server no
   longer rides along on every request (#114). Every server's tools wait,
   whatever their size, and a server's instructions come with its first
-  loaded tool instead of in every request (#PR).
+  loaded tool instead of in every request (#117).
 
 ## [0.5.0] - 2026-11-23
 
