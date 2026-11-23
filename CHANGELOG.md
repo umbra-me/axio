@@ -7,13 +7,14 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.6.0] - 2026-11-23
+
 ### Added
 
 - `axio acp` shows sub-agents at work: each Agent call reports the tools its
   sub-agent runs and ends with the sub-agent's answer, and
   `_meta.axio.subagent` carries the same for clients that draw it. Before,
   the call stayed in progress after the sub-agent finished (#116).
-
 - Each `axio acp` turn ends with what fills the context, part by part, and
   the MCP tools the session has loaded, in `_meta.axio.context` (#117).
 
