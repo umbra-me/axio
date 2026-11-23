@@ -387,6 +387,7 @@ impl Server {
             model: s.agent.model.clone(),
             fast: s.agent.fast && !s.agent.fast_refused.load(Ordering::Relaxed),
             cost: s.agent.spent(),
+            agents: HashMap::new(),
         };
         let result = if text.trim() == "/compact" {
             s.agent.compact("manual", &mut turn).map(|_| ())
@@ -829,6 +830,32 @@ struct Turn<'a> {
     fast: bool,
     /// What the session has cost, with this turn's requests so far.
     cost: crate::cost::Spend,
+    /// Sub-agents by the model's id for their Agent call.
+    agents: HashMap<String, Sub>,
+}
+
+/// A sub-agent's Agent call, and the steps it has taken.
+struct Sub {
+    id: String,
+    label: String,
+    steps: Vec<String>,
+    tools: usize,
+}
+
+/// Steps kept in each update: the client gets the latest ones and the count.
+const SUB_STEPS: usize = 20;
+
+impl Sub {
+    /// The sub-agent as `_meta.axio.subagent`, for clients that show it.
+    fn meta(&self, status: &str, summary: Option<&str>) -> Value {
+        let steps: Vec<Value> = self.steps.iter().map(|t| json!({"title": t})).collect();
+        let mut v = json!({"label": self.label, "status": status, "steps": steps,
+                           "tools": self.tools});
+        if let Some(s) = summary {
+            v["summary"] = json!(s);
+        }
+        json!({"axio": {"subagent": v}})
+    }
 }
 
 impl Turn<'_> {
@@ -930,6 +957,57 @@ impl Ui for Turn<'_> {
 
     fn stopped(&mut self, stop: &Stop) {
         self.stop = Some(stop.clone());
+    }
+
+    /// The call stays open after `tool_start`: the sub-agent's steps and its
+    /// answer arrive later as updates to it.
+    fn agent_planned(&mut self, call: &str, label: &str) {
+        if let Some((id, _)) = self.current.take() {
+            let sub = Sub {
+                id,
+                label: label.to_string(),
+                steps: Vec::new(),
+                tools: 0,
+            };
+            let v = json!({"sessionUpdate": "tool_call_update", "toolCallId": sub.id,
+                           "_meta": sub.meta("running", None)});
+            self.update(v);
+            self.agents.insert(call.to_string(), sub);
+        }
+    }
+
+    fn agent_step(&mut self, call: &str, title: &str) {
+        let Some(sub) = self.agents.get_mut(call) else {
+            return;
+        };
+        sub.tools += 1;
+        sub.steps.push(title.to_string());
+        if sub.steps.len() > SUB_STEPS {
+            sub.steps.remove(0);
+        }
+        let v = json!({"sessionUpdate": "tool_call_update", "toolCallId": sub.id,
+                       "status": "in_progress", "_meta": sub.meta("running", None)});
+        self.update(v);
+    }
+
+    fn agent_done(
+        &mut self,
+        call: &str,
+        _label: &str,
+        result: &Result<String, String>,
+        summary: &str,
+    ) {
+        let Some(sub) = self.agents.get(call) else {
+            return;
+        };
+        let (status, text) = match result {
+            Ok(t) => ("completed", t),
+            Err(e) => ("failed", e),
+        };
+        let v = json!({"sessionUpdate": "tool_call_update", "toolCallId": sub.id,
+                       "status": status, "content": text_content(text),
+                       "_meta": sub.meta(status, Some(summary))});
+        self.update(v);
     }
 
     /// After each request: how full the context is, and what the turn used.

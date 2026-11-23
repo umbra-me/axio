@@ -984,7 +984,13 @@ impl Ui for Term {
         self.relabel(term::clean(line));
     }
 
-    fn agent_done(&mut self, label: &str, result: &Result<String, String>, summary: &str) {
+    fn agent_done(
+        &mut self,
+        _call: &str,
+        label: &str,
+        result: &Result<String, String>,
+        summary: &str,
+    ) {
         let (label, summary) = (&term::clean(label), &term::clean(summary));
         let result = &match result {
             Ok(t) => Ok(term::clean(t)),

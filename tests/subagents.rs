@@ -708,3 +708,122 @@ fn sub_agents_follow_the_main_agents_permission_mode() {
         .to_string();
     assert!(result.contains("needs permission"), "{result}");
 }
+
+fn explorer_with_a_tool(body: &Value) -> Reply {
+    let answered = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["role"] == "tool");
+    if is_child(body) {
+        return match answered {
+            true => (Duration::ZERO, text("child found it")),
+            false => (
+                Duration::ZERO,
+                calls(&[("g", "Glob", json!({"pattern": "*.md"}))]),
+            ),
+        };
+    }
+    if answered {
+        return (Duration::ZERO, text("done"));
+    }
+    let agent = |what: &str| {
+        json!({"description": format!("look {what}"), "prompt": format!("find {what}"),
+               "subagent_type": "explore"})
+    };
+    (
+        Duration::ZERO,
+        calls(&[("a", "Agent", agent("A")), ("b", "Agent", agent("B"))]),
+    )
+}
+
+#[test]
+fn acp_shows_each_sub_agents_steps_and_closes_its_call() {
+    let (port, _) = serve(explorer_with_a_tool);
+    let home = home("acp", port);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_axio"))
+        .arg("acp")
+        .current_dir(home.join("project"))
+        .env("AXIO_HOME", &home)
+        .env("AXIO_PERMISSION_MODE", "bypassPermissions")
+        .env("AXIO_MODEL", "stub/main")
+        .env_remove("AXIO_PROFILE")
+        .env_remove("AXIO_DEPTH")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut lines = Vec::new();
+    let mut ask = |id: u64, method: &str, params: Value, lines: &mut Vec<Value>| -> Value {
+        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        writeln!(stdin, "{msg}").unwrap();
+        stdin.flush().unwrap();
+        loop {
+            let mut line = String::new();
+            assert!(out.read_line(&mut line).unwrap() > 0, "axio acp ended");
+            let v: Value = serde_json::from_str(&line).unwrap();
+            if v["id"] == id && v.get("method").is_none() {
+                return v;
+            }
+            lines.push(v);
+        }
+    };
+    ask(1, "initialize", json!({"protocolVersion": 1}), &mut lines);
+    let cwd = home.join("project");
+    let s = ask(
+        2,
+        "session/new",
+        json!({"cwd": cwd, "mcpServers": []}),
+        &mut lines,
+    );
+    let sid = s["result"]["sessionId"].clone();
+    let r = ask(
+        3,
+        "session/prompt",
+        json!({"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]}),
+        &mut lines,
+    );
+    drop(stdin);
+    let _ = child.wait();
+    assert_eq!(r["result"]["stopReason"], "end_turn", "{lines:#?}");
+    let updates: Vec<&Value> = lines
+        .iter()
+        .filter(|v| v["method"] == "session/update")
+        .map(|v| &v["params"]["update"])
+        .collect();
+    let agent_ids: Vec<&Value> = updates
+        .iter()
+        .filter(|u| u["sessionUpdate"] == "tool_call" && u["rawInput"]["subagent_type"].is_string())
+        .map(|u| &u["toolCallId"])
+        .collect();
+    assert_eq!(agent_ids.len(), 2, "{updates:#?}");
+    for (id, which) in agent_ids.iter().zip(["A", "B"]) {
+        let mine: Vec<&&Value> = updates.iter().filter(|u| &&u["toolCallId"] == id).collect();
+        let sub = |u: &&&Value| u["_meta"]["axio"]["subagent"].clone();
+        // The label comes before the first step, so a client can draw the card at once.
+        assert_eq!(sub(&mine[1])["steps"], json!([]), "{mine:#?}");
+        assert_eq!(sub(&mine[1])["status"], "running");
+        let steps = mine
+            .iter()
+            .map(sub)
+            .find(|s| s["steps"].as_array().is_some_and(|a| !a.is_empty()))
+            .unwrap_or_else(|| panic!("no steps for {which}: {mine:#?}"));
+        assert_eq!(steps["label"], format!("explore · look {which}"));
+        assert_eq!(steps["steps"][0]["title"], "Glob *.md");
+        let last = mine.last().unwrap();
+        assert_eq!(last["status"], "completed", "{mine:#?}");
+        let answer = last["content"][0]["content"]["text"].as_str().unwrap();
+        assert!(answer.starts_with("child found it"), "{answer}");
+        assert_eq!(sub(last)["status"], "completed");
+        assert!(
+            sub(last)["summary"]
+                .as_str()
+                .unwrap()
+                .starts_with("1 tool call"),
+            "{last:#?}"
+        );
+    }
+}
