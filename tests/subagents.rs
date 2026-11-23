@@ -803,6 +803,9 @@ fn acp_shows_each_sub_agents_steps_and_closes_its_call() {
     for (id, which) in agent_ids.iter().zip(["A", "B"]) {
         let mine: Vec<&&Value> = updates.iter().filter(|u| &&u["toolCallId"] == id).collect();
         let sub = |u: &&&Value| u["_meta"]["axio"]["subagent"].clone();
+        // The label comes before the first step, so a client can draw the card at once.
+        assert_eq!(sub(&mine[1])["steps"], json!([]), "{mine:#?}");
+        assert_eq!(sub(&mine[1])["status"], "running");
         let steps = mine
             .iter()
             .map(sub)

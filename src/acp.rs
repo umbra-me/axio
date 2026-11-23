@@ -969,6 +969,9 @@ impl Ui for Turn<'_> {
                 steps: Vec::new(),
                 tools: 0,
             };
+            let v = json!({"sessionUpdate": "tool_call_update", "toolCallId": sub.id,
+                           "_meta": sub.meta("running", None)});
+            self.update(v);
             self.agents.insert(call.to_string(), sub);
         }
     }
