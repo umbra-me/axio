@@ -411,6 +411,21 @@ impl Server {
             "cachedReadTokens": u.cache_read,
             "cachedWriteTokens": u.cache_write,
         });
+        // What fills the context now, for clients that show it part by part.
+        let parts: Vec<Value> = crate::context_parts(&s.agent, &s.library, &s.agent.cwd)
+            .iter()
+            .map(|p| json!({"label": p.label, "tokens": p.tokens}))
+            .collect();
+        let used = match s.agent.context {
+            0 => s.agent.estimated_context(),
+            n => n,
+        };
+        let mut update = json!({"sessionUpdate": "usage_update", "used": used, "size": turn.window,
+            "_meta": {"axio": {"context": {"parts": parts, "loadedTools": s.agent.loaded_mcp()}}}});
+        if let Some(cost) = turn.whole_cost() {
+            update["cost"] = cost;
+        }
+        peer.update(&sid, update);
         if let Ok(mut r) = peer.running.lock() {
             *r = None;
         }
@@ -863,6 +878,13 @@ impl Turn<'_> {
         self.peer.update(&self.session, v);
     }
 
+    /// What the session has cost, only when whole: none when some tokens
+    /// had no price or a plan paid for them.
+    fn whole_cost(&self) -> Option<Value> {
+        (self.cost.unpriced_tokens == 0 && !self.cost.on_plan && self.cost.usd > 0.0)
+            .then(|| json!({"amount": self.cost.usd, "currency": "USD"}))
+    }
+
     fn new_call(&self) -> String {
         format!(
             "call_{}",
@@ -1019,10 +1041,8 @@ impl Ui for Turn<'_> {
         self.cost.add(&self.model, self.fast, &u);
         let mut update =
             json!({"sessionUpdate": "usage_update", "used": u.context(), "size": self.window});
-        // Only a whole price: none when some tokens had no price or a plan
-        // paid for them.
-        if self.cost.unpriced_tokens == 0 && !self.cost.on_plan && self.cost.usd > 0.0 {
-            update["cost"] = json!({"amount": self.cost.usd, "currency": "USD"});
+        if let Some(cost) = self.whole_cost() {
+            update["cost"] = cost;
         }
         self.update(update);
     }
@@ -1578,6 +1598,31 @@ mod tests {
                 cache_write: 0,
             },
         }
+    }
+
+    #[test]
+    fn a_turn_ends_with_what_fills_the_context() {
+        let dir = temp("parts");
+        let mut c = Client::start(&dir, costly);
+        let sid = c.new_session(&dir);
+        c.call(
+            "session/prompt",
+            json!({"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]}),
+        );
+        let last = c.updates("usage_update").last().unwrap().clone();
+        let context = &last["_meta"]["axio"]["context"];
+        let labels: Vec<&str> = context["parts"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{last:#}"))
+            .iter()
+            .map(|p| p["label"].as_str().unwrap())
+            .collect();
+        assert!(labels.contains(&"Built-in tools"), "{labels:?}");
+        assert!(labels.contains(&"Messages"), "{labels:?}");
+        assert!(context["parts"][0]["tokens"].as_u64().unwrap() > 0);
+        assert_eq!(context["loadedTools"], json!([]));
+        assert_eq!(last["used"], 150);
+        assert_eq!(last["cost"]["currency"], "USD");
     }
 
     #[test]

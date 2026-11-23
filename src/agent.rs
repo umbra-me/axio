@@ -22,9 +22,6 @@ const DIGEST_SYSTEM: &str = "You answer a question about a web page using only t
 /// The most page text a WebFetch prompt is answered from.
 const DIGEST_MAX_CHARS: usize = 200_000;
 
-/// MCP tool definitions past this many characters (about 2,000 tokens) are
-/// held back, since every request would carry them.
-const HOLD_MCP_OVER: usize = 8_000;
 const LOAD_TOOLS: &str = "LoadTools";
 
 fn spec_size(t: &ToolSpec) -> usize {
@@ -292,25 +289,17 @@ impl Agent {
     }
 
     /// The core tools, the profile's modules and started MCP servers' tools.
-    /// MCP tools whose definitions come to more than `HOLD_MCP_OVER`
-    /// characters are held back: the system prompt lists them by name, and
+    /// MCP tools are held back: the system prompt lists them by name, and
     /// each is offered once the model loads it with `LoadTools` or calls it.
+    /// A server's own instructions come with its first loaded tool.
     pub fn set_tools(&mut self, modules: Modules, mcp: Mcp) {
         self.modules = modules;
         self.tools = tools::specs_for(modules);
-        self.held.clear();
-        let size: usize = mcp.specs.iter().map(spec_size).sum();
-        if size > HOLD_MCP_OVER {
-            self.held = mcp.specs.clone();
+        self.held = mcp.specs.clone();
+        if !self.held.is_empty() {
             self.tools.push(load_tools_spec());
             self.system.push_str("\n\n");
             self.system.push_str(&held_section(&self.held));
-        } else {
-            self.tools.extend(mcp.specs.iter().cloned());
-        }
-        if let Some(section) = mcp.prompt_section(None) {
-            self.system.push_str("\n\n");
-            self.system.push_str(&section);
         }
         self.mcp = Arc::new(mcp);
     }
@@ -346,6 +335,11 @@ impl Agent {
             }
         }
         names
+    }
+
+    /// The MCP tools the conversation has loaded.
+    pub fn loaded_mcp(&self) -> Vec<String> {
+        self.loaded(None).into_iter().map(String::from).collect()
     }
 
     /// What the next request offers: the tools, then the loaded held ones.
@@ -385,7 +379,18 @@ impl Agent {
         if lines.is_empty() {
             return Err("name at least one tool to load".into());
         }
-        Ok(lines.join("\n"))
+        let before: Vec<String> = before.iter().map(|n| n.to_string()).collect();
+        let new: Vec<String> = names
+            .iter()
+            .filter(|n| self.held.iter().any(|t| t.name == **n))
+            .map(|n| n.to_string())
+            .collect();
+        let mut out = lines.join("\n");
+        if let Some(text) = self.mcp.new_instructions(&new, &before) {
+            out.push_str("\n\nInstructions from the servers these tools belong to:\n\n");
+            out.push_str(&text);
+        }
+        Ok(out)
     }
 
     pub fn set_permissions(&mut self, p: crate::permissions::Permissions) {
@@ -2715,7 +2720,7 @@ mod tests {
     }
 
     #[test]
-    fn small_mcp_tools_are_offered_from_the_start() {
+    fn every_mcp_tool_waits_until_the_model_loads_it() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = seen.clone();
         let mut agent = agent(move |req, _| {
@@ -2725,8 +2730,67 @@ mod tests {
         agent.set_tools(Modules::default(), mcp_with(&[("mcp__small__ping", 100)]));
         agent.prompt("hi", &mut Log::default()).unwrap();
         let first = &seen.lock().unwrap()[0];
-        assert!(first.contains(&"mcp__small__ping".to_string()));
-        assert!(!first.contains(&"LoadTools".to_string()));
+        assert!(
+            !first.contains(&"mcp__small__ping".to_string()),
+            "{first:?}"
+        );
+        assert!(first.contains(&"LoadTools".to_string()), "{first:?}");
+        assert!(
+            agent
+                .system
+                .contains("mcp__small__ping: Does mcp__small__ping.")
+        );
+    }
+
+    #[test]
+    fn a_servers_instructions_come_with_its_first_loaded_tool() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let mut agent = agent(move |req, _| {
+            let n = {
+                let mut seen = log.lock().unwrap();
+                seen.push(results(req));
+                seen.len()
+            };
+            let load = |names: &[&str], id: &str| {
+                reply(
+                    vec![Block::ToolCall {
+                        id: id.into(),
+                        name: "LoadTools".into(),
+                        input: serde_json::json!({"names": names}),
+                    }],
+                    Stop::ToolUse,
+                    1,
+                )
+            };
+            match n {
+                1 => load(&["mcp__a__one"], "t1"),
+                2 => load(&["mcp__a__two", "mcp__b__three"], "t2"),
+                _ => reply(vec![Block::Text { text: "ok".into() }], Stop::EndTurn, 1),
+            }
+        });
+        let mut mcp = mcp_with(&[
+            ("mcp__a__one", 50),
+            ("mcp__a__two", 50),
+            ("mcp__b__three", 50),
+        ]);
+        mcp.fake_server(
+            "a",
+            &["mcp__a__one", "mcp__a__two"],
+            Some("Server A says hello."),
+        );
+        mcp.fake_server("b", &["mcp__b__three"], Some("Server B says hello."));
+        agent.set_tools(Modules::default(), mcp);
+        assert!(!agent.system.contains("says hello"), "{}", agent.system);
+        agent.prompt("go", &mut Log::default()).unwrap();
+        let seen = seen.lock().unwrap();
+        let first = &seen[1][0];
+        assert!(first.contains("Server A says hello."), "{first}");
+        assert!(!first.contains("Server B"), "{first}");
+        // A server's instructions come once: B is new here, A is not.
+        let second = &seen[2][0];
+        assert!(second.contains("Server B says hello."), "{second}");
+        assert!(!second.contains("Server A"), "{second}");
     }
 
     #[test]

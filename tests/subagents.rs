@@ -464,11 +464,11 @@ fn sub_agents_use_the_main_agents_mcp_servers() {
         system(&child.body).contains("ECHO-RULES"),
         "the child gets the server's instructions"
     );
+    // The main agent has the tool only listed: its instructions come when
+    // it loads the tool.
     let main_first = seen.iter().find(|s| !is_child(&s.body)).unwrap();
-    assert!(
-        system(&main_first.body).contains("ECHO-RULES"),
-        "so does the main agent"
-    );
+    assert!(!system(&main_first.body).contains("ECHO-RULES"));
+    assert!(system(&main_first.body).contains("- mcp__echo__say"));
     let main_last = seen.iter().rev().find(|s| !is_child(&s.body)).unwrap();
     let result = main_last.body["messages"]
         .as_array()

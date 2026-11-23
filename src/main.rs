@@ -317,26 +317,23 @@ fn init_prompt(root: &std::path::Path, extra: &str) -> String {
     p
 }
 
-/// `/context`: what fills the context window, part by part. Sizes are
-/// estimates at four characters a token, like compaction's.
-fn context_lines(
+/// What fills the context window, part by part, for `/context` and ACP
+/// clients. Sizes are estimates at four characters a token, like
+/// compaction's. MCP servers' instructions arrive with their first loaded
+/// tool, so they count under Messages.
+pub(crate) fn context_parts(
     agent: &Agent,
     library: &skills::Library,
     cwd: &std::path::Path,
-    color: bool,
-) -> Vec<String> {
+) -> Vec<panels::Part> {
     let tokens = |chars: usize| (chars / 4) as u64;
     let project: usize = context::files(cwd)
         .iter()
         .map(|(p, t)| t.len() + p.display().to_string().len() + 50)
         .sum();
     let skills = library.prompt_section().map_or(0, |s| s.len());
-    let mcp_text = agent.mcp().prompt_section(None).map_or(0, |s| s.len());
     let held = agent.held_list_size();
-    let base = agent
-        .system
-        .len()
-        .saturating_sub(project + skills + mcp_text + held);
+    let base = agent.system.len().saturating_sub(project + skills + held);
     let mut builtin = 0;
     let mut agent_tool = 0;
     let mut servers: Vec<(String, usize)> = Vec::new();
@@ -362,7 +359,6 @@ fn context_lines(
         part("System prompt", tokens(base)),
         part("AGENTS.md", tokens(project)),
         part("Skills list", tokens(skills)),
-        part("MCP guidance", tokens(mcp_text)),
         part("MCP tool list", tokens(held)),
         part("Built-in tools", tokens(builtin)),
         part("Agent tool", tokens(agent_tool)),
@@ -372,6 +368,17 @@ fn context_lines(
     }
     parts.push(part("Messages", compact::estimate_tokens(&agent.messages)));
     parts.retain(|p| p.tokens > 0);
+    parts
+}
+
+/// `/context`: what fills the context window, part by part.
+fn context_lines(
+    agent: &Agent,
+    library: &skills::Library,
+    cwd: &std::path::Path,
+    color: bool,
+) -> Vec<String> {
+    let parts = context_parts(agent, library, cwd);
     let mut lines = panels::context_view(
         &parts,
         agent.model.context_window(),

@@ -874,6 +874,52 @@ impl Mcp {
         })
     }
 
+    /// Instructions from the servers that have a tool in `names` and none
+    /// in `before`: what a server says comes once, with its first tool.
+    pub fn new_instructions(&self, names: &[String], before: &[String]) -> Option<String> {
+        let parts: Vec<String> = self
+            .servers
+            .iter()
+            .filter_map(|s| s.lock().ok())
+            .filter(|s| {
+                let has = |list: &[String]| s.tools.iter().any(|(n, _)| list.contains(n));
+                has(names) && !has(before)
+            })
+            .filter_map(|s| {
+                let text = s.instructions.as_ref()?;
+                Some(format!(
+                    "<mcp-server-instructions server=\"{}\">\n{text}\n</mcp-server-instructions>",
+                    s.config.name
+                ))
+            })
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
+    }
+
+    /// A server that never started, for tests of what the model sees.
+    #[cfg(test)]
+    pub fn fake_server(&mut self, name: &str, tools: &[&str], instructions: Option<&str>) {
+        let config = ServerConfig {
+            name: name.into(),
+            command: String::new(),
+            args: Vec::new(),
+            env: Vec::new(),
+            timeout: Duration::ZERO,
+            url: None,
+            headers: Vec::new(),
+            sse: false,
+        };
+        self.servers.push(Mutex::new(Server {
+            config,
+            conn: None,
+            tools: tools
+                .iter()
+                .map(|t| (t.to_string(), t.to_string()))
+                .collect(),
+            instructions: instructions.map(String::from),
+        }));
+    }
+
     /// The servers that started, with their tools.
     pub fn servers(&self) -> Vec<ServerInfo> {
         self.servers
@@ -1172,6 +1218,25 @@ mod tests {
             render(&json!({"content": [{"type": "image", "data": huge, "mimeType": "image/png"}]}));
         assert!(images.is_empty());
         assert!(text.unwrap().contains("too large"));
+    }
+
+    #[test]
+    fn instructions_for_new_servers_leave_out_ones_already_loaded() {
+        let mut mcp = Mcp::default();
+        mcp.fake_server("a", &["mcp__a__one", "mcp__a__two"], Some("A."));
+        mcp.fake_server("b", &["mcp__b__x"], Some("B."));
+        mcp.fake_server("c", &["mcp__c__x"], None);
+        let s = |v: &[&str]| v.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let first = mcp
+            .new_instructions(&s(&["mcp__a__one", "mcp__c__x"]), &[])
+            .unwrap();
+        assert!(first.contains("server=\"a\""), "{first}");
+        assert!(!first.contains("server=\"b\""), "{first}");
+        assert_eq!(
+            mcp.new_instructions(&s(&["mcp__a__two"]), &s(&["mcp__a__one"])),
+            None
+        );
+        assert_eq!(mcp.new_instructions(&s(&["mcp__c__x"]), &[]), None);
     }
 
     #[test]
