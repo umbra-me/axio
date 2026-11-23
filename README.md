@@ -451,6 +451,11 @@ before, in a terminal, or when the client starts `axio acp --trust`;
   the signed-in providers have answered.
 - Write and Edit show a diff of the whole file; TodoWrite becomes the client's
   plan; `/compact`, your commands and skills appear as slash commands.
+- An Agent call stays open while its sub-agent works: each tool the
+  sub-agent starts updates the call, and the answer completes it. The update's
+  `_meta.axio.subagent` holds `label`, `status` (`running`, `completed`,
+  `failed`), the latest `steps` (each with a `title`), the `tools` count and,
+  at the end, a `summary`.
 - Sessions are the usual JSONL files, so a session started in the client can
   be continued with `axio -c` and the other way round (`session/load`);
   `session/list` shows a folder's saved sessions.

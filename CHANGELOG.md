@@ -7,6 +7,13 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- `axio acp` shows sub-agents at work: each Agent call reports the tools its
+  sub-agent runs and ends with the sub-agent's answer, and
+  `_meta.axio.subagent` carries the same for clients that draw it. Before,
+  the call stayed in progress after the sub-agent finished (#PR).
+
 ### Changed
 
 - MCP tool definitions past about 2,000 tokens are held back: the system

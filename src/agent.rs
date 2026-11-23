@@ -111,10 +111,22 @@ pub trait Ui {
     fn can_ask(&self) -> bool {
         false
     }
+    /// The Agent call just started by `tool_start` will run as a sub-agent;
+    /// `call` names it in `agent_step` and `agent_done`.
+    fn agent_planned(&mut self, _call: &str, _label: &str) {}
     /// Sub-agents are running: one line on what they are doing.
     fn agents_running(&mut self, _line: &str) {}
+    /// The sub-agent for `call` started a tool; `title` says which and on what.
+    fn agent_step(&mut self, _call: &str, _title: &str) {}
     /// A sub-agent finished; `summary` is its tool calls and time.
-    fn agent_done(&mut self, _label: &str, _result: &Result<String, String>, _summary: &str) {}
+    fn agent_done(
+        &mut self,
+        _call: &str,
+        _label: &str,
+        _result: &Result<String, String>,
+        _summary: &str,
+    ) {
+    }
 }
 
 /// Sent with the last tool results a turn limit allows.
@@ -1582,6 +1594,8 @@ impl Agent {
         ui.tool_start("Agent", &input);
         match planned {
             Ok(mut plan) => {
+                plan.call = id.to_string();
+                ui.agent_planned(id, &plan.label);
                 // Sub-agents ask first exactly as the main agent does.
                 plan.spec.permissions = Some(crate::child::PermSpec::of(&self.permissions()));
                 plan.spec.can_ask = ui.can_ask();

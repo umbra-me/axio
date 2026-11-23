@@ -34,6 +34,8 @@ pub struct Host {
 /// A sub-agent call checked and ready to start.
 #[derive(Clone)]
 pub struct Planned {
+    /// The model's id for the Agent call this runs.
+    pub call: String,
     pub role: String,
     pub label: String,
     pub spec: Spec,
@@ -131,6 +133,7 @@ impl Host {
             None => role.name.clone(),
         };
         Ok(Planned {
+            call: String::new(),
             role: role.name.clone(),
             label,
             spec,
@@ -224,7 +227,7 @@ impl Host {
                 match self.spawn(i, plans[i]) {
                     Ok(r) => running.push(r),
                     Err(e) => {
-                        ui.agent_done(&plans[i].label, &Err(e.clone()), "");
+                        ui.agent_done(&plans[i].call, &plans[i].label, &Err(e.clone()), "");
                         results[i] = failed(e);
                     }
                 }
@@ -246,6 +249,7 @@ impl Host {
                                 )
                                 .trim()
                                 .to_string();
+                                ui.agent_step(&plans[r.index].call, &r.doing);
                             }
                             Some("result" | "error") => r.end = Some(v),
                             Some("ask") => {
@@ -330,7 +334,7 @@ impl Host {
                 stop(&mut running);
                 for r in running.drain(..) {
                     let e = format!("not finished: {}", crate::tools::STOPPED);
-                    ui.agent_done(&r.label, &Err(e.clone()), "stopped");
+                    ui.agent_done(&plans[r.index].call, &r.label, &Err(e.clone()), "stopped");
                     results[r.index] = failed(e);
                 }
                 for i in queue.drain(..) {
@@ -408,7 +412,7 @@ impl Host {
                 }
             )),
         };
-        ui.agent_done(&label, &out, &summary);
+        ui.agent_done(&plan.call, &label, &out, &summary);
         Finished {
             result: out,
             session: session.map(std::path::PathBuf::from),
