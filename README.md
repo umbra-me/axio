@@ -450,6 +450,11 @@ before, in a terminal, or when the client starts `axio acp --trust`;
   terminal offers. The modes are axio's permission modes.
 - Model, effort and mode are session options. The model list fills in once
   the signed-in providers have answered.
+- `_axio/options` (advertised as `agentCapabilities._meta.axio.options`)
+  with a `cwd` answers with the `configOptions` a new session there would
+  start with, once the model list is in. Nothing starts for it: no session
+  file, MCP server or sandbox. Clients use it to offer the options before
+  the first prompt.
 - Write and Edit show a diff of the whole file; TodoWrite becomes the client's
   plan; `/compact`, your commands and skills appear as slash commands.
 - An Agent call stays open while its sub-agent works: an update names the

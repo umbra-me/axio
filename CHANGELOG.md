@@ -7,6 +7,12 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- `axio acp` answers `_axio/options`: the model, effort and mode a new
+  session in a folder would start with, without starting one, so a client
+  can offer them before the first prompt.
+
 ## [0.6.0] - 2026-11-23
 
 ### Added
