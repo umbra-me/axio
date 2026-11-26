@@ -105,6 +105,9 @@ struct Args {
     pick_session: bool,
     session: Option<PathBuf>,
     no_session: bool,
+    /// Only what a new session would offer: no session file, MCP servers or
+    /// sandbox.
+    preview: bool,
     trust: bool,
     permission_mode: Option<String>,
     profile: Option<String>,
@@ -1260,12 +1263,16 @@ fn prepare(
     for skipped in &servers.skipped {
         eprintln!("axio: skipped MCP server: {skipped}");
     }
-    let started = mcp::Mcp::start(&servers, cwd);
+    let started = if args.preview {
+        mcp::Mcp::default()
+    } else {
+        mcp::Mcp::start(&servers, cwd)
+    };
     let mcp_failed = started.failed.clone();
     for failed in &started.failed {
         eprintln!("axio: MCP server failed to start: {}", term::clean(failed));
     }
-    if profile.modules.sandbox {
+    if profile.modules.sandbox && !args.preview {
         let root = settings::project_root(cwd);
         sandbox::activate(sandbox::Sandbox::for_project(
             &root,
@@ -1341,6 +1348,19 @@ fn acp_main(flags: &[String]) -> Result<(), String> {
     let _ = private::dir(&home);
     private::set_logs(home.join("logs"));
     let sessions_home = home.clone();
+    let (preview_home, preview_profile) = (home.clone(), profile.clone());
+    let preview: acp::Preview = Box::new(move |cwd| {
+        let args = Args {
+            print: true,
+            trust,
+            profile: preview_profile.clone(),
+            no_session: true,
+            preview: true,
+            ..Args::default()
+        };
+        let p = prepare(&preview_home, cwd, &args, false)?.ok_or("nothing to run")?;
+        Ok(p.agent)
+    });
     let make: acp::Make = Box::new(move |cwd, resume, mcp| {
         let session = match resume {
             Some(id) => {
@@ -1402,7 +1422,9 @@ fn acp_main(flags: &[String]) -> Result<(), String> {
         let _ =
             tx.send(serde_json::json!({"method": "_axio/models", "params": {"models": models}}));
     });
-    acp::Server::new(peer, make, sessions_home).run(rx);
+    acp::Server::new(peer, make, sessions_home)
+        .with_preview(preview)
+        .run(rx);
     background::stop_all();
     Ok(())
 }

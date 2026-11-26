@@ -29,6 +29,9 @@ const INTERNAL: i64 = -32603;
 /// Builds a session's agent for a folder: the session id to continue, if
 /// any, and the client's MCP servers in `mcp.json` form.
 pub type Make = Box<dyn FnMut(&Path, Option<&str>, &Value) -> Result<(Agent, Library), String>>;
+/// The agent a new session in a folder would start with, built without the
+/// session's side effects (no session file, MCP servers or sandbox).
+pub type Preview = Box<dyn FnMut(&Path) -> Result<Agent, String>>;
 
 /// The connection: our output, requests waiting for the client's reply, and
 /// the running prompt's stop flag.
@@ -146,6 +149,10 @@ pub struct Server {
     sessions: HashMap<String, Session>,
     /// Every model the signed-in providers offer, once listed.
     models: Vec<String>,
+    /// `_axio/options` requests waiting for the model list. `None` once it
+    /// has come.
+    waiting: Option<Vec<(Value, Agent)>>,
+    preview: Option<Preview>,
     /// Whether the client reads and writes files for axio (its buffers).
     files: Editor,
 }
@@ -165,8 +172,17 @@ impl Server {
             home,
             sessions: HashMap::new(),
             models: Vec::new(),
+            waiting: Some(Vec::new()),
+            preview: None,
             files: Editor::default(),
         }
+    }
+
+    /// Answers `_axio/options`, which clients use to offer a session's
+    /// options before starting one.
+    pub fn with_preview(mut self, preview: Preview) -> Server {
+        self.preview = Some(preview);
+        self
     }
 
     /// Handles messages until the client goes, then ends every session.
@@ -201,6 +217,7 @@ impl Server {
                     "promptCapabilities": {"image": true, "audio": false, "embeddedContext": true},
                     "mcpCapabilities": {"http": true, "sse": true},
                     "sessionCapabilities": {"list": {}, "fork": {}},
+                    "_meta": {"axio": {"options": self.preview.is_some()}},
                 },
                 "authMethods": [],
                 "agentInfo": {"name": "axio", "title": "Axio", "version": env!("CARGO_PKG_VERSION")},
@@ -256,8 +273,37 @@ impl Server {
                 })
             }
             // Ours: the model list, read in the background at start.
+            // Ours: the options a new session in `cwd` would offer, once the
+            // model list is in.
+            "_axio/options" => {
+                let Some(id) = id else { return };
+                let cwd = params["cwd"].as_str().map(PathBuf::from);
+                let agent = match (&mut self.preview, cwd) {
+                    (None, _) => Err((NOT_FOUND, format!("axio has no method {method}"))),
+                    (_, Some(c)) if !c.is_absolute() || !c.is_dir() => {
+                        Err((INVALID_PARAMS, "cwd must be an absolute folder".into()))
+                    }
+                    (_, None) => Err((INVALID_PARAMS, "cwd is required".into())),
+                    (Some(make), Some(c)) => make(&c).map_err(|e| (INTERNAL, e)),
+                };
+                match (agent, &mut self.waiting) {
+                    (Ok(agent), Some(waiting)) => waiting.push((id, agent)),
+                    (Ok(agent), None) => self.peer.reply(
+                        &id,
+                        Ok(json!({"configOptions": options(&agent, &self.models)})),
+                    ),
+                    (Err(e), _) => self.peer.reply(&id, Err(e)),
+                }
+                return;
+            }
             "_axio/models" => {
                 self.models = serde_json::from_value(params["models"].clone()).unwrap_or_default();
+                for (id, agent) in self.waiting.take().unwrap_or_default() {
+                    self.peer.reply(
+                        &id,
+                        Ok(json!({"configOptions": options(&agent, &self.models)})),
+                    );
+                }
                 for (sid, s) in &self.sessions {
                     self.peer.update(
                         sid,
@@ -1304,7 +1350,16 @@ mod tests {
                     });
                     Ok((a, Library::default()))
                 });
-                Server::new(p, make, home).run(rx);
+                let preview: Preview = Box::new(|cwd| {
+                    let mut a = Agent::new(
+                        Model::parse("anthropic/claude-opus-5-5"),
+                        cwd.to_path_buf(),
+                        String::new(),
+                    );
+                    a.set_permissions(crate::permissions::Permissions::default());
+                    Ok(a)
+                });
+                Server::new(p, make, home).with_preview(preview).run(rx);
             });
             Client {
                 peer,
@@ -1818,6 +1873,38 @@ mod tests {
             .map(|o| o["value"].as_str().unwrap())
             .collect();
         assert_eq!(values, ["openai/gpt-test", "anthropic/a"]);
+    }
+
+    #[test]
+    fn options_before_a_session_wait_for_the_model_list() {
+        let dir = temp("preview");
+        let mut c = Client::start(&dir, |_| reply(Stop::EndTurn, vec![]));
+        c.send(
+            json!({"jsonrpc": "2.0", "id": 90, "method": "_axio/options", "params": {"cwd": dir}}),
+        );
+        c.call("session/list", json!({"cwd": dir}));
+        assert!(!c.lines().iter().any(|v| v["id"] == 90), "{:#?}", c.lines());
+        c.send(json!({"method": "_axio/models", "params": {"models": ["openai/gpt-test"]}}));
+        let r = c.wait("options", |v| v["id"] == 90);
+        let values: Vec<&str> = r["result"]["configOptions"][0]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["value"].as_str().unwrap())
+            .collect();
+        assert_eq!(values, ["anthropic/claude-opus-5-5", "openai/gpt-test"]);
+        assert_eq!(r["result"]["configOptions"][2]["currentValue"], "default");
+        // Once the list is in, the answer comes at once.
+        let again = c.call("_axio/options", json!({"cwd": dir}));
+        assert_eq!(
+            again["result"]["configOptions"],
+            r["result"]["configOptions"]
+        );
+        assert_eq!(
+            c.call("_axio/options", json!({"cwd": "relative"}))["error"]["code"],
+            INVALID_PARAMS
+        );
+        assert!(!dir.join("sessions").exists());
     }
 
     #[test]
