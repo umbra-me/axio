@@ -7,6 +7,8 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+## [0.7.0] - 2026-11-27
+
 ### Added
 
 - `axio acp` answers `_axio/options`: the model, effort and mode a new
