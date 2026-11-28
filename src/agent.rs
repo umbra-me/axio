@@ -99,6 +99,9 @@ pub trait Ui {
     ) -> Option<(Result<String, String>, Vec<Block>)> {
         None
     }
+    /// The call the next `permission` question is about, for an interface
+    /// that shows what a yes would do before it is given.
+    fn asking(&mut self, _name: &str, _input: &Value) {}
     /// Asks whether a tool may run: `options` to choose from, `None` for
     /// Esc. Without a terminal there is no one to ask.
     fn permission(&mut self, _question: &str, _options: &[String]) -> Option<usize> {
@@ -464,6 +467,7 @@ impl Agent {
                 p.allow.push(r);
             }
         };
+        ui.asking(name, input);
         match ui
             .permission(&question, &options)
             .and_then(|i| acts.get(i).cloned())
