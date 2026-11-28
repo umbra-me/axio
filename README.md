@@ -447,7 +447,9 @@ before, in a terminal, or when the client starts `axio acp --trust`;
 `--profile <name>` picks a profile.
 
 - Changes and commands ask through the client, with the same choices the
-  terminal offers. The modes are axio's permission modes.
+  terminal offers. The call a question is about is announced first, with
+  its input and, for Write and Edit, the change as a diff, so the client
+  can show what a yes would do. The modes are axio's permission modes.
 - Model, effort and mode are session options. The model list fills in once
   the signed-in providers have answered.
 - `_axio/options` (advertised as `agentCapabilities._meta.axio.options`)

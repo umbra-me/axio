@@ -960,6 +960,25 @@ impl Turn<'_> {
     }
 }
 
+impl Turn<'_> {
+    /// Where a call works and, for Write and Edit, the change it makes,
+    /// from the client's own buffers when it offers them.
+    fn shown(&mut self, name: &str, input: &Value) -> (Value, Value) {
+        if !self.files.read {
+            return preview(name, input, &self.cwd, &mut disk_text);
+        }
+        let mut files = Buffers {
+            peer: self.peer,
+            session: &self.session,
+        };
+        preview(name, input, &self.cwd, &mut |p| {
+            crate::tools::Files::read(&mut files, p)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+        })
+    }
+}
+
 impl Ui for Turn<'_> {
     fn delta(&mut self, d: Delta) {
         let (kind, text) = match d {
@@ -978,21 +997,19 @@ impl Ui for Turn<'_> {
         self.update(json!({"sessionUpdate": kind, "content": {"type": "text", "text": text}}));
     }
 
+    fn asking(&mut self, name: &str, input: &Value) {
+        let (locations, content) = self.shown(name, input);
+        let id = self.new_call();
+        self.update(json!({"sessionUpdate": "tool_call", "toolCallId": id,
+                           "title": title(name, input, &self.cwd), "kind": kind(name),
+                           "status": "pending", "rawInput": input,
+                           "locations": locations, "content": content}));
+        self.pending = Some(id);
+    }
+
     fn tool_start(&mut self, name: &str, input: &Value) {
         self.gap = true;
-        let (locations, content) = if self.files.read {
-            let mut files = Buffers {
-                peer: self.peer,
-                session: &self.session,
-            };
-            preview(name, input, &self.cwd, &mut |p| {
-                crate::tools::Files::read(&mut files, p)
-                    .ok()
-                    .and_then(|b| String::from_utf8(b).ok())
-            })
-        } else {
-            preview(name, input, &self.cwd, &mut disk_text)
-        };
+        let (locations, content) = self.shown(name, input);
         let mut v = json!({"title": title(name, input, &self.cwd), "kind": kind(name),
                            "status": "in_progress", "rawInput": input,
                            "locations": locations, "content": content});
@@ -1857,6 +1874,18 @@ mod tests {
         let shown = &c.updates("tool_call")[0];
         assert_eq!(shown["status"], "pending");
         assert_eq!(shown["toolCallId"], ask["params"]["toolCall"]["toolCallId"]);
+        // The question comes with what a yes would do, not only its words.
+        assert_eq!(shown["kind"], "edit");
+        assert_eq!(shown["rawInput"]["content"], "new");
+        assert_eq!(shown["content"][0]["type"], "diff");
+        assert_eq!(shown["content"][0]["oldText"], "old");
+        assert_eq!(shown["content"][0]["newText"], "new");
+        assert!(
+            shown["locations"][0]["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("out.txt")
+        );
         let failed = c.updates("tool_call_update");
         assert_eq!(failed.last().unwrap()["status"], "failed");
 

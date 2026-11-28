@@ -7,6 +7,13 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Changed
+
+- ACP: a permission question comes with the call it is about: its kind,
+  its input, the files it works on and, for Write and Edit, the change as a
+  diff. Before, a client learned these only once the call had been allowed,
+  so it could show the question's words but not what a yes would do (#125).
+
 ### Added
 
 - `axio acp` answers `_axio/rewind`: the conversation goes back to before
