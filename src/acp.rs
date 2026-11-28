@@ -217,7 +217,7 @@ impl Server {
                     "promptCapabilities": {"image": true, "audio": false, "embeddedContext": true},
                     "mcpCapabilities": {"http": true, "sse": true},
                     "sessionCapabilities": {"list": {}, "fork": {}},
-                    "_meta": {"axio": {"options": self.preview.is_some()}},
+                    "_meta": {"axio": {"options": self.preview.is_some(), "rewind": true}},
                 },
                 "authMethods": [],
                 "agentInfo": {"name": "axio", "title": "Axio", "version": env!("CARGO_PKG_VERSION")},
@@ -272,6 +272,27 @@ impl Server {
                     Ok(json!({"configOptions": options(&s.agent, &models)}))
                 })
             }
+            // Ours: the conversation goes back to before the last `prompts`
+            // of the person's messages, as `/rewind` does. Files stay as
+            // they are: a client that keeps checkpoints puts those back.
+            "_axio/rewind" => self.with(params, |s, _| {
+                let mine = s.agent.prompts();
+                let back = params["prompts"].as_u64().unwrap_or(0) as usize;
+                if back == 0 {
+                    return Err((INVALID_PARAMS, "prompts must be 1 or more".into()));
+                }
+                let Some(kept) = mine.len().checked_sub(back) else {
+                    let said = format!(
+                        "this session holds {} of your messages to go back over",
+                        mine.len()
+                    );
+                    return Err((INVALID_PARAMS, said));
+                };
+                s.agent
+                    .rewind(mine[kept].0, false)
+                    .map_err(|e| (INTERNAL, e))?;
+                Ok(json!({"prompts": kept}))
+            }),
             // Ours: the model list, read in the background at start.
             // Ours: the options a new session in `cwd` would offer, once the
             // model list is in.
@@ -1592,6 +1613,77 @@ mod tests {
             Stop::EndTurn,
             vec![text(&format!("saw {}", req.messages.len()))],
         )
+    }
+
+    #[test]
+    fn a_client_takes_the_conversation_back_over_the_last_prompts() {
+        let dir = temp("rewind");
+        // The model says which of the person's messages it can see.
+        let seen = |req: &Request| {
+            let said: Vec<&str> = req
+                .messages
+                .iter()
+                .filter_map(|m| match m {
+                    Message::User { content } => content.iter().find_map(|b| match b {
+                        Block::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    }),
+                    _ => None,
+                })
+                .collect();
+            reply(Stop::EndTurn, vec![text(&said.join("|"))])
+        };
+        let prompt = |c: &mut Client, sid: &str, said: &str| {
+            c.call(
+                "session/prompt",
+                json!({"sessionId": sid, "prompt": [{"type": "text", "text": said}]}),
+            );
+            c.updates("agent_message_chunk").last().unwrap()["content"]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let sid = {
+            let mut c = Client::start(&dir, seen);
+            let init = c.call("initialize", json!({"protocolVersion": 1}));
+            assert_eq!(
+                init["result"]["agentCapabilities"]["_meta"]["axio"]["rewind"],
+                true
+            );
+            let sid = c.new_session(&dir);
+            for said in ["one", "two", "three"] {
+                prompt(&mut c, &sid, said);
+            }
+            let rewind = |c: &mut Client, n: i64| {
+                c.call("_axio/rewind", json!({"sessionId": sid, "prompts": n}))
+            };
+            assert!(rewind(&mut c, 0)["error"].is_object(), "at least one");
+            let too_far = rewind(&mut c, 4);
+            assert!(
+                too_far["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("3 of your messages"),
+                "{too_far}"
+            );
+            let r = rewind(&mut c, 2);
+            assert_eq!(r["result"]["prompts"], 1, "{r}");
+            assert_eq!(prompt(&mut c, &sid, "four"), "one|four");
+            sid
+        };
+        // The session says so too: loaded again, it has what was kept.
+        let mut c = Client::start(&dir, seen);
+        c.call(
+            "session/load",
+            json!({"sessionId": sid, "cwd": dir, "mcpServers": []}),
+        );
+        let replayed: Vec<Value> = c
+            .updates("user_message_chunk")
+            .iter()
+            .map(|u| u["content"]["text"].clone())
+            .collect();
+        assert_eq!(replayed, ["one", "four"]);
+        assert_eq!(prompt(&mut c, &sid, "five"), "one|four|five");
     }
 
     #[test]

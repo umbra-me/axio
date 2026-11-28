@@ -466,8 +466,14 @@ before, in a terminal, or when the client starts `axio acp --trust`;
   `parts` (each a `label` and estimated `tokens`, as `/context` shows them)
   and `loadedTools`, the MCP tools the session has loaded.
 - Sessions are the usual JSONL files, so a session started in the client can
-  be continued with `axio -c` and the other way round (`session/load`);
-  `session/list` shows a folder's saved sessions.
+  be continued with `axio -c`, or by its id with `axio --session <id>`, and
+  the other way round (`session/load`); `session/list` shows a folder's
+  saved sessions.
+- `_axio/rewind` (advertised as `agentCapabilities._meta.axio.rewind`) with
+  a `sessionId` and `prompts`, a count of 1 or more, takes the conversation
+  back to before the last that many of your messages, as `/rewind` does, and
+  answers with the `prompts` kept. Files stay as they are: a client that
+  keeps its own checkpoints puts those back.
 - When the client offers file access, Read, Write and Edit go through it: they
   see unsaved buffers, and the editor applies the changes. Commands still run
   in axio, under its sandbox and permission rules, not in the editor's
