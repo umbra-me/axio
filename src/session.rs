@@ -134,6 +134,26 @@ pub fn find(home: &Path, id: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// The session `--session` names: a transcript's path, or a session's id as
+/// `axio acp` and the session list give it.
+pub fn named(home: &Path, given: &Path) -> Result<PathBuf, String> {
+    if given.is_file() {
+        return Ok(given.to_path_buf());
+    }
+    let id = given.to_str().filter(|id| {
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    });
+    id.and_then(|id| find(home, id)).ok_or_else(|| {
+        format!(
+            "no session {}: give a session file or a session's id",
+            given.display()
+        )
+    })
+}
+
 /// A new session for `cwd` that starts with `parent`'s history: its own
 /// header, then the parent's lines as they are. The parent is only read.
 pub fn fork(home: &Path, parent: &Path, cwd: &Path) -> Result<PathBuf, String> {
@@ -241,6 +261,21 @@ mod tests {
     }
 
     use crate::message::Message as M;
+
+    #[test]
+    fn a_session_is_named_by_its_path_or_its_id() {
+        let home = std::env::temp_dir().join(format!("axio-named-session-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let cwd = home.join("work");
+        let s = Session::create(&dir_for(&home, &cwd), &cwd).unwrap();
+        let id = s.path.file_stem().unwrap().to_str().unwrap().to_string();
+        assert_eq!(named(&home, &s.path).unwrap(), s.path);
+        assert_eq!(named(&home, Path::new(&id)).unwrap(), s.path);
+        let missing = named(&home, Path::new("nope")).unwrap_err();
+        assert!(missing.contains("no session nope"), "{missing}");
+        assert!(named(&home, Path::new("../escape")).is_err());
+        assert!(named(&home, Path::new("")).is_err());
+    }
 
     #[test]
     fn a_rewind_line_replays_on_load() {

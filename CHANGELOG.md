@@ -7,6 +7,16 @@ requests in `umbra-me/axio`. Versions follow
 
 ## Unreleased
 
+### Added
+
+- `axio acp` answers `_axio/rewind`: the conversation goes back to before
+  the last few of your messages, so a client that undoes a turn's files can
+  take the agent's memory of it back too; advertised as
+  `agentCapabilities._meta.axio.rewind` (#124).
+- `--session` takes a session's id as well as its file, so a session a
+  client started can be opened in the terminal by the id the client holds
+  (#124).
+
 ## [0.7.0] - 2026-11-27
 
 ### Added

@@ -70,7 +70,7 @@ Options:
   -e, --effort <level>  low, medium, high, xhigh or max (env AXIO_EFFORT)
   -c, --continue        Continue the most recent session in this directory
   -r, --resume          Pick one of this directory's recent sessions
-  -s, --session <file>  Continue a session file
+  -s, --session <file>  Continue a session, by its file or its id
       --no-session      Do not save this session
       --profile <name>  minimal, standard (default), full or one in
                         ~/.axio/agent/profiles/ (env AXIO_PROFILE)
@@ -1230,7 +1230,7 @@ fn prepare(
 
     let sessions = session::dir_for(home, cwd);
     let resume = match (args.session.clone(), args.resume_latest, args.pick_session) {
-        (Some(p), _, _) => Some(p),
+        (Some(p), _, _) => Some(session::named(home, &p)?),
         (None, true, _) => Some(session::latest(&sessions).ok_or("no session to continue here")?),
         (None, false, true) => Some(pick_session(&sessions)?),
         _ => None,
